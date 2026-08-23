@@ -105,11 +105,17 @@ func _on_menu_action_chosen(action: String) -> void:
 
 
 func _on_base_creation_confirmed(data: Dictionary) -> void:
+	## 임시 "베이스 생성" 다이얼로 만드는 베이스는 항상 1모델짜리 새 유닛으로 취급한다.
+	## 이렇게 해야 이후 복제/유닛 이동이 이 베이스에도 동일하게 동작한다.
+	var unit := Unit.new()
+	unit.unit_name = data["name"]
+	unit.team = data["team"]
+	unit.coherency_inch = GameConstants.DEFAULT_COHERENCY_INCH
+
 	var piece := Control.new()
 	piece.set_script(BASE_SCRIPT)
-	piece.base_name = data["name"]
+	piece.unit = unit
 	piece.size_mm = Vector2(data["width_mm"], data["height_mm"])
-	piece.team = data["team"]
 	piece.fill_color = TEAM_COLORS.get(data["team"], TEAM_COLORS["neutral"])
 	piece.size = piece.size_mm
 	piece.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -117,6 +123,8 @@ func _on_base_creation_confirmed(data: Dictionary) -> void:
 	piece.set_center(_pending_base_point)
 	piece.set_center(_resolve_position(piece, piece.center()))
 	piece.drag_requested.connect(_on_base_drag_requested)
+
+	unit.models.append(piece)
 
 
 func _on_base_drag_requested(piece: Control) -> void:

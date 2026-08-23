@@ -6,9 +6,8 @@ extends Control
 
 signal drag_requested(piece: Control)
 
-var base_name: String = ""
+var unit: Unit = null
 var size_mm: Vector2 = Vector2(32.0, 32.0) # 가로, 세로 (지름)
-var team: String = "neutral"
 var fill_color: Color = Color(0.6, 0.6, 0.6, 0.85)
 
 const OUTLINE_COLOR := Color(0.05, 0.05, 0.05, 0.9)
@@ -42,14 +41,15 @@ func _draw() -> void:
 	draw_colored_polygon(points, fill_color)
 	draw_polyline(points + PackedVector2Array([points[0]]), OUTLINE_COLOR, 1.5, true)
 
-	if base_name != "":
+	var label := unit.unit_name if unit != null else ""
+	if label != "":
 		var font := ThemeDB.fallback_font
 		var font_size := 12
-		var text_width := font.get_string_size(base_name, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+		var text_width := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 		var ascent := font.get_ascent(font_size)
 		var descent := font.get_descent(font_size)
 		var baseline := Vector2(c.x - text_width / 2.0, c.y + (ascent - descent) / 2.0)
-		draw_string(font, baseline, base_name, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color.BLACK)
+		draw_string(font, baseline, label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color.BLACK)
 
 
 func _gui_input(event: InputEvent) -> void:
