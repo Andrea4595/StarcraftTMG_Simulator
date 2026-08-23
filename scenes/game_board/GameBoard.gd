@@ -1,20 +1,23 @@
 extends Control
 
 ## 게임 화면 - 베이스 생성 / 베이스 제어(충돌·경계) / 다이얼 메뉴
-## (데미지 기록·모델 제거·모델 복제) 기능.
-## "유닛 이동"(리딩 모델 + 코헤런시 재배치), 유닛 배치, 스코어보드는
-## 이후 단계에서 추가된다.
+## (데미지 기록·모델 제거·모델 복제·유닛 이동) / 유닛 배치 기능.
+## 변위 베이스 예외, 스코어보드는 이후 단계에서 추가된다.
 ##
 ## 지금은 미션 생성 화면과의 핸드오프(지형/배치구역/미션목표 전달)가 없어서
-## 독립적인 기본 지도 크기로 동작한다.
+## 독립적인 기본 지도 크기로 동작한다. 로스터 앱도 없어서 "미배치 유닛"은
+## 임시 "유닛 추가" 폼으로 직접 등록하고, 배치구역 대신 지도 가장자리
+## (이동거리 밴드 안쪽)만 배치 가능 영역으로 지원한다.
 
 const RADIAL_MENU_SCENE := preload("res://scenes/common/RadialMenu.tscn")
 const BASE_CREATION_DIALOG_SCENE := preload("res://scenes/game_board/BaseCreationDialog.tscn")
 const DAMAGE_INPUT_DIALOG_SCENE := preload("res://scenes/game_board/DamageInputDialog.tscn")
+const UNIT_ADD_DIALOG_SCENE := preload("res://scenes/game_board/UnitAddDialog.tscn")
 const BASE_SCRIPT := preload("res://scenes/game_board/Base.gd")
 const GUIDELINE_SCRIPT := preload("res://scenes/game_board/UnitMoveGuideline.gd")
 
 const MARGIN := 8.0
+const PALETTE_WIDTH := 180.0
 const COLLISION_ITERATIONS := 8
 const DUPLICATE_GAP_MM := 4.0
 const FOLLOWER_SNAP_THRESHOLD_MM := 6.0
@@ -57,6 +60,15 @@ var _unit_move_warning_label: Label
 
 var _dragging_follower: Control = null
 
+var _unit_move_is_deployment: bool = false
+var _deployment_def_snapshot: Dictionary = {}
+var _pending_follower_count: int = 0
+
+var _pending_units: Array = [] # Array[Dictionary] (아직 배치되지 않은 유닛 정의)
+var _pending_deployment_def: Dictionary = {} # 지금 배치 클릭을 기다리는 정의 (비었으면 없음)
+var _pending_list_box: VBoxContainer
+var _unit_add_dialog: Control
+
 
 func _ready() -> void:
 	_map_size = GameConstants.MAP_SIZE_PRESETS[GameConstants.DEFAULT_MAP_SIZE_PRESET]
@@ -65,6 +77,8 @@ func _ready() -> void:
 	_build_creation_dialog()
 	_build_damage_dialog()
 	_build_unit_move_panel()
+	_build_pending_panel()
+	_build_unit_add_dialog()
 	_layout()
 	resized.connect(_layout)
 
@@ -135,12 +149,43 @@ func _build_unit_move_panel() -> void:
 	box.add_child(confirm_btn)
 
 
+func _build_pending_panel() -> void:
+	var panel := PanelContainer.new()
+	panel.position = Vector2(MARGIN, MARGIN)
+	add_child(panel)
+
+	var box := VBoxContainer.new()
+	box.custom_minimum_size = Vector2(PALETTE_WIDTH - 16.0, 0.0)
+	panel.add_child(box)
+
+	var title := Label.new()
+	title.text = "미배치 유닛"
+	box.add_child(title)
+
+	var add_btn := Button.new()
+	add_btn.text = "+ 유닛 추가"
+	add_btn.pressed.connect(func(): _unit_add_dialog.open())
+	box.add_child(add_btn)
+
+	box.add_child(HSeparator.new())
+
+	_pending_list_box = VBoxContainer.new()
+	box.add_child(_pending_list_box)
+
+
+func _build_unit_add_dialog() -> void:
+	_unit_add_dialog = UNIT_ADD_DIALOG_SCENE.instantiate()
+	add_child(_unit_add_dialog)
+	_unit_add_dialog.confirmed.connect(_on_unit_add_confirmed)
+
+
 func _layout() -> void:
 	if _map_area == null:
 		return
 
-	var pos := Vector2(MARGIN, MARGIN)
-	var avail := Vector2(max(size.x - MARGIN * 2.0, 10.0), max(size.y - MARGIN * 2.0, 10.0))
+	var left := MARGIN + PALETTE_WIDTH + MARGIN
+	var pos := Vector2(left, MARGIN)
+	var avail := Vector2(max(size.x - left - MARGIN, 10.0), max(size.y - MARGIN * 2.0, 10.0))
 
 	var scale_factor: float = min(avail.x / _map_size.x, avail.y / _map_size.y)
 	scale_factor = min(scale_factor, 1.0)
@@ -154,7 +199,24 @@ func _layout() -> void:
 
 
 func _on_map_background_gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+	if not (event is InputEventMouseButton and event.pressed):
+		return
+
+	if event.button_index == MOUSE_BUTTON_LEFT:
+		if not _pending_deployment_def.is_empty():
+			_begin_deployment_drag(_map_area.get_local_mouse_position())
+			accept_event()
+		return
+
+	if event.button_index == MOUSE_BUTTON_RIGHT:
+		if not _pending_deployment_def.is_empty():
+			_pending_units.append(_pending_deployment_def)
+			_pending_deployment_def = {}
+			_clear_deployment_band()
+			_refresh_pending_list()
+			accept_event()
+			return
+
 		_pending_base_point = _map_area.get_local_mouse_position()
 		_radial_menu.open([
 			{"label": "베이스 생성", "action": "create_base"},
@@ -292,7 +354,9 @@ func _handle_base_drag_input(event: InputEvent) -> void:
 		var local: Vector2 = _map_area.get_local_mouse_position()
 		var desired: Vector2 = local + _drag_offset
 		var resolved: Vector2
-		if _unit_move_active and _unit_move_phase == "leading":
+		if _unit_move_active and _unit_move_phase == "leading" and _unit_move_is_deployment:
+			resolved = _resolve_deployment_leading_position(desired)
+		elif _unit_move_active and _unit_move_phase == "leading":
 			resolved = _resolve_leading_position(desired)
 		else:
 			resolved = _resolve_position(_dragging_base, desired)
@@ -412,10 +476,28 @@ func _start_unit_move(leading: Control) -> void:
 
 func _finish_leading_move() -> void:
 	_unit_move_phase = "followers"
+	if _unit_move_is_deployment and _pending_follower_count > 0:
+		_spawn_deployment_followers()
 	_auto_place_followers()
 	_update_unit_move_guideline()
 	_update_unit_move_warning()
 	_unit_move_panel.visible = true
+
+
+func _spawn_deployment_followers() -> void:
+	for _i in range(_pending_follower_count):
+		var follower := Control.new()
+		follower.set_script(BASE_SCRIPT)
+		follower.unit = _unit_move_unit
+		follower.size_mm = _unit_move_leading.size_mm
+		follower.fill_color = _unit_move_leading.fill_color
+		follower.size = follower.size_mm
+		follower.mouse_filter = Control.MOUSE_FILTER_STOP
+		_base_layer.add_child(follower)
+		follower.set_center(_unit_move_leading.center())
+		_connect_base_signals(follower)
+		_unit_move_unit.models.append(follower)
+	_pending_follower_count = 0
 
 
 func _auto_place_followers() -> void:
@@ -439,6 +521,7 @@ func _auto_place_followers() -> void:
 
 
 func _update_unit_move_guideline() -> void:
+	_guideline_layer.band_rect = Rect2()
 	_guideline_layer.center_point = _unit_move_leading.center()
 	_guideline_layer.radius_mm = _coherency_boundary_radius_mm()
 	_guideline_layer.queue_redraw()
@@ -476,9 +559,17 @@ func _on_unit_move_complete_pressed() -> void:
 
 
 func _cancel_unit_move() -> void:
-	for piece in _unit_move_original_positions:
-		if is_instance_valid(piece):
-			piece.set_center(_unit_move_original_positions[piece])
+	if _unit_move_is_deployment:
+		## 배치 중 취소: 아직 게임에 존재한 적 없는 유닛이므로 되돌릴 위치가 없다.
+		## 만든 모델을 전부 지우고, 정의를 미배치 목록에 되돌려놓는다.
+		for model in _unit_move_unit.models.duplicate():
+			model.queue_free()
+		_pending_units.append(_deployment_def_snapshot)
+		_refresh_pending_list()
+	else:
+		for piece in _unit_move_original_positions:
+			if is_instance_valid(piece):
+				piece.set_center(_unit_move_original_positions[piece])
 
 	_dragging_base = null
 	_dragging_follower = null
@@ -491,9 +582,135 @@ func _end_unit_move() -> void:
 	_unit_move_unit = null
 	_unit_move_phase = ""
 	_unit_move_original_positions.clear()
+	_unit_move_is_deployment = false
+	_deployment_def_snapshot = {}
+	_pending_follower_count = 0
 
 	_unit_move_panel.visible = false
 	_unit_move_warning_label.visible = false
 
 	_guideline_layer.radius_mm = 0.0
+	_guideline_layer.band_rect = Rect2()
 	_guideline_layer.queue_redraw()
+
+
+func _on_unit_add_confirmed(data: Dictionary) -> void:
+	_pending_units.append(data)
+	_refresh_pending_list()
+
+
+func _refresh_pending_list() -> void:
+	for child in _pending_list_box.get_children():
+		child.queue_free()
+
+	for i in range(_pending_units.size()):
+		var def: Dictionary = _pending_units[i]
+		var btn := Button.new()
+		btn.text = "%s (%s, %d모델)" % [def["name"], def["team"], def["model_count"]]
+		btn.custom_minimum_size = Vector2(PALETTE_WIDTH - 16.0, 40.0)
+		btn.pressed.connect(_start_deployment.bind(i))
+		_pending_list_box.add_child(btn)
+
+
+func _start_deployment(index: int) -> void:
+	if _unit_move_active or index < 0 or index >= _pending_units.size():
+		return
+	_pending_deployment_def = _pending_units[index]
+	_pending_units.remove_at(index)
+	_refresh_pending_list()
+	_show_deployment_band(_pending_deployment_def)
+
+
+func _show_deployment_band(def: Dictionary) -> void:
+	## "배치 영역"은 지금은 지도 가장자리만 지원한다: 리딩 모델 전체가
+	## 이동거리(인치) 안쪽으로 지도 가장자리에 붙어 있어야 한다. 그 경계선을
+	## (베이스 크기를 감안해서) 사각형으로 미리 보여준다.
+	var width: float = def["width_mm"]
+	var height: float = def["height_mm"]
+	var radius: float = max(width, height) / 2.0
+	## 중심이 갈 수 있는 최대 지점(radius + move_mm)에서, 그 위치에 있을 때
+	## 베이스의 먼 쪽 테두리가 어디까지 튀어나오는지(radius 한 번 더)까지
+	## 감안해서 그려야 "선에 베이스 테두리가 닿으면 한계"로 보인다.
+	var inset: float = radius * 2.0 + GameConstants.DEFAULT_MOVE_INCH * GameConstants.MM_PER_INCH
+
+	_guideline_layer.band_rect = Rect2(
+		Vector2(inset, inset),
+		Vector2(max(_map_size.x - inset * 2.0, 0.0), max(_map_size.y - inset * 2.0, 0.0))
+	)
+	_guideline_layer.queue_redraw()
+
+
+func _clear_deployment_band() -> void:
+	_guideline_layer.band_rect = Rect2()
+	_guideline_layer.queue_redraw()
+
+
+func _begin_deployment_drag(click_point: Vector2) -> void:
+	var def := _pending_deployment_def
+	var width: float = def["width_mm"]
+	var height: float = def["height_mm"]
+
+	var unit := Unit.new()
+	unit.unit_name = def["name"]
+	unit.team = def["team"]
+	unit.coherency_inch = GameConstants.DEFAULT_COHERENCY_INCH
+	unit.move_inch = GameConstants.DEFAULT_MOVE_INCH
+
+	var leading := Control.new()
+	leading.set_script(BASE_SCRIPT)
+	leading.unit = unit
+	leading.size_mm = Vector2(width, height)
+	leading.fill_color = TEAM_COLORS.get(def["team"], TEAM_COLORS["neutral"])
+	leading.size = leading.size_mm
+	leading.mouse_filter = Control.MOUSE_FILTER_STOP
+	_base_layer.add_child(leading)
+	unit.models.append(leading)
+
+	## 나머지 모델은 아직 만들지 않는다 (리딩 모델이 실제로 놓이기 전까지는
+	## 클릭 지점에 겹쳐서 충돌 해소를 방해하게 된다). _finish_leading_move()에서
+	## 리딩 모델 배치가 확정된 뒤에 만든다.
+	_pending_follower_count = max(int(def["model_count"]) - 1, 0)
+
+	_pending_deployment_def = {}
+	_deployment_def_snapshot = def
+
+	_unit_move_active = true
+	_unit_move_is_deployment = true
+	_unit_move_leading = leading
+	_unit_move_unit = unit
+	_unit_move_phase = "leading"
+	_unit_move_original_positions.clear()
+
+	leading.set_center(_resolve_deployment_leading_position(click_point))
+	_connect_base_signals(leading)
+
+	_dragging_base = leading
+	_drag_offset = leading.center() - _map_area.get_local_mouse_position()
+	_base_layer.move_child(leading, _base_layer.get_child_count() - 1)
+
+
+func _resolve_deployment_leading_position(desired_center: Vector2) -> Vector2:
+	## 배치 중인 리딩 모델은 지도 경계를 벗어날 수 없고, 항상 어느 한쪽
+	## 가장자리로부터 이동거리(인치) 안쪽에 완전히 들어와 있어야 한다.
+	var pos := _resolve_position(_unit_move_leading, desired_center)
+	var radius: float = _unit_move_leading.radius()
+	var move_mm := _unit_move_unit.move_inch * GameConstants.MM_PER_INCH
+
+	var d_left := pos.x - radius
+	var d_right := _map_size.x - pos.x - radius
+	var d_top := pos.y - radius
+	var d_bottom := _map_size.y - pos.y - radius
+	var edge_dist: float = min(min(d_left, d_right), min(d_top, d_bottom))
+
+	if edge_dist > move_mm:
+		if d_left <= d_right and d_left <= d_top and d_left <= d_bottom:
+			pos.x = radius + move_mm
+		elif d_right <= d_top and d_right <= d_bottom:
+			pos.x = _map_size.x - radius - move_mm
+		elif d_top <= d_bottom:
+			pos.y = radius + move_mm
+		else:
+			pos.y = _map_size.y - radius - move_mm
+		pos = _resolve_position(_unit_move_leading, pos)
+
+	return pos
