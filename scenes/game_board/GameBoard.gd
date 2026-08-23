@@ -23,6 +23,10 @@ const OBJECTIVE_PIECE_SCRIPT := preload("res://scenes/mission_setup/MissionObjec
 
 const MARGIN := 8.0
 const PALETTE_WIDTH := 180.0
+const SCOREBOARD_HEIGHT := 40.0
+const ZOOM_STEP := 1.1
+const MIN_ZOOM := 0.3
+const MAX_ZOOM := 4.0
 const COLLISION_ITERATIONS := 8
 const DUPLICATE_GAP_MM := 4.0
 const FOLLOWER_SNAP_THRESHOLD_MM := 6.0
@@ -74,6 +78,16 @@ var _unit_move_warning_label: Label
 
 var _dragging_follower: Control = null
 
+var _panning: bool = false
+var _zoom_level: float = 1.0
+var _base_scale_factor: float = 1.0
+
+var _scoreboard_panel: Control
+var _pending_panel: Control
+var _mission_vp_spins: Dictionary = {} # player -> SpinBox
+var _kill_vp_spins: Dictionary = {} # player -> SpinBox
+var _total_vp_labels: Dictionary = {} # player -> Label
+
 var _displacement_anchor: Control = null
 var _displacement_queue: Array = [] # Array[Control], 아직 이동자가 위치를 정하지 않은 변위 베이스들
 var _displacement_resume_leading_finish: bool = false
@@ -98,6 +112,7 @@ func _ready() -> void:
 	_build_unit_move_panel()
 	_build_pending_panel()
 	_build_unit_add_dialog()
+	_build_scoreboard()
 	_layout()
 	resized.connect(_layout)
 
@@ -228,8 +243,8 @@ func _build_unit_move_panel() -> void:
 
 func _build_pending_panel() -> void:
 	var panel := PanelContainer.new()
-	panel.position = Vector2(MARGIN, MARGIN)
 	add_child(panel)
+	_pending_panel = panel
 
 	var box := VBoxContainer.new()
 	box.custom_minimum_size = Vector2(PALETTE_WIDTH - 16.0, 0.0)
@@ -256,23 +271,130 @@ func _build_unit_add_dialog() -> void:
 	_unit_add_dialog.confirmed.connect(_on_unit_add_confirmed)
 
 
+func _build_scoreboard() -> void:
+	## 목표 1 범위: 라운드/서플라이/미션VP/파괴VP는 직접 수정, 종합 VP는
+	## 계산된 값을 보여주기만 한다. MatchState는 오토로드라 화면을
+	## 오가도 값이 유지된다.
+	## 위쪽에 라운드/서플라이 한 줄, 그 아래 A/B 두 단으로 나눠
+	## 각각 미션VP → 파괴VP → 종합VP 순으로 보여준다.
+	var panel := PanelContainer.new()
+	panel.position = Vector2(MARGIN, MARGIN)
+	add_child(panel)
+	_scoreboard_panel = panel
+
+	var main_box := VBoxContainer.new()
+	panel.add_child(main_box)
+
+	var top_row := HBoxContainer.new()
+	main_box.add_child(top_row)
+
+	var round_spin := _add_stat_spinbox(top_row, "라운드", MatchState.round_number, 1, 20)
+	round_spin.value_changed.connect(func(v: float): MatchState.round_number = int(v))
+
+	var supply_spin := _add_stat_spinbox(top_row, "서플라이", MatchState.supply, 0, 999)
+	supply_spin.value_changed.connect(func(v: float): MatchState.supply = int(v))
+
+	var columns_row := HBoxContainer.new()
+	main_box.add_child(columns_row)
+
+	for player in ["A", "B"]:
+		var column := VBoxContainer.new()
+		column.custom_minimum_size = Vector2(150.0, 0.0)
+		columns_row.add_child(column)
+
+		var header := Label.new()
+		header.text = "플레이어 %s" % player
+		column.add_child(header)
+
+		var mission_spin := _add_stat_spinbox(column, "미션VP", MatchState.mission_vp[player], 0, 999)
+		mission_spin.value_changed.connect(_on_mission_vp_changed.bind(player))
+		_mission_vp_spins[player] = mission_spin
+
+		var kill_spin := _add_stat_spinbox(column, "파괴VP", MatchState.kill_vp[player], 0, 999)
+		kill_spin.value_changed.connect(_on_kill_vp_changed.bind(player))
+		_kill_vp_spins[player] = kill_spin
+
+		var total_label := Label.new()
+		total_label.text = "종합VP  %d" % MatchState.total_vp(player)
+		column.add_child(total_label)
+		_total_vp_labels[player] = total_label
+
+		if player == "A":
+			columns_row.add_child(VSeparator.new())
+
+
+func _add_stat_spinbox(parent: Container, label_text: String, initial: int, min_value: int, max_value: int) -> SpinBox:
+	var row := HBoxContainer.new()
+	parent.add_child(row)
+
+	var label := Label.new()
+	label.text = label_text
+	label.custom_minimum_size = Vector2(60.0, 0.0)
+	row.add_child(label)
+
+	var spin := SpinBox.new()
+	spin.min_value = min_value
+	spin.max_value = max_value
+	spin.value = initial
+	spin.custom_minimum_size = Vector2(70.0, 0.0)
+	row.add_child(spin)
+	return spin
+
+
+func _on_mission_vp_changed(value: float, player: String) -> void:
+	MatchState.mission_vp[player] = int(value)
+	_refresh_total_label(player)
+
+
+func _on_kill_vp_changed(value: float, player: String) -> void:
+	MatchState.kill_vp[player] = int(value)
+	_refresh_total_label(player)
+
+
+func _refresh_total_label(player: String) -> void:
+	_total_vp_labels[player].text = "종합VP  %d" % MatchState.total_vp(player)
+
+
 func _layout() -> void:
 	if _map_area == null:
 		return
 
+	var scoreboard_height: float = _scoreboard_panel.size.y if _scoreboard_panel != null else SCOREBOARD_HEIGHT
 	var left := MARGIN + PALETTE_WIDTH + MARGIN
-	var pos := Vector2(left, MARGIN)
-	var avail := Vector2(max(size.x - left - MARGIN, 10.0), max(size.y - MARGIN * 2.0, 10.0))
+	var top := MARGIN + scoreboard_height + MARGIN
+	var pos := Vector2(left, top)
+	var avail := Vector2(max(size.x - left - MARGIN, 10.0), max(size.y - top - MARGIN, 10.0))
 
 	var scale_factor: float = min(avail.x / _map_size.x, avail.y / _map_size.y)
 	scale_factor = min(scale_factor, 1.0)
+	_base_scale_factor = scale_factor
 
-	_map_area.scale = Vector2(scale_factor, scale_factor)
-	var scaled := _map_size * scale_factor
+	var total_scale := scale_factor * _zoom_level
+	_map_area.scale = Vector2(total_scale, total_scale)
+	var scaled := _map_size * total_scale
 	_map_area.position = pos + (avail - scaled) / 2.0
 
 	if _unit_move_panel != null:
-		_unit_move_panel.position = Vector2(size.x - _unit_move_panel.size.x - MARGIN, MARGIN)
+		_unit_move_panel.position = Vector2(size.x - _unit_move_panel.size.x - MARGIN, top)
+
+	if _pending_panel != null:
+		_pending_panel.position = Vector2(MARGIN, top)
+
+
+func _zoom_at(mouse_screen: Vector2, factor: float) -> void:
+	## 마우스가 가리키는 지도 위 지점이 화면상 같은 자리에 그대로 있도록
+	## 확대/축소하면서 위치를 함께 보정한다.
+	var new_zoom: float = clamp(_zoom_level * factor, MIN_ZOOM, MAX_ZOOM)
+	if is_equal_approx(new_zoom, _zoom_level):
+		return
+
+	var old_scale: float = _map_area.scale.x
+	var local_point: Vector2 = (mouse_screen - _map_area.position) / old_scale
+
+	_zoom_level = new_zoom
+	var new_scale: float = _base_scale_factor * _zoom_level
+	_map_area.scale = Vector2(new_scale, new_scale)
+	_map_area.position = mouse_screen - local_point * new_scale
 
 
 func _on_map_background_gui_input(event: InputEvent) -> void:
@@ -413,6 +535,23 @@ func _duplicate_base(piece: Control) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE:
+		_panning = event.pressed
+		get_viewport().set_input_as_handled()
+		return
+
+	if _panning and event is InputEventMouseMotion:
+		_map_area.position += event.relative
+		get_viewport().set_input_as_handled()
+		return
+
+	if event is InputEventMouseButton and event.pressed \
+			and (event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN):
+		var factor := ZOOM_STEP if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / ZOOM_STEP
+		_zoom_at(event.position, factor)
+		get_viewport().set_input_as_handled()
+		return
+
 	if _unit_move_active and event is InputEventMouseButton and event.pressed \
 			and event.button_index == MOUSE_BUTTON_RIGHT:
 		_cancel_unit_move()
