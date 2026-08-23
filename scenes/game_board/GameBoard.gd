@@ -26,6 +26,7 @@ const PALETTE_WIDTH := 180.0
 const COLLISION_ITERATIONS := 8
 const DUPLICATE_GAP_MM := 4.0
 const FOLLOWER_SNAP_THRESHOLD_MM := 6.0
+const FOLLOWER_OUTWARD_SNAP_THRESHOLD_MM := 40.0 # 경계 밖으로는 훨씬 강하게 붙잡아둔다
 const FOLLOWER_RING_FRACTION := 0.7
 const COHERENCY_EPSILON_MM := 0.5 # 경계에 스냅됐을 때 부동소수점 오차로 오탐지되는 것 방지
 const COHERENCY_WARNING_TEXT := "코헤런시를 이탈한 모델은 즉시 사상자로서 제거됩니다."
@@ -513,13 +514,35 @@ func _max_follower_center_distance(follower: Control) -> float:
 
 func _resolve_follower_position(piece: Control, desired_center: Vector2, leading_center: Vector2, max_center_distance: float) -> Vector2:
 	## 코헤런시 경계 근처로 드래그하면 그 경계선에 스냅되도록 해서, 최대로
-	## 퍼진 위치를 잡기 쉽게 돕는다. 경계를 넘어가는 것 자체는 막지 않는다
-	## (완료 시 이탈한 모델은 사상자로 제거).
-	var offset := desired_center - leading_center
+	## 퍼진 위치를 잡기 쉽게 돕는다. 안쪽에서 접근할 때보다 바깥으로
+	## 넘어가려 할 때 훨씬 넓은 범위에서 붙잡아, 실수로 코헤런시를
+	## 벗어나기 어렵게 한다. 그래도 완전히 막지는 않는다 (계속 세게
+	## 끌면 벗어날 수 있고, 완료 시 이탈한 모델은 사상자로 제거된다).
+	##
+	## 충돌 회피(다른 베이스를 피해 밀려남)와 코헤런시 스냅은 서로를
+	## 무효화시킬 수 있다 (스냅하면 다른 베이스와 겹치고, 그걸 피해 밀려나면
+	## 다시 코헤런시를 벗어난다). 둘을 번갈아 여러 번 적용해서 수렴시키면,
+	## 옆 베이스 테두리를 타고 돌면서 코헤런시 경계에 맞는 지점을 찾는
+	## 효과를 낸다.
+	var pos := desired_center
+	for _iteration in range(COLLISION_ITERATIONS):
+		var before := pos
+		pos = _snap_to_coherency_boundary(pos, leading_center, max_center_distance)
+		pos = _resolve_position(piece, pos)
+		if pos.distance_to(before) < 0.01:
+			break
+	return pos
+
+
+func _snap_to_coherency_boundary(pos: Vector2, leading_center: Vector2, max_center_distance: float) -> Vector2:
+	var offset := pos - leading_center
 	var dist := offset.length()
-	if dist > 0.01 and absf(dist - max_center_distance) <= FOLLOWER_SNAP_THRESHOLD_MM:
-		desired_center = leading_center + offset.normalized() * max_center_distance
-	return _resolve_position(piece, desired_center)
+	if dist > 0.01:
+		if dist >= max_center_distance and dist - max_center_distance <= FOLLOWER_OUTWARD_SNAP_THRESHOLD_MM:
+			pos = leading_center + offset.normalized() * max_center_distance
+		elif dist < max_center_distance and max_center_distance - dist <= FOLLOWER_SNAP_THRESHOLD_MM:
+			pos = leading_center + offset.normalized() * max_center_distance
+	return pos
 
 
 func _start_unit_move(leading: Control) -> void:
