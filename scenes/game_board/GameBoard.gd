@@ -1163,30 +1163,6 @@ func _team_zone_segments(team: String) -> Array:
 	return segments
 
 
-func _segment_endpoints_world(zone: Dictionary) -> Array:
-	var a: float = zone["start_along"]
-	var b: float = zone["end_along"]
-	match zone["edge"]:
-		"left":
-			return [Vector2(0.0, a), Vector2(0.0, b)]
-		"right":
-			return [Vector2(_map_size.x, a), Vector2(_map_size.x, b)]
-		"top":
-			return [Vector2(a, 0.0), Vector2(b, 0.0)]
-		"bottom":
-			return [Vector2(a, _map_size.y), Vector2(b, _map_size.y)]
-	return [Vector2.ZERO, Vector2.ZERO]
-
-
-func _closest_point_on_segment(p: Vector2, a: Vector2, b: Vector2) -> Vector2:
-	var ab := b - a
-	var len_sq := ab.length_squared()
-	if len_sq < 0.0001:
-		return a
-	var t: float = clamp((p - a).dot(ab) / len_sq, 0.0, 1.0)
-	return a + ab * t
-
-
 func _local_to_world(edge: String, p: Vector2) -> Vector2:
 	## p = (along, depth-into-board) in a local frame for this edge.
 	match edge:
@@ -1331,65 +1307,11 @@ func _is_circular(size_mm: Vector2) -> bool:
 
 
 func _resolve_deployment_leading_position(desired_center: Vector2) -> Vector2:
-	## 배치 중인 리딩 모델은 지도 경계를 벗어날 수 없고, 그 팀의 배치구역
-	## 구간(들) 중 하나로부터 이동거리(인치) 안쪽에 완전히 들어와 있어야
-	## 한다 (구간의 양 끝에서는 컴퍼스로 그린 것처럼 옆으로도 퍼질 수 있다).
-	## 배치구역 데이터가 없으면 지도 전체 가장자리로 폴백한다. 리딩 모델
-	## 이동이므로 변위 베이스는 통과할 수 있다.
-	##
-	## 타원 베이스는 원형 근사로 밴드 경계를 정확히 계산할 수 없어서(회전에
-	## 따라 실제 여유가 달라짐), 이 경계 스냅/클램프 자체를 걸지 않는다 —
-	## 충돌 회피와 지도 경계 clamp만 적용된다.
-	var pos := _resolve_position(_unit_move_leading, desired_center, true)
-	if not _is_circular(_unit_move_leading.size_mm):
-		return pos
+	## 배치구역/이동거리 밴드는 참고용 가이드라인으로만 보여주고(
+	## _show_deployment_band), 실제 배치 위치는 자유롭게 아무 데나 놓을 수
+	## 있다 — 특정 유닛의 배치구역 예외(딥 스트라이크, 잠복 등)를 일일이
+	## 모델링하는 대신 플레이어가 규칙에 맞게 직접 배치하도록 맡긴다.
+	## 충돌 회피와 지도 경계만 지킨다. 리딩 모델 이동이므로 변위 베이스는
+	## 통과할 수 있다.
+	return _resolve_position(_unit_move_leading, desired_center, true)
 
-	var radius: float = _unit_move_leading.radius()
-
-	var segments := _team_zone_segments(_unit_move_unit.team)
-	if segments.is_empty():
-		pos = _clamp_to_nearest_map_edge(pos, radius)
-	else:
-		var move_mm := _unit_move_unit.move_inch * GameConstants.MM_PER_INCH
-		var allowed: float = radius + move_mm
-
-		var best_point: Vector2 = pos
-		var best_dist: float = INF
-		for zone in segments:
-			var ends := _segment_endpoints_world(zone)
-			var cp: Vector2 = _closest_point_on_segment(pos, ends[0], ends[1])
-			var dist := cp.distance_to(pos)
-			if dist < best_dist:
-				best_dist = dist
-				best_point = cp
-
-		if best_dist > allowed:
-			var dir := pos - best_point
-			if dir.length() < 0.01:
-				dir = Vector2(1.0, 0.0)
-			pos = best_point + dir.normalized() * allowed
-			pos = _resolve_position(_unit_move_leading, pos, true)
-
-	return pos
-
-
-func _clamp_to_nearest_map_edge(pos: Vector2, radius: float) -> Vector2:
-	var move_mm := _unit_move_unit.move_inch * GameConstants.MM_PER_INCH
-	var d_left := pos.x - radius
-	var d_right := _map_size.x - pos.x - radius
-	var d_top := pos.y - radius
-	var d_bottom := _map_size.y - pos.y - radius
-	var edge_dist: float = min(min(d_left, d_right), min(d_top, d_bottom))
-
-	if edge_dist > move_mm:
-		if d_left <= d_right and d_left <= d_top and d_left <= d_bottom:
-			pos.x = radius + move_mm
-		elif d_right <= d_top and d_right <= d_bottom:
-			pos.x = _map_size.x - radius - move_mm
-		elif d_top <= d_bottom:
-			pos.y = radius + move_mm
-		else:
-			pos.y = _map_size.y - radius - move_mm
-		pos = _resolve_position(_unit_move_leading, pos, true)
-
-	return pos
