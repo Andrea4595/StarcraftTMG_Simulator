@@ -100,6 +100,8 @@ var _pending_units: Array = [] # Array[Dictionary] (아직 배치되지 않은 �
 var _pending_deployment_def: Dictionary = {} # 지금 배치 클릭을 기다리는 정의 (비었으면 없음)
 var _pending_list_box: VBoxContainer
 var _unit_add_dialog: Control
+var _roster_file_dialog: FileDialog
+var _roster_import_team: String = "A"
 
 
 func _ready() -> void:
@@ -112,6 +114,7 @@ func _ready() -> void:
 	_build_unit_move_panel()
 	_build_pending_panel()
 	_build_unit_add_dialog()
+	_build_roster_file_dialog()
 	_build_scoreboard()
 	_layout()
 	resized.connect(_layout)
@@ -259,6 +262,12 @@ func _build_pending_panel() -> void:
 	add_btn.pressed.connect(func(): _unit_add_dialog.open())
 	box.add_child(add_btn)
 
+	for team in ["A", "B"]:
+		var import_btn := Button.new()
+		import_btn.text = "%s 로스터 불러오기" % team
+		import_btn.pressed.connect(_on_import_roster_pressed.bind(team))
+		box.add_child(import_btn)
+
 	box.add_child(HSeparator.new())
 
 	_pending_list_box = VBoxContainer.new()
@@ -269,6 +278,56 @@ func _build_unit_add_dialog() -> void:
 	_unit_add_dialog = UNIT_ADD_DIALOG_SCENE.instantiate()
 	add_child(_unit_add_dialog)
 	_unit_add_dialog.confirmed.connect(_on_unit_add_confirmed)
+
+
+func _build_roster_file_dialog() -> void:
+	_roster_file_dialog = FileDialog.new()
+	_roster_file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_roster_file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	_roster_file_dialog.add_filter("*.json", "로스터 JSON")
+	_roster_file_dialog.size = Vector2i(600, 400)
+	add_child(_roster_file_dialog)
+	_roster_file_dialog.file_selected.connect(_on_roster_file_selected)
+
+
+func _on_import_roster_pressed(team: String) -> void:
+	_roster_import_team = team
+	_roster_file_dialog.popup_centered()
+
+
+func _on_roster_file_selected(path: String) -> void:
+	## 로스터 앱에서 내보낸 JSON: {"roster_name": ..., "units": [{"name",
+	## "model_count", "base_mm": {"width","height"}, "move_inch",
+	## "coherency_inch"}, ...]}. 팀은 파일에 없고 불러올 때 고른 쪽으로 붙는다.
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		push_warning("로스터 파일을 열 수 없습니다: %s" % path)
+		return
+	var text := file.get_as_text()
+	file.close()
+
+	var parsed: Variant = JSON.parse_string(text)
+	if typeof(parsed) != TYPE_DICTIONARY or not parsed.has("units"):
+		push_warning("로스터 파일 형식이 올바르지 않습니다: %s" % path)
+		return
+
+	for unit_data in parsed["units"]:
+		if typeof(unit_data) != TYPE_DICTIONARY or not unit_data.has("name"):
+			continue
+		var base: Dictionary = unit_data.get("base_mm", {})
+		var width: float = base.get("width", 32.0)
+		var height: float = base.get("height", width)
+		_pending_units.append({
+			"name": unit_data["name"],
+			"model_count": max(int(unit_data.get("model_count", 1)), 1),
+			"width_mm": max(width, 1.0),
+			"height_mm": max(height, 1.0),
+			"team": _roster_import_team,
+			"move_inch": float(unit_data.get("move_inch", GameConstants.DEFAULT_MOVE_INCH)),
+			"coherency_inch": float(unit_data.get("coherency_inch", GameConstants.DEFAULT_COHERENCY_INCH)),
+		})
+
+	_refresh_pending_list()
 
 
 func _build_scoreboard() -> void:
@@ -1020,9 +1079,9 @@ func _merge_all_polygons(polygons: Array) -> Array:
 	return result
 
 
-func _fallback_edge_band_polyline(radius: float, expand_for_visual: bool) -> PackedVector2Array:
+func _fallback_edge_band_polyline(radius: float, move_inch: float, expand_for_visual: bool) -> PackedVector2Array:
 	## 배치구역 데이터가 없을 때 쓰는 폴백: 지도 전체 가장자리 안쪽 테두리.
-	var move_mm := GameConstants.DEFAULT_MOVE_INCH * GameConstants.MM_PER_INCH
+	var move_mm := move_inch * GameConstants.MM_PER_INCH
 	var inset: float = radius + move_mm + (radius if expand_for_visual else 0.0)
 	var p := Vector2(inset, inset)
 	var s := Vector2(max(_map_size.x - inset * 2.0, 0.0), max(_map_size.y - inset * 2.0, 0.0))
@@ -1033,14 +1092,15 @@ func _show_deployment_band(def: Dictionary) -> void:
 	var width: float = def["width_mm"]
 	var height: float = def["height_mm"]
 	var radius: float = max(width, height) / 2.0
-	var move_mm := GameConstants.DEFAULT_MOVE_INCH * GameConstants.MM_PER_INCH
+	var move_inch: float = def.get("move_inch", GameConstants.DEFAULT_MOVE_INCH)
+	var move_mm := move_inch * GameConstants.MM_PER_INCH
 	var visual_depth: float = radius * 2.0 + move_mm
 
 	var segments := _team_zone_segments(def["team"])
 	var polylines: Array = []
 
 	if segments.is_empty():
-		polylines.append(_fallback_edge_band_polyline(radius, true))
+		polylines.append(_fallback_edge_band_polyline(radius, move_inch, true))
 	else:
 		var polygons: Array = []
 		for zone in segments:
@@ -1068,8 +1128,8 @@ func _begin_deployment_drag(click_point: Vector2) -> void:
 	var unit := Unit.new()
 	unit.unit_name = def["name"]
 	unit.team = def["team"]
-	unit.coherency_inch = GameConstants.DEFAULT_COHERENCY_INCH
-	unit.move_inch = GameConstants.DEFAULT_MOVE_INCH
+	unit.coherency_inch = def.get("coherency_inch", GameConstants.DEFAULT_COHERENCY_INCH)
+	unit.move_inch = def.get("move_inch", GameConstants.DEFAULT_MOVE_INCH)
 
 	var leading := Control.new()
 	leading.set_script(BASE_SCRIPT)
