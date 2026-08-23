@@ -5,10 +5,14 @@ extends Control
 ## 이 노드는 좌클릭 시작 신호만 보낸다.
 
 signal drag_requested(piece: Control)
+signal menu_requested(piece: Control, screen_pos: Vector2)
 
 var unit: Unit = null
 var size_mm: Vector2 = Vector2(32.0, 32.0) # 가로, 세로 (지름)
 var fill_color: Color = Color(0.6, 0.6, 0.6, 0.85)
+var damage: int = 0
+
+const DAMAGE_BADGE_RADIUS_MM := 8.0
 
 const OUTLINE_COLOR := Color(0.05, 0.05, 0.05, 0.9)
 const ELLIPSE_RESOLUTION := 48
@@ -51,8 +55,24 @@ func _draw() -> void:
 		var baseline := Vector2(c.x - text_width / 2.0, c.y + (ascent - descent) / 2.0)
 		draw_string(font, baseline, label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color.BLACK)
 
+	if damage > 0:
+		var badge_center := Vector2(size.x - DAMAGE_BADGE_RADIUS_MM, DAMAGE_BADGE_RADIUS_MM)
+		draw_circle(badge_center, DAMAGE_BADGE_RADIUS_MM, Color(0.8, 0.1, 0.1))
+		var font := ThemeDB.fallback_font
+		var font_size := 10
+		var text := str(damage)
+		var text_width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+		var ascent := font.get_ascent(font_size)
+		var descent := font.get_descent(font_size)
+		var baseline := Vector2(badge_center.x - text_width / 2.0, badge_center.y + (ascent - descent) / 2.0)
+		draw_string(font, baseline, text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color.WHITE)
+
 
 func _gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		drag_requested.emit(self)
-		accept_event()
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			drag_requested.emit(self)
+			accept_event()
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			menu_requested.emit(self, event.global_position)
+			accept_event()
