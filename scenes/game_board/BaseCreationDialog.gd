@@ -12,6 +12,7 @@ var _width_edit: LineEdit
 var _height_edit: LineEdit
 var _team_buttons: Dictionary = {}
 var _selected_team: String = "A"
+var _displacement_check: CheckBox
 
 
 func _ready() -> void:
@@ -59,6 +60,10 @@ func _build_ui() -> void:
 		team_row.add_child(btn)
 		_team_buttons[team_id] = btn
 
+	_displacement_check = CheckBox.new()
+	_displacement_check.text = "변위"
+	box.add_child(_displacement_check)
+
 	var button_row := HBoxContainer.new()
 	box.add_child(button_row)
 	var confirm_btn := Button.new()
@@ -94,6 +99,7 @@ func open() -> void:
 	_height_edit.text = ""
 	_selected_team = "A"
 	_team_buttons["A"].button_pressed = true
+	_displacement_check.button_pressed = false
 	visible = true
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_name_edit.grab_focus()
@@ -123,6 +129,7 @@ func _on_confirm_pressed() -> void:
 		"width_mm": max(width, 1.0),
 		"height_mm": max(height, 1.0),
 		"team": _selected_team,
+		"is_displacement": _displacement_check.button_pressed,
 	}
 	close()
 	confirmed.emit(data)

@@ -12,9 +12,15 @@ var size_mm: Vector2 = Vector2(32.0, 32.0) # 가로, 세로 (지름)
 var fill_color: Color = Color(0.6, 0.6, 0.6, 0.85)
 var damage: int = 0
 
+## 변위 베이스: 모델 메뉴얼 이동/리딩 모델 이동 중에는 이 베이스와 겹쳐서
+## 지나갈 수 있다. 그 이동이 끝나면 GameBoard가 이 베이스를 겹치게 된
+## 베이스로부터 원하는 거리 0"(딱 붙게) 위치로 밀어낸다.
+var is_displacement: bool = false
+
 const DAMAGE_BADGE_RADIUS_MM := 8.0
 
 const OUTLINE_COLOR := Color(0.05, 0.05, 0.05, 0.9)
+const DISPLACEMENT_OUTLINE_COLOR := Color(0.2, 0.9, 0.9, 0.95)
 const ELLIPSE_RESOLUTION := 48
 
 
@@ -42,8 +48,9 @@ func _draw() -> void:
 		var angle := i * TAU / ELLIPSE_RESOLUTION
 		points.append(c + Vector2(cos(angle) * rx, sin(angle) * ry))
 
+	var outline_color := DISPLACEMENT_OUTLINE_COLOR if is_displacement else OUTLINE_COLOR
 	draw_colored_polygon(points, fill_color)
-	draw_polyline(points + PackedVector2Array([points[0]]), OUTLINE_COLOR, 1.5, true)
+	draw_polyline(points + PackedVector2Array([points[0]]), outline_color, 1.5 if not is_displacement else 3.0, true)
 
 	var label := unit.unit_name if unit != null else ""
 	if label != "":

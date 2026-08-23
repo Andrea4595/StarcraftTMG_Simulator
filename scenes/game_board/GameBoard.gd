@@ -74,6 +74,10 @@ var _unit_move_warning_label: Label
 
 var _dragging_follower: Control = null
 
+var _displacement_anchor: Control = null
+var _displacement_queue: Array = [] # Array[Control], 아직 이동자가 위치를 정하지 않은 변위 베이스들
+var _displacement_resume_leading_finish: bool = false
+
 var _unit_move_is_deployment: bool = false
 var _deployment_def_snapshot: Dictionary = {}
 var _pending_follower_count: int = 0
@@ -324,6 +328,7 @@ func _on_base_creation_confirmed(data: Dictionary) -> void:
 	piece.unit = unit
 	piece.size_mm = Vector2(data["width_mm"], data["height_mm"])
 	piece.fill_color = TEAM_COLORS.get(data["team"], TEAM_COLORS["neutral"])
+	piece.is_displacement = data.get("is_displacement", false)
 	piece.size = piece.size_mm
 	piece.mouse_filter = Control.MOUSE_FILTER_STOP
 	_base_layer.add_child(piece)
@@ -392,6 +397,7 @@ func _duplicate_base(piece: Control) -> void:
 	new_piece.unit = piece.unit
 	new_piece.size_mm = piece.size_mm
 	new_piece.fill_color = piece.fill_color
+	new_piece.is_displacement = piece.is_displacement
 	new_piece.size = new_piece.size_mm
 	new_piece.mouse_filter = Control.MOUSE_FILTER_STOP
 	_base_layer.add_child(new_piece)
@@ -421,6 +427,10 @@ func _input(event: InputEvent) -> void:
 		_handle_follower_drag_input(event)
 		return
 
+	if not _displacement_queue.is_empty():
+		_handle_displacement_placement_input(event)
+		return
+
 
 func _handle_base_drag_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
@@ -432,15 +442,21 @@ func _handle_base_drag_input(event: InputEvent) -> void:
 		elif _unit_move_active and _unit_move_phase == "leading":
 			resolved = _resolve_leading_position(desired)
 		else:
-			resolved = _resolve_position(_dragging_base, desired)
+			## 모델 메뉴얼 이동: 변위 베이스는 통과할 수 있다.
+			resolved = _resolve_position(_dragging_base, desired, true)
 		_dragging_base.set_center(resolved)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 		var finished_leading := _unit_move_active and _unit_move_phase == "leading" \
 				and _dragging_base == _unit_move_leading
+		var moved_piece := _dragging_base
 		_dragging_base = null
 		get_viewport().set_input_as_handled()
-		if finished_leading:
+
+		var overlapping := _find_overlapping_displacement_bases(moved_piece)
+		if not overlapping.is_empty():
+			_start_displacement_placement(moved_piece, overlapping, finished_leading)
+		elif finished_leading:
 			_finish_leading_move()
 
 
@@ -459,9 +475,11 @@ func _handle_follower_drag_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
-func _resolve_position(piece: Control, desired_center: Vector2) -> Vector2:
+func _resolve_position(piece: Control, desired_center: Vector2, allow_displacement_overlap: bool = false) -> Vector2:
 	## 베이스끼리 절대 겹치지 않도록, 겹치는 다른 베이스로부터 밀어내는 것을
 	## 여러 번 반복해서 가장 가까운 비충돌 위치를 근사한다. 이후 지도 경계로 clamp.
+	## allow_displacement_overlap이면(모델 메뉴얼 이동/리딩 모델 이동 중) 변위
+	## 베이스는 장애물로 치지 않고 그냥 통과할 수 있다.
 	var pos := desired_center
 	var radius: float = piece.radius()
 
@@ -469,6 +487,8 @@ func _resolve_position(piece: Control, desired_center: Vector2) -> Vector2:
 		var moved := false
 		for other in _base_layer.get_children():
 			if other == piece:
+				continue
+			if allow_displacement_overlap and other.is_displacement:
 				continue
 			var min_dist: float = radius + other.radius()
 			var offset: Vector2 = pos - other.center()
@@ -487,16 +507,70 @@ func _resolve_position(piece: Control, desired_center: Vector2) -> Vector2:
 	return pos
 
 
+func _find_overlapping_displacement_bases(moved_piece: Control) -> Array:
+	var result: Array = []
+	if moved_piece == null or not is_instance_valid(moved_piece):
+		return result
+	for other in _base_layer.get_children():
+		if other == moved_piece or not other.is_displacement:
+			continue
+		var min_dist: float = moved_piece.radius() + other.radius()
+		if other.center().distance_to(moved_piece.center()) < min_dist - 0.01:
+			result.append(other)
+	return result
+
+
+func _start_displacement_placement(anchor: Control, queue: Array, resume_leading_finish: bool) -> void:
+	## 모델 메뉴얼 이동/리딩 모델 이동이 끝난 직후, 방금 통과한 변위
+	## 베이스(들)의 새 위치는 이동한 사람이 직접 정한다: 항상 anchor에
+	## 딱 붙은 채(원하는 거리 0") 마우스를 따라가다가, 클릭하면 확정된다.
+	_displacement_anchor = anchor
+	_displacement_queue = queue
+	_displacement_resume_leading_finish = resume_leading_finish
+
+	var mouse_pos: Vector2 = _map_area.get_local_mouse_position()
+	var piece: Control = _displacement_queue[0]
+	piece.set_center(_resolve_displacement_drag_position(piece, mouse_pos))
+
+
+func _handle_displacement_placement_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		var local: Vector2 = _map_area.get_local_mouse_position()
+		var piece: Control = _displacement_queue[0]
+		piece.set_center(_resolve_displacement_drag_position(piece, local))
+		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_displacement_queue.pop_front()
+		get_viewport().set_input_as_handled()
+		if _displacement_queue.is_empty():
+			var resume := _displacement_resume_leading_finish
+			_displacement_anchor = null
+			_displacement_resume_leading_finish = false
+			if resume:
+				_finish_leading_move()
+
+
+func _resolve_displacement_drag_position(piece: Control, desired_center: Vector2) -> Vector2:
+	var min_dist: float = _displacement_anchor.radius() + piece.radius()
+	var anchor_center: Vector2 = _displacement_anchor.center()
+	var offset: Vector2 = desired_center - anchor_center
+	if offset.length() < 0.01:
+		offset = Vector2(1.0, 0.0)
+	var pos: Vector2 = anchor_center + offset.normalized() * min_dist
+	return _resolve_position(piece, pos)
+
+
 func _resolve_leading_position(desired_center: Vector2) -> Vector2:
 	## 충돌/경계 해소에 더해, 리딩 모델이 시작 지점으로부터 이동력(인치)을
-	## 벗어나지 못하도록 한 번 더 잡아당긴다.
-	var pos := _resolve_position(_unit_move_leading, desired_center)
+	## 벗어나지 못하도록 한 번 더 잡아당긴다. 리딩 모델 이동이므로 변위
+	## 베이스는 통과할 수 있다.
+	var pos := _resolve_position(_unit_move_leading, desired_center, true)
 	var max_dist := _unit_move_unit.move_inch * GameConstants.MM_PER_INCH
 	var offset := pos - _unit_move_start_point
 	var dist := offset.length()
 	if dist > max_dist and dist > 0.01:
 		pos = _unit_move_start_point + offset.normalized() * max_dist
-		pos = _resolve_position(_unit_move_leading, pos)
+		pos = _resolve_position(_unit_move_leading, pos, true)
 	return pos
 
 
@@ -680,6 +754,9 @@ func _end_unit_move() -> void:
 	_unit_move_is_deployment = false
 	_deployment_def_snapshot = {}
 	_pending_follower_count = 0
+	_displacement_anchor = null
+	_displacement_queue = []
+	_displacement_resume_leading_finish = false
 
 	_unit_move_panel.visible = false
 	_unit_move_warning_label.visible = false
@@ -892,8 +969,9 @@ func _resolve_deployment_leading_position(desired_center: Vector2) -> Vector2:
 	## 배치 중인 리딩 모델은 지도 경계를 벗어날 수 없고, 그 팀의 배치구역
 	## 구간(들) 중 하나로부터 이동거리(인치) 안쪽에 완전히 들어와 있어야
 	## 한다 (구간의 양 끝에서는 컴퍼스로 그린 것처럼 옆으로도 퍼질 수 있다).
-	## 배치구역 데이터가 없으면 지도 전체 가장자리로 폴백한다.
-	var pos := _resolve_position(_unit_move_leading, desired_center)
+	## 배치구역 데이터가 없으면 지도 전체 가장자리로 폴백한다. 리딩 모델
+	## 이동이므로 변위 베이스는 통과할 수 있다.
+	var pos := _resolve_position(_unit_move_leading, desired_center, true)
 	var radius: float = _unit_move_leading.radius()
 
 	var segments := _team_zone_segments(_unit_move_unit.team)
@@ -918,7 +996,7 @@ func _resolve_deployment_leading_position(desired_center: Vector2) -> Vector2:
 			if dir.length() < 0.01:
 				dir = Vector2(1.0, 0.0)
 			pos = best_point + dir.normalized() * allowed
-			pos = _resolve_position(_unit_move_leading, pos)
+			pos = _resolve_position(_unit_move_leading, pos, true)
 
 	return pos
 
@@ -940,6 +1018,6 @@ func _clamp_to_nearest_map_edge(pos: Vector2, radius: float) -> Vector2:
 			pos.y = radius + move_mm
 		else:
 			pos.y = _map_size.y - radius - move_mm
-		pos = _resolve_position(_unit_move_leading, pos)
+		pos = _resolve_position(_unit_move_leading, pos, true)
 
 	return pos
