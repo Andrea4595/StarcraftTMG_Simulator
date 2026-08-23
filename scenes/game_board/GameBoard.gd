@@ -662,6 +662,7 @@ func _handle_base_drag_input(event: InputEvent) -> void:
 		var local: Vector2 = _map_area.get_local_mouse_position()
 		var desired: Vector2 = local + _drag_offset
 		_dragging_base.set_center(_resolve_dragging_base_position(desired))
+		_update_unit_move_distance_label()
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 		var finished_leading := _unit_move_active and _unit_move_phase == "leading" \
@@ -842,18 +843,20 @@ func _resolve_displacement_drag_position(piece: Control, desired_center: Vector2
 	return _resolve_position(piece, pos)
 
 
+func _effective_move_inch(unit: Unit) -> float:
+	## 유닛에 모델이 하나(리딩 모델뿐)만 남았으면, 다른 모델을 코헤런시
+	## 안에 배치할 필요가 없으므로 그 코헤런시만큼을 이동력에 더해 준다.
+	if unit.models.size() <= 1:
+		return unit.move_inch + unit.coherency_inch
+	return unit.move_inch
+
+
 func _resolve_leading_position(desired_center: Vector2) -> Vector2:
-	## 충돌/경계 해소에 더해, 리딩 모델이 시작 지점으로부터 이동력(인치)을
-	## 벗어나지 못하도록 한 번 더 잡아당긴다. 리딩 모델 이동이므로 변위
-	## 베이스는 통과할 수 있다.
-	var pos := _resolve_position(_unit_move_leading, desired_center, true)
-	var max_dist := _unit_move_unit.move_inch * GameConstants.MM_PER_INCH
-	var offset := pos - _unit_move_start_point
-	var dist := offset.length()
-	if dist > max_dist and dist > 0.01:
-		pos = _unit_move_start_point + offset.normalized() * max_dist
-		pos = _resolve_position(_unit_move_leading, pos, true)
-	return pos
+	## 이동력(인치)에 의한 클램프는 걸지 않는다 — 가이드라인 원과 이동 거리
+	## 텍스트(_update_unit_move_distance_label)만 참고용으로 보여주고, 실제
+	## 위치는 충돌 회피와 지도 경계만 지켜 자유롭게 놓을 수 있다. 리딩 모델
+	## 이동이므로 변위 베이스는 통과할 수 있다.
+	return _resolve_position(_unit_move_leading, desired_center, true)
 
 
 func _coherency_boundary_radius_mm() -> float:
@@ -992,20 +995,39 @@ func _start_unit_move(leading: Control) -> void:
 	## 원은 "베이스 테두리로부터 이동거리만큼"을 나타내야 하므로 리딩 모델
 	## 반지름만큼 더해서 그린다. (실제 이동 가능 거리 자체는 같은 베이스가
 	## 움직이는 것이라 반지름이 상쇄되어 move_inch 그대로 유지된다.)
+	## 모델이 하나뿐인 유닛은 코헤런시만큼 이동력이 늘어난다.
 	_guideline_layer.center_point = _unit_move_start_point
-	_guideline_layer.radius_mm = leading.radius() + _unit_move_unit.move_inch * GameConstants.MM_PER_INCH
+	_guideline_layer.radius_mm = leading.radius() + _effective_move_inch(_unit_move_unit) * GameConstants.MM_PER_INCH
 	_guideline_layer.queue_redraw()
 
 	_menu_target_base = null
+	_update_unit_move_distance_label()
+
+
+func _update_unit_move_distance_label() -> void:
+	## 배치 중이 아닌 일반 유닛 이동에서, 리딩 모델을 옮기는 동안 시작
+	## 지점으로부터 이동한 거리를 인치로 보여준다(자유 이동이라 클램프가
+	## 없으므로, 얼마나 움직였는지 참고할 수 있도록).
+	if not (_unit_move_active and _unit_move_phase == "leading" and not _unit_move_is_deployment):
+		_guideline_layer.label_text = ""
+		return
+	var dist_mm: float = _unit_move_leading.center().distance_to(_unit_move_start_point)
+	_guideline_layer.label_text = "%.1f\"" % (dist_mm / GameConstants.MM_PER_INCH)
+	_guideline_layer.label_pos = _unit_move_leading.center() + Vector2(0.0, -_unit_move_leading.radius() - 14.0)
+	_guideline_layer.queue_redraw()
 
 
 func _finish_leading_move() -> void:
 	_unit_move_phase = "followers"
+	_guideline_layer.label_text = ""
 	if _unit_move_is_deployment and _pending_follower_count > 0:
 		_spawn_deployment_followers()
 	_auto_place_followers()
 	_update_unit_move_guideline()
 	_update_unit_move_warning()
+	if _unit_move_unit.models.size() <= 1:
+		_complete_unit_move()
+		return
 	_unit_move_panel.visible = true
 
 
@@ -1072,7 +1094,10 @@ func _update_unit_move_warning() -> void:
 func _on_unit_move_complete_pressed() -> void:
 	if not _unit_move_active or _unit_move_phase != "followers":
 		return
+	_complete_unit_move()
 
+
+func _complete_unit_move() -> void:
 	var casualties: Array = []
 	for model in _unit_move_unit.models:
 		if model == _unit_move_leading:
@@ -1123,6 +1148,7 @@ func _end_unit_move() -> void:
 
 	_guideline_layer.radius_mm = 0.0
 	_guideline_layer.band_polylines = []
+	_guideline_layer.label_text = ""
 	_guideline_layer.queue_redraw()
 
 
