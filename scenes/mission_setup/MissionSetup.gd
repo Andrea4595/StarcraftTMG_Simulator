@@ -7,6 +7,7 @@ const TERRAIN_PIECE_SCENE := preload("res://scenes/mission_setup/TerrainPiece.ts
 const RADIAL_MENU_SCENE := preload("res://scenes/common/RadialMenu.tscn")
 const MAP_GRID_SCRIPT := preload("res://scenes/mission_setup/MapGrid.gd")
 const DEPLOYMENT_ZONE_SCRIPT := preload("res://scenes/mission_setup/DeploymentZonePiece.gd")
+const OBJECTIVE_PIECE_SCRIPT := preload("res://scenes/mission_setup/MissionObjectivePiece.gd")
 
 const MARGIN := 8.0
 const TOP_ROW_HEIGHT := 32.0
@@ -21,25 +22,43 @@ const ZONE_COLORS := {
 	"B": Color(0.15, 0.35, 1.0, 0.9),
 }
 
+const OBJECTIVE_NUMBERS := [1, 2, 3, 4, 5]
+const OBJECTIVE_TOKEN_DIAMETER_MM := 32.0
+const OBJECTIVE_CAPTURE_MARGIN_INCH := 3.0
+const OBJECTIVE_TOKEN_COLORS := {
+	1: Color(0.85, 0.15, 0.15),
+	2: Color(0.15, 0.4, 0.85),
+	3: Color(0.85, 0.15, 0.15),
+	4: Color(0.15, 0.4, 0.85),
+	5: Color(0.2, 0.7, 0.25),
+}
+
 var _map_area: Control
 var _map_background: ColorRect
 var _map_grid: Control
 var _zone_layer: Control
 var _terrain_layer: Control
+var _objective_layer: Control
 
 var _radial_menu: Control
 var _menu_target: Control = null
 
 var _palette_buttons: Array[Button] = []
 var _zone_buttons: Array[Button] = []
+var _objective_buttons: Dictionary = {} # number -> Button
+var _objective_pieces: Dictionary = {} # number -> Control
 var _size_buttons: Array[Button] = []
 
 var _placement_module_id: String = ""
 var _active_zone_player: String = ""
+var _active_objective_number: int = 0
 var _current_preset: String = GameConstants.DEFAULT_MAP_SIZE_PRESET
 
 var _dragging_piece: TextureRect = null
 var _drag_offset: Vector2 = Vector2.ZERO
+
+var _dragging_objective: Control = null
+var _drag_objective_offset: Vector2 = Vector2.ZERO
 
 var _drawing_zone: Control = null
 var _zone_current_length: float = 0.0
@@ -113,6 +132,21 @@ func _build_palette() -> void:
 		box.add_child(btn)
 		_zone_buttons.append(btn)
 
+	box.add_child(HSeparator.new())
+
+	var objective_label := Label.new()
+	objective_label.text = "미션 목표"
+	box.add_child(objective_label)
+
+	for number in OBJECTIVE_NUMBERS:
+		var btn := Button.new()
+		btn.text = "목표 %d" % number
+		btn.toggle_mode = true
+		btn.custom_minimum_size = Vector2(PALETTE_WIDTH - 16.0, 40.0)
+		btn.toggled.connect(_on_objective_button_toggled.bind(number, btn))
+		box.add_child(btn)
+		_objective_buttons[number] = btn
+
 
 func _build_map_area() -> void:
 	_map_area = Control.new()
@@ -139,6 +173,11 @@ func _build_map_area() -> void:
 	_terrain_layer.name = "TerrainLayer"
 	_terrain_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_map_area.add_child(_terrain_layer)
+
+	_objective_layer = Control.new()
+	_objective_layer.name = "ObjectiveLayer"
+	_objective_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_map_area.add_child(_objective_layer)
 
 
 func _build_radial_menu() -> void:
@@ -169,12 +208,22 @@ func _apply_preset(preset_name: String) -> void:
 		child.queue_free()
 	_drawing_zone = null
 
+	for child in _objective_layer.get_children():
+		child.queue_free()
+	_objective_pieces.clear()
+	_dragging_objective = null
+	_active_objective_number = 0
+	for btn in _objective_buttons.values():
+		btn.disabled = false
+		btn.button_pressed = false
+
 	var map_size: Vector2 = GameConstants.MAP_SIZE_PRESETS[preset_name]
 	_map_background.size = map_size
 	_map_grid.size = map_size
 	_map_grid.queue_redraw()
 	_zone_layer.size = map_size
 	_terrain_layer.size = map_size
+	_objective_layer.size = map_size
 	_layout()
 
 
@@ -200,6 +249,7 @@ func _on_palette_button_toggled(pressed: bool, module_id: String, button: Button
 	if pressed:
 		_deactivate_other_mode_buttons(button)
 		_active_zone_player = ""
+		_active_objective_number = 0
 		_placement_module_id = module_id
 	elif _placement_module_id == module_id:
 		_placement_module_id = ""
@@ -209,9 +259,20 @@ func _on_zone_button_toggled(pressed: bool, player: String, button: Button) -> v
 	if pressed:
 		_deactivate_other_mode_buttons(button)
 		_placement_module_id = ""
+		_active_objective_number = 0
 		_active_zone_player = player
 	elif _active_zone_player == player:
 		_active_zone_player = ""
+
+
+func _on_objective_button_toggled(pressed: bool, number: int, button: Button) -> void:
+	if pressed:
+		_deactivate_other_mode_buttons(button)
+		_placement_module_id = ""
+		_active_zone_player = ""
+		_active_objective_number = number
+	elif _active_objective_number == number:
+		_active_objective_number = 0
 
 
 func _deactivate_other_mode_buttons(except: Button) -> void:
@@ -219,6 +280,9 @@ func _deactivate_other_mode_buttons(except: Button) -> void:
 		if other != except:
 			other.button_pressed = false
 	for other in _zone_buttons:
+		if other != except:
+			other.button_pressed = false
+	for other in _objective_buttons.values():
 		if other != except:
 			other.button_pressed = false
 
@@ -234,6 +298,10 @@ func _input(event: InputEvent) -> void:
 		_handle_drag_input(event)
 		return
 
+	if _dragging_objective:
+		_handle_objective_drag_input(event)
+		return
+
 	if _drawing_zone:
 		_handle_zone_drawing_input(event)
 		return
@@ -246,10 +314,20 @@ func _input(event: InputEvent) -> void:
 	if _active_zone_player != "" and event is InputEventMouseButton \
 			and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		_handle_zone_start_click()
+		return
+
+	if _active_objective_number != 0 and event is InputEventMouseButton \
+			and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_handle_objective_placement_click()
 
 
 func _snap_to_grid(point: Vector2) -> Vector2:
 	return (point / GRID_SIZE_MM).round() * GRID_SIZE_MM
+
+
+func _snap_to_inch_grid(point: Vector2) -> Vector2:
+	var step := GameConstants.MM_PER_INCH
+	return (point / step).round() * step
 
 
 func _handle_drag_input(event: InputEvent) -> void:
@@ -397,6 +475,79 @@ func _create_zone_piece(player: String) -> Control:
 	piece.mouse_filter = Control.MOUSE_FILTER_STOP
 	_zone_layer.add_child(piece)
 	return piece
+
+
+func _handle_objective_placement_click() -> void:
+	var local: Vector2 = _map_area.get_local_mouse_position()
+	var map_size: Vector2 = GameConstants.MAP_SIZE_PRESETS[_current_preset]
+	if local.x < 0.0 or local.x > map_size.x or local.y < 0.0 or local.y > map_size.y:
+		return
+
+	_place_objective(_active_objective_number, _snap_to_inch_grid(local))
+	_clear_objective_mode()
+	get_viewport().set_input_as_handled()
+
+
+func _clear_objective_mode() -> void:
+	var number := _active_objective_number
+	_active_objective_number = 0
+	if _objective_buttons.has(number):
+		_objective_buttons[number].button_pressed = false
+
+
+func _place_objective(number: int, local_point: Vector2) -> void:
+	var diameter := OBJECTIVE_TOKEN_DIAMETER_MM + 2.0 * OBJECTIVE_CAPTURE_MARGIN_INCH * GameConstants.MM_PER_INCH
+
+	var piece := Control.new()
+	piece.set_script(OBJECTIVE_PIECE_SCRIPT)
+	piece.number = number
+	piece.token_color = OBJECTIVE_TOKEN_COLORS[number]
+	piece.size = Vector2(diameter, diameter)
+	piece.mouse_filter = Control.MOUSE_FILTER_STOP
+	_objective_layer.add_child(piece)
+	piece.set_center(local_point)
+	_clamp_objective_to_bounds(piece)
+	piece.drag_requested.connect(_on_objective_drag_requested)
+	piece.delete_requested.connect(_on_objective_delete_requested)
+
+	_objective_pieces[number] = piece
+	if _objective_buttons.has(number):
+		_objective_buttons[number].disabled = true
+
+
+func _clamp_objective_to_bounds(piece: Control) -> void:
+	var map_size: Vector2 = GameConstants.MAP_SIZE_PRESETS[_current_preset]
+	var margin := OBJECTIVE_TOKEN_DIAMETER_MM / 2.0
+	var c: Vector2 = piece.center()
+	c.x = clamp(c.x, margin, max(margin, map_size.x - margin))
+	c.y = clamp(c.y, margin, max(margin, map_size.y - margin))
+	piece.set_center(c)
+
+
+func _handle_objective_drag_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		var local: Vector2 = _map_area.get_local_mouse_position()
+		_dragging_objective.set_center(_snap_to_inch_grid(local + _drag_objective_offset))
+		_clamp_objective_to_bounds(_dragging_objective)
+		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		_dragging_objective = null
+		get_viewport().set_input_as_handled()
+
+
+func _on_objective_drag_requested(piece: Control) -> void:
+	_dragging_objective = piece
+	_drag_objective_offset = piece.center() - _map_area.get_local_mouse_position()
+	_objective_layer.move_child(piece, _objective_layer.get_child_count() - 1)
+
+
+func _on_objective_delete_requested(piece: Control) -> void:
+	var number: int = piece.number
+	piece.queue_free()
+	if _objective_pieces.get(number) == piece:
+		_objective_pieces.erase(number)
+	if _objective_buttons.has(number):
+		_objective_buttons[number].disabled = false
 
 
 func _on_piece_drag_requested(piece: TextureRect) -> void:
