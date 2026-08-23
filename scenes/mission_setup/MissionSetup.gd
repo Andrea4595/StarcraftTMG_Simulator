@@ -1,33 +1,54 @@
 extends Control
 
-## 미션 생성 화면 - 지형 배치 기능.
-## 배치구역 설정 / 미션 목표 배치는 이후 단계에서 추가된다.
+## 미션 생성 화면 - 지형 배치 / 배치구역 설정 기능.
+## 미션 목표 배치는 이후 단계에서 추가된다.
 
 const TERRAIN_PIECE_SCENE := preload("res://scenes/mission_setup/TerrainPiece.tscn")
 const RADIAL_MENU_SCENE := preload("res://scenes/common/RadialMenu.tscn")
 const MAP_GRID_SCRIPT := preload("res://scenes/mission_setup/MapGrid.gd")
+const DEPLOYMENT_ZONE_SCRIPT := preload("res://scenes/mission_setup/DeploymentZonePiece.gd")
 
 const MARGIN := 8.0
 const TOP_ROW_HEIGHT := 32.0
 const PALETTE_WIDTH := 180.0
 const GRID_SIZE_MM := 12.7 # 0.5인치
+const EDGE_SNAP_THRESHOLD_MM := 15.0
+const ZONE_VISUAL_THICKNESS_MM := 6.0
+const ZONE_HIT_THICKNESS_MM := 24.0
+
+const ZONE_COLORS := {
+	"A": Color(1.0, 0.15, 0.15, 0.9),
+	"B": Color(0.15, 0.35, 1.0, 0.9),
+}
 
 var _map_area: Control
 var _map_background: ColorRect
 var _map_grid: Control
+var _zone_layer: Control
 var _terrain_layer: Control
 
 var _radial_menu: Control
-var _menu_target: TextureRect = null
+var _menu_target: Control = null
 
 var _palette_buttons: Array[Button] = []
+var _zone_buttons: Array[Button] = []
 var _size_buttons: Array[Button] = []
 
 var _placement_module_id: String = ""
+var _active_zone_player: String = ""
 var _current_preset: String = GameConstants.DEFAULT_MAP_SIZE_PRESET
 
 var _dragging_piece: TextureRect = null
 var _drag_offset: Vector2 = Vector2.ZERO
+
+var _drawing_zone: Control = null
+var _zone_current_length: float = 0.0
+var _zone_down_local: Vector2 = Vector2.ZERO
+## 모서리가 아닌 변에서 시작하면 처음부터 고정, 모서리에서 시작하면 ""로 두고
+## 드래그 방향에 따라 매 프레임 h/v 후보 중에서 다시 고른다.
+var _zone_locked_edge: String = ""
+var _zone_candidate_h: String = "" # "top" / "bottom" / ""
+var _zone_candidate_v: String = "" # "left" / "right" / ""
 
 
 func _ready() -> void:
@@ -73,6 +94,25 @@ func _build_palette() -> void:
 		box.add_child(btn)
 		_palette_buttons.append(btn)
 
+	box.add_child(HSeparator.new())
+
+	var zone_label := Label.new()
+	zone_label.text = "배치구역 (지도 가장자리에서 드래그)"
+	zone_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	box.add_child(zone_label)
+
+	for player in ["A", "B"]:
+		var btn := Button.new()
+		btn.text = "%s 배치구역" % player
+		btn.toggle_mode = true
+		btn.custom_minimum_size = Vector2(PALETTE_WIDTH - 16.0, 40.0)
+		var text_color: Color = ZONE_COLORS[player]
+		text_color.a = 1.0
+		btn.add_theme_color_override("font_color", text_color)
+		btn.toggled.connect(_on_zone_button_toggled.bind(player, btn))
+		box.add_child(btn)
+		_zone_buttons.append(btn)
+
 
 func _build_map_area() -> void:
 	_map_area = Control.new()
@@ -89,6 +129,11 @@ func _build_map_area() -> void:
 	_map_grid.set_script(MAP_GRID_SCRIPT)
 	_map_grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_map_area.add_child(_map_grid)
+
+	_zone_layer = Control.new()
+	_zone_layer.name = "ZoneLayer"
+	_zone_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_map_area.add_child(_zone_layer)
 
 	_terrain_layer = Control.new()
 	_terrain_layer.name = "TerrainLayer"
@@ -120,11 +165,15 @@ func _apply_preset(preset_name: String) -> void:
 
 	for child in _terrain_layer.get_children():
 		child.queue_free()
+	for child in _zone_layer.get_children():
+		child.queue_free()
+	_drawing_zone = null
 
 	var map_size: Vector2 = GameConstants.MAP_SIZE_PRESETS[preset_name]
 	_map_background.size = map_size
 	_map_grid.size = map_size
 	_map_grid.queue_redraw()
+	_zone_layer.size = map_size
 	_terrain_layer.size = map_size
 	_layout()
 
@@ -149,12 +198,29 @@ func _layout() -> void:
 
 func _on_palette_button_toggled(pressed: bool, module_id: String, button: Button) -> void:
 	if pressed:
-		for other in _palette_buttons:
-			if other != button:
-				other.button_pressed = false
+		_deactivate_other_mode_buttons(button)
+		_active_zone_player = ""
 		_placement_module_id = module_id
 	elif _placement_module_id == module_id:
 		_placement_module_id = ""
+
+
+func _on_zone_button_toggled(pressed: bool, player: String, button: Button) -> void:
+	if pressed:
+		_deactivate_other_mode_buttons(button)
+		_placement_module_id = ""
+		_active_zone_player = player
+	elif _active_zone_player == player:
+		_active_zone_player = ""
+
+
+func _deactivate_other_mode_buttons(except: Button) -> void:
+	for other in _palette_buttons:
+		if other != except:
+			other.button_pressed = false
+	for other in _zone_buttons:
+		if other != except:
+			other.button_pressed = false
 
 
 func _clear_placement_mode() -> void:
@@ -168,9 +234,18 @@ func _input(event: InputEvent) -> void:
 		_handle_drag_input(event)
 		return
 
+	if _drawing_zone:
+		_handle_zone_drawing_input(event)
+		return
+
 	if _placement_module_id != "" and event is InputEventMouseButton \
 			and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		_handle_placement_click()
+		return
+
+	if _active_zone_player != "" and event is InputEventMouseButton \
+			and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_handle_zone_start_click()
 
 
 func _snap_to_grid(point: Vector2) -> Vector2:
@@ -214,6 +289,116 @@ func _place_piece(module_id: String, local_point: Vector2) -> void:
 	piece.rotate_requested.connect(_on_piece_rotate_requested)
 
 
+func _snap_along_edge(local: Vector2, edge: String, map_size: Vector2) -> float:
+	var value: float = local.y if (edge == "left" or edge == "right") else local.x
+	var max_value: float = map_size.y if (edge == "left" or edge == "right") else map_size.x
+	value = clamp(value, 0.0, max_value)
+	return clamp(_snap_to_inch(value), 0.0, max_value)
+
+
+func _snap_to_inch(value: float) -> float:
+	return round(value / GameConstants.MM_PER_INCH) * GameConstants.MM_PER_INCH
+
+
+func _handle_zone_start_click() -> void:
+	var local: Vector2 = _map_area.get_local_mouse_position()
+	var map_size: Vector2 = GameConstants.MAP_SIZE_PRESETS[_current_preset]
+	if local.x < 0.0 or local.x > map_size.x or local.y < 0.0 or local.y > map_size.y:
+		return
+
+	var d_left := local.x
+	var d_right := map_size.x - local.x
+	var d_top := local.y
+	var d_bottom := map_size.y - local.y
+
+	var candidate_v := ""
+	if min(d_left, d_right) <= EDGE_SNAP_THRESHOLD_MM:
+		candidate_v = "left" if d_left <= d_right else "right"
+
+	var candidate_h := ""
+	if min(d_top, d_bottom) <= EDGE_SNAP_THRESHOLD_MM:
+		candidate_h = "top" if d_top <= d_bottom else "bottom"
+
+	if candidate_v == "" and candidate_h == "":
+		return
+
+	_zone_down_local = local
+	_zone_candidate_v = candidate_v
+	_zone_candidate_h = candidate_h
+	# 변 하나에서만 시작했다면 그 변으로 고정, 모서리라면 드래그 방향에 따라
+	# 매 프레임 다시 판단한다 (아래 _update_zone_drawing 참고).
+	_zone_locked_edge = candidate_h if candidate_v == "" else (candidate_v if candidate_h == "" else "")
+
+	_drawing_zone = _create_zone_piece(_active_zone_player)
+	_update_zone_drawing(local, map_size)
+	get_viewport().set_input_as_handled()
+
+
+func _handle_zone_drawing_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		var local: Vector2 = _map_area.get_local_mouse_position()
+		var map_size: Vector2 = GameConstants.MAP_SIZE_PRESETS[_current_preset]
+		_update_zone_drawing(local, map_size)
+		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		_finish_zone_drawing()
+		get_viewport().set_input_as_handled()
+
+
+func _current_drag_edge(local: Vector2) -> String:
+	if _zone_locked_edge != "":
+		return _zone_locked_edge
+	# 모서리에서 시작한 경우: 눌렀던 지점부터 지금까지의 누적 이동 방향으로
+	# 매번 다시 판단한다. 놓기 전까지는 언제든 가로↔세로를 바꿀 수 있다.
+	var delta: Vector2 = local - _zone_down_local
+	if absf(delta.x) >= absf(delta.y):
+		return _zone_candidate_h
+	return _zone_candidate_v
+
+
+func _update_zone_drawing(local: Vector2, map_size: Vector2) -> void:
+	var edge := _current_drag_edge(local)
+	var start_along := _snap_along_edge(_zone_down_local, edge, map_size)
+	var current_along := _snap_along_edge(local, edge, map_size)
+
+	var a: float = min(start_along, current_along)
+	var b: float = max(start_along, current_along)
+	var length: float = b - a
+	_zone_current_length = length
+
+	match edge:
+		"left":
+			_drawing_zone.position = Vector2(-ZONE_HIT_THICKNESS_MM / 2.0, a)
+			_drawing_zone.size = Vector2(ZONE_HIT_THICKNESS_MM, length)
+		"right":
+			_drawing_zone.position = Vector2(map_size.x - ZONE_HIT_THICKNESS_MM / 2.0, a)
+			_drawing_zone.size = Vector2(ZONE_HIT_THICKNESS_MM, length)
+		"top":
+			_drawing_zone.position = Vector2(a, -ZONE_HIT_THICKNESS_MM / 2.0)
+			_drawing_zone.size = Vector2(length, ZONE_HIT_THICKNESS_MM)
+		"bottom":
+			_drawing_zone.position = Vector2(a, map_size.y - ZONE_HIT_THICKNESS_MM / 2.0)
+			_drawing_zone.size = Vector2(length, ZONE_HIT_THICKNESS_MM)
+	_drawing_zone.queue_redraw()
+
+
+func _finish_zone_drawing() -> void:
+	if _zone_current_length < GameConstants.MM_PER_INCH - 1.0:
+		_drawing_zone.queue_free()
+	_drawing_zone = null
+
+
+func _create_zone_piece(player: String) -> Control:
+	var piece := Control.new()
+	piece.set_script(DEPLOYMENT_ZONE_SCRIPT)
+	piece.owner_player = player
+	piece.line_color = ZONE_COLORS[player]
+	piece.visual_thickness = ZONE_VISUAL_THICKNESS_MM
+	piece.mouse_filter = Control.MOUSE_FILTER_STOP
+	_zone_layer.add_child(piece)
+	return piece
+
+
 func _on_piece_drag_requested(piece: TextureRect) -> void:
 	_dragging_piece = piece
 	_drag_offset = piece.center() - _map_area.get_local_mouse_position()
@@ -238,8 +423,10 @@ func _on_menu_action_chosen(action: String) -> void:
 		return
 	match action:
 		"rotate":
-			_menu_target.rotate_step()
-			_clamp_piece_to_bounds(_menu_target)
+			if _menu_target is TextureRect:
+				var terrain_piece := _menu_target as TextureRect
+				terrain_piece.rotate_step()
+				_clamp_piece_to_bounds(terrain_piece)
 		"delete":
 			_menu_target.queue_free()
 	_menu_target = null
