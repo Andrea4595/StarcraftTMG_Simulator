@@ -19,6 +19,7 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 GameConstants="*res://autoload/GameConstants.gd"
 MatchState="*res://autoload/MatchState.gd"
 TerrainCatalog="*res://autoload/TerrainCatalog.gd"
+MissionData="*res://autoload/MissionData.gd"
 
 [rendering]
 

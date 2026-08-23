@@ -17,6 +17,8 @@ func _show_screen(scene: PackedScene) -> void:
 		_current_screen.queue_free()
 	_current_screen = scene.instantiate()
 	screen_host.add_child(_current_screen)
+	if _current_screen.has_signal("start_game_requested"):
+		_current_screen.start_game_requested.connect(_on_game_board_button_pressed)
 
 
 func _on_mission_setup_button_pressed() -> void:

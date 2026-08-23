@@ -1,7 +1,8 @@
 extends Control
 
-## 미션 생성 화면 - 지형 배치 / 배치구역 설정 기능.
-## 미션 목표 배치는 이후 단계에서 추가된다.
+## 미션 생성 화면 - 지형 배치 / 배치구역 설정 / 미션 목표 배치 기능.
+
+signal start_game_requested
 
 const TERRAIN_PIECE_SCENE := preload("res://scenes/mission_setup/TerrainPiece.tscn")
 const RADIAL_MENU_SCENE := preload("res://scenes/common/RadialMenu.tscn")
@@ -94,6 +95,15 @@ func _build_size_row() -> void:
 		btn.pressed.connect(_on_size_preset_pressed.bind(preset_name))
 		row.add_child(btn)
 		_size_buttons.append(btn)
+
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(24.0, 0.0)
+	row.add_child(spacer)
+
+	var start_btn := Button.new()
+	start_btn.text = "게임 시작 ▶"
+	start_btn.pressed.connect(_on_start_game_pressed)
+	row.add_child(start_btn)
 
 
 func _build_palette() -> void:
@@ -195,6 +205,37 @@ func _on_size_preset_pressed(preset_name: String) -> void:
 	if preset_name == _current_preset:
 		return
 	_apply_preset(preset_name)
+
+
+func _on_start_game_pressed() -> void:
+	MissionData.clear()
+	MissionData.has_data = true
+	MissionData.map_preset = _current_preset
+
+	for child in _terrain_layer.get_children():
+		var piece: TextureRect = child
+		MissionData.terrain_pieces.append({
+			"module_id": piece.module_id,
+			"position": piece.center(),
+			"rotation_deg": piece.rotation_degrees,
+		})
+
+	for child in _zone_layer.get_children():
+		MissionData.deployment_zones.append({
+			"edge": child.edge,
+			"player": child.owner_player,
+			"start_along": child.start_along,
+			"end_along": child.end_along,
+		})
+
+	for number in _objective_pieces:
+		var piece: Control = _objective_pieces[number]
+		MissionData.mission_objectives.append({
+			"number": number,
+			"position": piece.center(),
+		})
+
+	start_game_requested.emit()
 
 
 func _apply_preset(preset_name: String) -> void:
@@ -443,6 +484,10 @@ func _update_zone_drawing(local: Vector2, map_size: Vector2) -> void:
 	var b: float = max(start_along, current_along)
 	var length: float = b - a
 	_zone_current_length = length
+
+	_drawing_zone.edge = edge
+	_drawing_zone.start_along = a
+	_drawing_zone.end_along = b
 
 	match edge:
 		"left":

@@ -9,6 +9,13 @@ var owner_player: String = ""
 var line_color: Color = Color.WHITE
 var visual_thickness: float = 6.0
 
+## 게임 화면 핸드오프용 데이터: 어느 변의, 어느 구간인지.
+## edge: "left" / "right" / "top" / "bottom". along 값은 그 변을 따라 잰 좌표
+## (left/right는 y, top/bottom은 x), 지도 로컬 mm 기준.
+var edge: String = ""
+var start_along: float = 0.0
+var end_along: float = 0.0
+
 
 func _draw() -> void:
 	if size.x >= size.y:

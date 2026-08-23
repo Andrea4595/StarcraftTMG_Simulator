@@ -4,10 +4,12 @@ extends Control
 ## (데미지 기록·모델 제거·모델 복제·유닛 이동) / 유닛 배치 기능.
 ## 변위 베이스 예외, 스코어보드는 이후 단계에서 추가된다.
 ##
-## 지금은 미션 생성 화면과의 핸드오프(지형/배치구역/미션목표 전달)가 없어서
-## 독립적인 기본 지도 크기로 동작한다. 로스터 앱도 없어서 "미배치 유닛"은
-## 임시 "유닛 추가" 폼으로 직접 등록하고, 배치구역 대신 지도 가장자리
-## (이동거리 밴드 안쪽)만 배치 가능 영역으로 지원한다.
+## MissionData(오토로드)에 핸드오프 데이터가 있으면(미션 생성 화면에서
+## "게임 시작"을 눌러서 넘어온 경우) 그 지도 크기/지형/배치구역/미션목표를
+## 그대로 재현하고, 유닛 배치도 그 유닛의 팀 배치구역 구간을 기준으로
+## 삼는다. 핸드오프 데이터가 없으면(게임 화면으로 바로 들어온 경우) 기본
+## 지도 크기로 동작하고, 배치는 지도 전체 가장자리를 기준으로 폴백한다.
+## 로스터 앱이 없어서 "미배치 유닛"은 임시 "유닛 추가" 폼으로 직접 등록한다.
 
 const RADIAL_MENU_SCENE := preload("res://scenes/common/RadialMenu.tscn")
 const BASE_CREATION_DIALOG_SCENE := preload("res://scenes/game_board/BaseCreationDialog.tscn")
@@ -15,6 +17,9 @@ const DAMAGE_INPUT_DIALOG_SCENE := preload("res://scenes/game_board/DamageInputD
 const UNIT_ADD_DIALOG_SCENE := preload("res://scenes/game_board/UnitAddDialog.tscn")
 const BASE_SCRIPT := preload("res://scenes/game_board/Base.gd")
 const GUIDELINE_SCRIPT := preload("res://scenes/game_board/UnitMoveGuideline.gd")
+const TERRAIN_PIECE_SCENE := preload("res://scenes/mission_setup/TerrainPiece.tscn")
+const DEPLOYMENT_ZONE_SCRIPT := preload("res://scenes/mission_setup/DeploymentZonePiece.gd")
+const OBJECTIVE_PIECE_SCRIPT := preload("res://scenes/mission_setup/MissionObjectivePiece.gd")
 
 const MARGIN := 8.0
 const PALETTE_WIDTH := 180.0
@@ -29,6 +34,14 @@ const TEAM_COLORS := {
 	"A": Color(1.0, 0.15, 0.15, 0.85),
 	"B": Color(0.15, 0.35, 1.0, 0.85),
 	"neutral": Color(0.6, 0.6, 0.6, 0.85),
+}
+
+const OBJECTIVE_TOKEN_COLORS := {
+	1: Color(0.85, 0.15, 0.15),
+	2: Color(0.15, 0.4, 0.85),
+	3: Color(0.85, 0.15, 0.15),
+	4: Color(0.15, 0.4, 0.85),
+	5: Color(0.2, 0.7, 0.25),
 }
 
 var _map_size: Vector2
@@ -71,7 +84,8 @@ var _unit_add_dialog: Control
 
 
 func _ready() -> void:
-	_map_size = GameConstants.MAP_SIZE_PRESETS[GameConstants.DEFAULT_MAP_SIZE_PRESET]
+	var preset := MissionData.map_preset if MissionData.has_data else GameConstants.DEFAULT_MAP_SIZE_PRESET
+	_map_size = GameConstants.MAP_SIZE_PRESETS[preset]
 	_build_map_area()
 	_build_radial_menu()
 	_build_creation_dialog()
@@ -96,6 +110,8 @@ func _build_map_area() -> void:
 	_map_background.gui_input.connect(_on_map_background_gui_input)
 	_map_area.add_child(_map_background)
 
+	_build_mission_data_visuals()
+
 	_base_layer = Control.new()
 	_base_layer.name = "BaseLayer"
 	_base_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -107,6 +123,62 @@ func _build_map_area() -> void:
 	_guideline_layer.size = _map_size
 	_guideline_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_map_area.add_child(_guideline_layer)
+
+
+func _build_mission_data_visuals() -> void:
+	## 미션 생성 화면에서 넘어온 지형/배치구역/미션목표를 그대로 재현한다.
+	## 여기서는 순수 시각 참고용이다: 드래그/회전/삭제 등 조작은 지원하지
+	## 않는다 (그 편집은 미션 생성 화면의 몫).
+	if not MissionData.has_data:
+		return
+
+	for zone in MissionData.deployment_zones:
+		var piece := Control.new()
+		piece.set_script(DEPLOYMENT_ZONE_SCRIPT)
+		piece.owner_player = zone["player"]
+		piece.edge = zone["edge"]
+		piece.start_along = zone["start_along"]
+		piece.end_along = zone["end_along"]
+		piece.line_color = TEAM_COLORS.get(zone["player"], TEAM_COLORS["neutral"])
+		piece.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_map_area.add_child(piece)
+
+		var thickness := 6.0
+		match zone["edge"]:
+			"left":
+				piece.position = Vector2(-thickness / 2.0, zone["start_along"])
+				piece.size = Vector2(thickness, zone["end_along"] - zone["start_along"])
+			"right":
+				piece.position = Vector2(_map_size.x - thickness / 2.0, zone["start_along"])
+				piece.size = Vector2(thickness, zone["end_along"] - zone["start_along"])
+			"top":
+				piece.position = Vector2(zone["start_along"], -thickness / 2.0)
+				piece.size = Vector2(zone["end_along"] - zone["start_along"], thickness)
+			"bottom":
+				piece.position = Vector2(zone["start_along"], _map_size.y - thickness / 2.0)
+				piece.size = Vector2(zone["end_along"] - zone["start_along"], thickness)
+
+	for terrain in MissionData.terrain_pieces:
+		var module := TerrainCatalog.get_module(terrain["module_id"])
+		if module == null:
+			continue
+		var piece: TextureRect = TERRAIN_PIECE_SCENE.instantiate()
+		_map_area.add_child(piece)
+		piece.setup(module)
+		piece.rotation_degrees = terrain["rotation_deg"]
+		piece.set_center(terrain["position"])
+		piece.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	for objective in MissionData.mission_objectives:
+		var diameter := 32.0 + 2.0 * 3.0 * GameConstants.MM_PER_INCH
+		var piece := Control.new()
+		piece.set_script(OBJECTIVE_PIECE_SCRIPT)
+		piece.number = objective["number"]
+		piece.token_color = OBJECTIVE_TOKEN_COLORS.get(objective["number"], Color(0.85, 0.85, 0.8))
+		piece.size = Vector2(diameter, diameter)
+		piece.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_map_area.add_child(piece)
+		piece.set_center(objective["position"])
 
 
 func _build_radial_menu() -> void:
@@ -521,7 +593,7 @@ func _auto_place_followers() -> void:
 
 
 func _update_unit_move_guideline() -> void:
-	_guideline_layer.band_rect = Rect2()
+	_guideline_layer.band_polylines = []
 	_guideline_layer.center_point = _unit_move_leading.center()
 	_guideline_layer.radius_mm = _coherency_boundary_radius_mm()
 	_guideline_layer.queue_redraw()
@@ -590,7 +662,7 @@ func _end_unit_move() -> void:
 	_unit_move_warning_label.visible = false
 
 	_guideline_layer.radius_mm = 0.0
-	_guideline_layer.band_rect = Rect2()
+	_guideline_layer.band_polylines = []
 	_guideline_layer.queue_redraw()
 
 
@@ -621,27 +693,131 @@ func _start_deployment(index: int) -> void:
 	_show_deployment_band(_pending_deployment_def)
 
 
+func _team_zone_segments(team: String) -> Array:
+	var segments: Array = []
+	if not MissionData.has_data:
+		return segments
+	for zone in MissionData.deployment_zones:
+		if zone["player"] == team:
+			segments.append(zone)
+	return segments
+
+
+func _segment_endpoints_world(zone: Dictionary) -> Array:
+	var a: float = zone["start_along"]
+	var b: float = zone["end_along"]
+	match zone["edge"]:
+		"left":
+			return [Vector2(0.0, a), Vector2(0.0, b)]
+		"right":
+			return [Vector2(_map_size.x, a), Vector2(_map_size.x, b)]
+		"top":
+			return [Vector2(a, 0.0), Vector2(b, 0.0)]
+		"bottom":
+			return [Vector2(a, _map_size.y), Vector2(b, _map_size.y)]
+	return [Vector2.ZERO, Vector2.ZERO]
+
+
+func _closest_point_on_segment(p: Vector2, a: Vector2, b: Vector2) -> Vector2:
+	var ab := b - a
+	var len_sq := ab.length_squared()
+	if len_sq < 0.0001:
+		return a
+	var t: float = clamp((p - a).dot(ab) / len_sq, 0.0, 1.0)
+	return a + ab * t
+
+
+func _local_to_world(edge: String, p: Vector2) -> Vector2:
+	## p = (along, depth-into-board) in a local frame for this edge.
+	match edge:
+		"left":
+			return Vector2(p.y, p.x)
+		"right":
+			return Vector2(_map_size.x - p.y, p.x)
+		"top":
+			return Vector2(p.x, p.y)
+		"bottom":
+			return Vector2(p.x, _map_size.y - p.y)
+	return Vector2.ZERO
+
+
+func _build_capsule_polygon(edge: String, a: float, b: float, depth: float) -> PackedVector2Array:
+	## 구간 [a,b]에서 depth만큼 보드 안쪽으로 뻗은 "약통" 모양(양 끝은
+	## 컴퍼스로 그린 것처럼 둥글게) 외곽선. 지도 가장자리 쪽은 닫지 않아도
+	## draw_polyline이 마지막 점을 첫 점과 이어주면 자연히 가장자리를 따라
+	## 닫힌다.
+	var steps := 16
+	var points := PackedVector2Array()
+	for i in range(steps + 1):
+		var t: float = 180.0 - 90.0 * i / float(steps)
+		var rad := deg_to_rad(t)
+		points.append(_clamp_to_map(_local_to_world(edge, Vector2(a + depth * cos(rad), depth * sin(rad)))))
+	for i in range(steps + 1):
+		var t2: float = 90.0 - 90.0 * i / float(steps)
+		var rad2 := deg_to_rad(t2)
+		points.append(_clamp_to_map(_local_to_world(edge, Vector2(b + depth * cos(rad2), depth * sin(rad2)))))
+	return points
+
+
+func _clamp_to_map(p: Vector2) -> Vector2:
+	return Vector2(clamp(p.x, 0.0, _map_size.x), clamp(p.y, 0.0, _map_size.y))
+
+
+func _merge_all_polygons(polygons: Array) -> Array:
+	if polygons.is_empty():
+		return []
+	var result: Array = [polygons[0]]
+	for i in range(1, polygons.size()):
+		var p: PackedVector2Array = polygons[i]
+		var merged_into := false
+		for j in range(result.size()):
+			var merge_result: Array = Geometry2D.merge_polygons(result[j], p)
+			if merge_result.size() == 1:
+				result[j] = merge_result[0]
+				merged_into = true
+				break
+		if not merged_into:
+			result.append(p)
+	return result
+
+
+func _fallback_edge_band_polyline(radius: float, expand_for_visual: bool) -> PackedVector2Array:
+	## 배치구역 데이터가 없을 때 쓰는 폴백: 지도 전체 가장자리 안쪽 테두리.
+	var move_mm := GameConstants.DEFAULT_MOVE_INCH * GameConstants.MM_PER_INCH
+	var inset: float = radius + move_mm + (radius if expand_for_visual else 0.0)
+	var p := Vector2(inset, inset)
+	var s := Vector2(max(_map_size.x - inset * 2.0, 0.0), max(_map_size.y - inset * 2.0, 0.0))
+	return PackedVector2Array([p, p + Vector2(s.x, 0.0), p + s, p + Vector2(0.0, s.y), p])
+
+
 func _show_deployment_band(def: Dictionary) -> void:
-	## "배치 영역"은 지금은 지도 가장자리만 지원한다: 리딩 모델 전체가
-	## 이동거리(인치) 안쪽으로 지도 가장자리에 붙어 있어야 한다. 그 경계선을
-	## (베이스 크기를 감안해서) 사각형으로 미리 보여준다.
 	var width: float = def["width_mm"]
 	var height: float = def["height_mm"]
 	var radius: float = max(width, height) / 2.0
-	## 중심이 갈 수 있는 최대 지점(radius + move_mm)에서, 그 위치에 있을 때
-	## 베이스의 먼 쪽 테두리가 어디까지 튀어나오는지(radius 한 번 더)까지
-	## 감안해서 그려야 "선에 베이스 테두리가 닿으면 한계"로 보인다.
-	var inset: float = radius * 2.0 + GameConstants.DEFAULT_MOVE_INCH * GameConstants.MM_PER_INCH
+	var move_mm := GameConstants.DEFAULT_MOVE_INCH * GameConstants.MM_PER_INCH
+	var visual_depth: float = radius * 2.0 + move_mm
 
-	_guideline_layer.band_rect = Rect2(
-		Vector2(inset, inset),
-		Vector2(max(_map_size.x - inset * 2.0, 0.0), max(_map_size.y - inset * 2.0, 0.0))
-	)
+	var segments := _team_zone_segments(def["team"])
+	var polylines: Array = []
+
+	if segments.is_empty():
+		polylines.append(_fallback_edge_band_polyline(radius, true))
+	else:
+		var polygons: Array = []
+		for zone in segments:
+			polygons.append(_build_capsule_polygon(zone["edge"], zone["start_along"], zone["end_along"], visual_depth))
+		for merged in _merge_all_polygons(polygons):
+			var closed := PackedVector2Array(merged)
+			if closed.size() > 0:
+				closed.append(closed[0])
+			polylines.append(closed)
+
+	_guideline_layer.band_polylines = polylines
 	_guideline_layer.queue_redraw()
 
 
 func _clear_deployment_band() -> void:
-	_guideline_layer.band_rect = Rect2()
+	_guideline_layer.band_polylines = []
 	_guideline_layer.queue_redraw()
 
 
@@ -690,12 +866,42 @@ func _begin_deployment_drag(click_point: Vector2) -> void:
 
 
 func _resolve_deployment_leading_position(desired_center: Vector2) -> Vector2:
-	## 배치 중인 리딩 모델은 지도 경계를 벗어날 수 없고, 항상 어느 한쪽
-	## 가장자리로부터 이동거리(인치) 안쪽에 완전히 들어와 있어야 한다.
+	## 배치 중인 리딩 모델은 지도 경계를 벗어날 수 없고, 그 팀의 배치구역
+	## 구간(들) 중 하나로부터 이동거리(인치) 안쪽에 완전히 들어와 있어야
+	## 한다 (구간의 양 끝에서는 컴퍼스로 그린 것처럼 옆으로도 퍼질 수 있다).
+	## 배치구역 데이터가 없으면 지도 전체 가장자리로 폴백한다.
 	var pos := _resolve_position(_unit_move_leading, desired_center)
 	var radius: float = _unit_move_leading.radius()
-	var move_mm := _unit_move_unit.move_inch * GameConstants.MM_PER_INCH
 
+	var segments := _team_zone_segments(_unit_move_unit.team)
+	if segments.is_empty():
+		pos = _clamp_to_nearest_map_edge(pos, radius)
+	else:
+		var move_mm := _unit_move_unit.move_inch * GameConstants.MM_PER_INCH
+		var allowed: float = radius + move_mm
+
+		var best_point: Vector2 = pos
+		var best_dist: float = INF
+		for zone in segments:
+			var ends := _segment_endpoints_world(zone)
+			var cp: Vector2 = _closest_point_on_segment(pos, ends[0], ends[1])
+			var dist := cp.distance_to(pos)
+			if dist < best_dist:
+				best_dist = dist
+				best_point = cp
+
+		if best_dist > allowed:
+			var dir := pos - best_point
+			if dir.length() < 0.01:
+				dir = Vector2(1.0, 0.0)
+			pos = best_point + dir.normalized() * allowed
+			pos = _resolve_position(_unit_move_leading, pos)
+
+	return pos
+
+
+func _clamp_to_nearest_map_edge(pos: Vector2, radius: float) -> Vector2:
+	var move_mm := _unit_move_unit.move_inch * GameConstants.MM_PER_INCH
 	var d_left := pos.x - radius
 	var d_right := _map_size.x - pos.x - radius
 	var d_top := pos.y - radius
