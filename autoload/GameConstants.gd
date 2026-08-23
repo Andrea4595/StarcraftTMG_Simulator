@@ -9,6 +9,10 @@ const MM_PER_INCH := 25.4
 const DEFAULT_COHERENCY_INCH := 3.0
 const DEFAULT_COHERENCY_MM := DEFAULT_COHERENCY_INCH * MM_PER_INCH
 
+## 아직 유닛 스탯(로스터 데이터)이 없어서 쓰는 임시 기본 프로필.
+## TODO: 로스터 연동(목표 4) 후 실제 유닛 스탯으로 교체.
+const DEFAULT_MOVE_INCH := 4.0
+
 ## 보드 크기 프리셋 (mm 단위). 미션 생성 화면에서 선택한다.
 const MAP_SIZE_PRESETS := {
 	"36x36": Vector2(36.0 * MM_PER_INCH, 36.0 * MM_PER_INCH),

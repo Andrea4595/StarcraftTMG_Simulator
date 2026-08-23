@@ -8,4 +8,5 @@ extends RefCounted
 var unit_name: String = ""
 var team: String = "neutral"
 var coherency_inch: float = GameConstants.DEFAULT_COHERENCY_INCH
+var move_inch: float = GameConstants.DEFAULT_MOVE_INCH
 var models: Array = [] # Array[Control] (Base 조각들)
