@@ -27,6 +27,8 @@ const SCOREBOARD_HEIGHT := 40.0
 const ZOOM_STEP := 1.1
 const MIN_ZOOM := 0.3
 const MAX_ZOOM := 4.0
+const MODEL_ROTATE_STEP_DEG := 15.0
+const ELLIPSE_COLLISION_SIDES := 64
 const COLLISION_ITERATIONS := 8
 const DUPLICATE_GAP_MM := 4.0
 const FOLLOWER_SNAP_THRESHOLD_MM := 6.0
@@ -606,8 +608,24 @@ func _input(event: InputEvent) -> void:
 
 	if event is InputEventMouseButton and event.pressed \
 			and (event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN):
-		var factor := ZOOM_STEP if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / ZOOM_STEP
-		_zoom_at(event.position, factor)
+		var direction := 1 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -1
+		if _dragging_base:
+			## 모델(리딩 모델이든 일반 모델이든)을 옮기는 중에 휠을 굴리면
+			## 그 모델을 회전시킨다 (타원 베이스가 실제로 방향을 가지므로).
+			_dragging_base.rotation_degrees = fmod(
+					_dragging_base.rotation_degrees + MODEL_ROTATE_STEP_DEG * direction + 360.0, 360.0)
+			_dragging_base.set_center(_resolve_dragging_base_position(_dragging_base.center()))
+		elif _dragging_follower:
+			var before_center: Vector2 = _dragging_follower.center()
+			_dragging_follower.rotation_degrees = fmod(
+					_dragging_follower.rotation_degrees + MODEL_ROTATE_STEP_DEG * direction + 360.0, 360.0)
+			var resolved := _resolve_follower_position(
+					_dragging_follower, before_center, _unit_move_leading.center())
+			_dragging_follower.set_center(resolved)
+			_update_unit_move_warning()
+		else:
+			var factor := ZOOM_STEP if direction > 0 else 1.0 / ZOOM_STEP
+			_zoom_at(event.position, factor)
 		get_viewport().set_input_as_handled()
 		return
 
@@ -630,19 +648,20 @@ func _input(event: InputEvent) -> void:
 		return
 
 
+func _resolve_dragging_base_position(desired_center: Vector2) -> Vector2:
+	if _unit_move_active and _unit_move_phase == "leading" and _unit_move_is_deployment:
+		return _resolve_deployment_leading_position(desired_center)
+	elif _unit_move_active and _unit_move_phase == "leading":
+		return _resolve_leading_position(desired_center)
+	## 모델 메뉴얼 이동: 변위 베이스는 통과할 수 있다.
+	return _resolve_position(_dragging_base, desired_center, true)
+
+
 func _handle_base_drag_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var local: Vector2 = _map_area.get_local_mouse_position()
 		var desired: Vector2 = local + _drag_offset
-		var resolved: Vector2
-		if _unit_move_active and _unit_move_phase == "leading" and _unit_move_is_deployment:
-			resolved = _resolve_deployment_leading_position(desired)
-		elif _unit_move_active and _unit_move_phase == "leading":
-			resolved = _resolve_leading_position(desired)
-		else:
-			## 모델 메뉴얼 이동: 변위 베이스는 통과할 수 있다.
-			resolved = _resolve_position(_dragging_base, desired, true)
-		_dragging_base.set_center(resolved)
+		_dragging_base.set_center(_resolve_dragging_base_position(desired))
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 		var finished_leading := _unit_move_active and _unit_move_phase == "leading" \
@@ -662,9 +681,8 @@ func _handle_follower_drag_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var local: Vector2 = _map_area.get_local_mouse_position()
 		var desired: Vector2 = local + _drag_offset
-		var max_center_distance := _max_follower_center_distance(_dragging_follower)
 		var resolved := _resolve_follower_position(
-				_dragging_follower, desired, _unit_move_leading.center(), max_center_distance)
+				_dragging_follower, desired, _unit_move_leading.center())
 		_dragging_follower.set_center(resolved)
 		_update_unit_move_warning()
 		get_viewport().set_input_as_handled()
@@ -673,35 +691,101 @@ func _handle_follower_drag_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
+func _ellipse_polygon_at(center_pt: Vector2, ellipse_size_mm: Vector2, rot: float) -> PackedVector2Array:
+	## center_pt를 중심으로 하는, rot(라디안)만큼 회전된 타원의 다각형 근사.
+	## 실제 노드를 옮기지 않고도 "만약 여기 있었다면"을 검사할 수 있도록
+	## 순수하게 좌표만으로 계산한다.
+	var points := PackedVector2Array()
+	var rx := ellipse_size_mm.x / 2.0
+	var ry := ellipse_size_mm.y / 2.0
+	for i in range(ELLIPSE_COLLISION_SIDES):
+		var angle := i * TAU / ELLIPSE_COLLISION_SIDES
+		var local := Vector2(cos(angle) * rx, sin(angle) * ry).rotated(rot)
+		points.append(center_pt + local)
+	return points
+
+
+func _polygon_overlap_mtv(poly_a: PackedVector2Array, center_a: Vector2, poly_b: PackedVector2Array, center_b: Vector2) -> Variant:
+	## 분리축 정리(SAT)로 두 볼록 다각형이 겹치는지 확인하고, 겹친다면
+	## a를 b로부터 밀어낼 최소 이동 벡터(MTV)를 돌려준다. 안 겹치면 null.
+	var min_overlap := INF
+	var min_axis := Vector2.ZERO
+
+	for poly in [poly_a, poly_b]:
+		var count: int = poly.size()
+		for i in range(count):
+			var p1: Vector2 = poly[i]
+			var p2: Vector2 = poly[(i + 1) % count]
+			var edge: Vector2 = p2 - p1
+			if edge.length_squared() < 0.0001:
+				continue
+			var axis: Vector2 = Vector2(-edge.y, edge.x).normalized()
+
+			var min_a := INF
+			var max_a := -INF
+			for p in poly_a:
+				var proj: float = p.dot(axis)
+				min_a = min(min_a, proj)
+				max_a = max(max_a, proj)
+
+			var min_b := INF
+			var max_b := -INF
+			for p in poly_b:
+				var proj2: float = p.dot(axis)
+				min_b = min(min_b, proj2)
+				max_b = max(max_b, proj2)
+
+			if max_a <= min_b or max_b <= min_a:
+				return null
+
+			var overlap: float = min(max_a, max_b) - max(min_a, min_b)
+			if overlap < min_overlap:
+				min_overlap = overlap
+				min_axis = axis
+
+	if (center_a - center_b).dot(min_axis) < 0.0:
+		min_axis = -min_axis
+
+	return min_axis * min_overlap
+
+
 func _resolve_position(piece: Control, desired_center: Vector2, allow_displacement_overlap: bool = false) -> Vector2:
 	## 베이스끼리 절대 겹치지 않도록, 겹치는 다른 베이스로부터 밀어내는 것을
 	## 여러 번 반복해서 가장 가까운 비충돌 위치를 근사한다. 이후 지도 경계로 clamp.
 	## allow_displacement_overlap이면(모델 메뉴얼 이동/리딩 모델 이동 중) 변위
 	## 베이스는 장애물로 치지 않고 그냥 통과할 수 있다.
+	##
+	## 실제 겹침 판정은 (회전된) 타원을 다각형으로 근사해서 SAT로 확인한다 —
+	## 원형으로 근사하면 타원이 실제보다 더 넓게 막히는 문제가 있었다.
+	## bounding_radius(긴 반지름 기준 원)는 "가까이 있는지" 빠르게 거르는
+	## 용도와 지도 경계 clamp에만 쓴다.
 	var pos := desired_center
-	var radius: float = piece.radius()
+	var bounding_radius: float = piece.radius()
 
 	for _iteration in range(COLLISION_ITERATIONS):
 		var moved := false
+		var poly_a := _ellipse_polygon_at(pos, piece.size_mm, piece.rotation)
 		for other in _base_layer.get_children():
 			if other == piece:
 				continue
 			if allow_displacement_overlap and other.is_displacement:
 				continue
-			var min_dist: float = radius + other.radius()
-			var offset: Vector2 = pos - other.center()
-			var dist: float = offset.length()
-			if dist < min_dist:
+
+			var other_center: Vector2 = other.center()
+			if pos.distance_to(other_center) > bounding_radius + other.radius():
+				continue
+
+			var poly_b := _ellipse_polygon_at(other_center, other.size_mm, other.rotation)
+			var mtv = _polygon_overlap_mtv(poly_a, pos, poly_b, other_center)
+			if mtv != null:
 				moved = true
-				if dist < 0.01:
-					offset = Vector2(1.0, 0.0)
-					dist = 0.01
-				pos = other.center() + offset.normalized() * min_dist
+				pos += mtv
+				poly_a = _ellipse_polygon_at(pos, piece.size_mm, piece.rotation)
 		if not moved:
 			break
 
-	pos.x = clamp(pos.x, radius, max(radius, _map_size.x - radius))
-	pos.y = clamp(pos.y, radius, max(radius, _map_size.y - radius))
+	pos.x = clamp(pos.x, bounding_radius, max(bounding_radius, _map_size.x - bounding_radius))
+	pos.y = clamp(pos.y, bounding_radius, max(bounding_radius, _map_size.y - bounding_radius))
 	return pos
 
 
@@ -778,28 +862,102 @@ func _coherency_boundary_radius_mm() -> float:
 	return _unit_move_leading.radius() + _unit_move_unit.coherency_inch * GameConstants.MM_PER_INCH
 
 
-func _max_follower_center_distance(follower: Control) -> float:
-	## follower 베이스 전체가 코헤런시 경계 안에 완전히 들어오기 위한
-	## 중심 간 최대 허용 거리. (경계 반지름에서 follower 자신의 반지름만큼 뺀다.)
-	return _coherency_boundary_radius_mm() - follower.radius()
+func _ellipse_radius_in_direction(ellipse_size_mm: Vector2, rot: float, world_dir: Vector2) -> float:
+	## (회전된) 타원의 중심에서 world_dir 방향으로 잰, 그 방향의 테두리까지의
+	## 정확한 거리. 타원은 중심 대칭이라 world_dir과 -world_dir의 결과가 같다.
+	var rx := ellipse_size_mm.x / 2.0
+	var ry := ellipse_size_mm.y / 2.0
+	var local_dir := world_dir.rotated(-rot)
+	var denom := sqrt(pow(local_dir.x / rx, 2.0) + pow(local_dir.y / ry, 2.0))
+	if denom < 0.0001:
+		return max(rx, ry)
+	return 1.0 / denom
 
 
-func _resolve_follower_position(piece: Control, desired_center: Vector2, leading_center: Vector2, max_center_distance: float) -> Vector2:
+func _directional_max_follower_distance(follower: Control, leading_center: Vector2, at_point: Vector2) -> float:
+	## 리딩 모델과 follower 사이의 "현재 방향"을 기준으로, 두 타원(각자의
+	## 회전을 반영)의 테두리 사이가 정확히 코헤런시 거리가 되는 중심 간
+	## 거리. 방향이 바뀌거나(드래그) 어느 한쪽이 회전하면 그때그때 다시
+	## 계산해야 한다 — 원형 근사와 달리 방향/회전에 따라 값이 달라진다.
+	var direction := at_point - leading_center
+	if direction.length() < 0.01:
+		direction = Vector2(1.0, 0.0)
+	else:
+		direction = direction.normalized()
+
+	var coherency_mm := _unit_move_unit.coherency_inch * GameConstants.MM_PER_INCH
+	var leading_edge := _ellipse_radius_in_direction(_unit_move_leading.size_mm, _unit_move_leading.rotation, direction)
+	var follower_edge := _ellipse_radius_in_direction(follower.size_mm, follower.rotation, direction)
+	return leading_edge + coherency_mm + follower_edge
+
+
+func _ellipse_offset_polygon_at(center_pt: Vector2, ellipse_size_mm: Vector2, rot: float, offset_mm: float) -> PackedVector2Array:
+	## 타원 테두리에서 바깥으로 offset_mm만큼 고르게 떨어진 곡선의 다각형
+	## 근사. 반지름을 단순히 늘리는 것과 달리, 각 점의 실제 바깥 법선
+	## 방향으로 밀어야 "테두리로부터 X만큼"이 방향과 무관하게 일정해진다.
+	var points := PackedVector2Array()
+	var rx := ellipse_size_mm.x / 2.0
+	var ry := ellipse_size_mm.y / 2.0
+	for i in range(ELLIPSE_COLLISION_SIDES):
+		var angle := i * TAU / ELLIPSE_COLLISION_SIDES
+		var local_point := Vector2(cos(angle) * rx, sin(angle) * ry)
+		var normal := Vector2(cos(angle) / rx, sin(angle) / ry).normalized()
+		var offset_point := local_point + normal * offset_mm
+		points.append(center_pt + offset_point.rotated(rot))
+	return points
+
+
+func _point_in_convex_polygon(point: Vector2, polygon: PackedVector2Array) -> bool:
+	var count: int = polygon.size()
+	var sign_ref := 0.0
+	for i in range(count):
+		var a: Vector2 = polygon[i]
+		var b: Vector2 = polygon[(i + 1) % count]
+		var edge: Vector2 = b - a
+		var to_point: Vector2 = point - a
+		var cross: float = edge.x * to_point.y - edge.y * to_point.x
+		if i == 0:
+			sign_ref = cross
+		elif cross * sign_ref < -0.0001:
+			return false
+	return true
+
+
+func _is_follower_within_coherency(follower: Control) -> bool:
+	## follower의 (회전된) 타원 전체가 리딩 모델 테두리로부터 코헤런시
+	## 거리 안에 완전히 들어와 있는지 정확히 확인한다 — 원형 근사가 아니라
+	## follower 베이스의 모든 꼭짓점이 리딩 모델의 오프셋 경계 안에
+	## 있는지로 판정한다.
+	var coherency_mm := _unit_move_unit.coherency_inch * GameConstants.MM_PER_INCH + COHERENCY_EPSILON_MM
+	var boundary := _ellipse_offset_polygon_at(
+			_unit_move_leading.center(), _unit_move_leading.size_mm, _unit_move_leading.rotation, coherency_mm)
+	var follower_poly := _ellipse_polygon_at(follower.center(), follower.size_mm, follower.rotation)
+	for p in follower_poly:
+		if not _point_in_convex_polygon(p, boundary):
+			return false
+	return true
+
+
+func _resolve_follower_position(piece: Control, desired_center: Vector2, leading_center: Vector2) -> Vector2:
 	## 코헤런시 경계 근처로 드래그하면 그 경계선에 스냅되도록 해서, 최대로
 	## 퍼진 위치를 잡기 쉽게 돕는다. 안쪽에서 접근할 때보다 바깥으로
 	## 넘어가려 할 때 훨씬 넓은 범위에서 붙잡아, 실수로 코헤런시를
 	## 벗어나기 어렵게 한다. 그래도 완전히 막지는 않는다 (계속 세게
 	## 끌면 벗어날 수 있고, 완료 시 이탈한 모델은 사상자로 제거된다).
 	##
-	## 충돌 회피(다른 베이스를 피해 밀려남)와 코헤런시 스냅은 서로를
-	## 무효화시킬 수 있다 (스냅하면 다른 베이스와 겹치고, 그걸 피해 밀려나면
-	## 다시 코헤런시를 벗어난다). 둘을 번갈아 여러 번 적용해서 수렴시키면,
-	## 옆 베이스 테두리를 타고 돌면서 코헤런시 경계에 맞는 지점을 찾는
-	## 효과를 낸다.
+	## 리딩 모델과 follower가 둘 다 원형일 때만 스냅을 건다 — 타원이 하나라도
+	## 끼면 방향/회전에 따라 정확한 경계가 계속 달라져서 스냅이 오히려
+	## 어긋나 보이는 문제가 있었다. 코헤런시 이탈 여부 자체는
+	## _is_follower_within_coherency()가 회전을 반영해 정확히 판정하므로,
+	## 스냅 없이 직접 드래그해도 결과에는 문제없다.
+	var use_snap := _is_circular(_unit_move_leading.size_mm) and _is_circular(piece.size_mm)
+
 	var pos := desired_center
 	for _iteration in range(COLLISION_ITERATIONS):
 		var before := pos
-		pos = _snap_to_coherency_boundary(pos, leading_center, max_center_distance)
+		if use_snap:
+			var max_center_distance := _directional_max_follower_distance(piece, leading_center, pos)
+			pos = _snap_to_coherency_boundary(pos, leading_center, max_center_distance)
 		pos = _resolve_position(piece, pos)
 		if pos.distance_to(before) < 0.01:
 			break
@@ -888,19 +1046,24 @@ func _auto_place_followers() -> void:
 
 
 func _update_unit_move_guideline() -> void:
-	_guideline_layer.band_polylines = []
-	_guideline_layer.center_point = _unit_move_leading.center()
-	_guideline_layer.radius_mm = _coherency_boundary_radius_mm()
+	var coherency_mm := _unit_move_unit.coherency_inch * GameConstants.MM_PER_INCH
+	var boundary := _ellipse_offset_polygon_at(
+			_unit_move_leading.center(), _unit_move_leading.size_mm, _unit_move_leading.rotation, coherency_mm)
+	var closed := PackedVector2Array(boundary)
+	if closed.size() > 0:
+		closed.append(closed[0])
+
+	_guideline_layer.radius_mm = 0.0
+	_guideline_layer.band_polylines = [closed]
 	_guideline_layer.queue_redraw()
 
 
 func _update_unit_move_warning() -> void:
-	var leading_center: Vector2 = _unit_move_leading.center()
 	var any_out := false
 	for model in _unit_move_unit.models:
 		if model == _unit_move_leading:
 			continue
-		if model.center().distance_to(leading_center) > _max_follower_center_distance(model) + COHERENCY_EPSILON_MM:
+		if not _is_follower_within_coherency(model):
 			any_out = true
 			break
 	_unit_move_warning_label.visible = any_out
@@ -910,12 +1073,11 @@ func _on_unit_move_complete_pressed() -> void:
 	if not _unit_move_active or _unit_move_phase != "followers":
 		return
 
-	var leading_center: Vector2 = _unit_move_leading.center()
 	var casualties: Array = []
 	for model in _unit_move_unit.models:
 		if model == _unit_move_leading:
 			continue
-		if model.center().distance_to(leading_center) > _max_follower_center_distance(model) + COHERENCY_EPSILON_MM:
+		if not _is_follower_within_coherency(model):
 			casualties.append(model)
 
 	for model in casualties:
@@ -1164,13 +1326,24 @@ func _begin_deployment_drag(click_point: Vector2) -> void:
 	_base_layer.move_child(leading, _base_layer.get_child_count() - 1)
 
 
+func _is_circular(size_mm: Vector2) -> bool:
+	return is_equal_approx(size_mm.x, size_mm.y)
+
+
 func _resolve_deployment_leading_position(desired_center: Vector2) -> Vector2:
 	## 배치 중인 리딩 모델은 지도 경계를 벗어날 수 없고, 그 팀의 배치구역
 	## 구간(들) 중 하나로부터 이동거리(인치) 안쪽에 완전히 들어와 있어야
 	## 한다 (구간의 양 끝에서는 컴퍼스로 그린 것처럼 옆으로도 퍼질 수 있다).
 	## 배치구역 데이터가 없으면 지도 전체 가장자리로 폴백한다. 리딩 모델
 	## 이동이므로 변위 베이스는 통과할 수 있다.
+	##
+	## 타원 베이스는 원형 근사로 밴드 경계를 정확히 계산할 수 없어서(회전에
+	## 따라 실제 여유가 달라짐), 이 경계 스냅/클램프 자체를 걸지 않는다 —
+	## 충돌 회피와 지도 경계 clamp만 적용된다.
 	var pos := _resolve_position(_unit_move_leading, desired_center, true)
+	if not _is_circular(_unit_move_leading.size_mm):
+		return pos
+
 	var radius: float = _unit_move_leading.radius()
 
 	var segments := _team_zone_segments(_unit_move_unit.team)

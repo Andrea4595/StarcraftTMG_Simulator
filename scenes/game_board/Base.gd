@@ -24,9 +24,17 @@ const DISPLACEMENT_OUTLINE_COLOR := Color(0.2, 0.9, 0.9, 0.95)
 const ELLIPSE_RESOLUTION := 48
 
 
+func _ready() -> void:
+	## 회전이 중심을 기준으로 일어나도록. (size는 항상 add_child() 전에
+	## 설정되므로 이 시점에는 올바른 값이 들어 있다.)
+	pivot_offset = size / 2.0
+
+
 func radius() -> float:
-	## 충돌 판정에 쓰이는 근사 반지름. 타원의 경우 긴 쪽 반지름을 써서
-	## (원형으로 근사) 절대 시각적으로 겹치지 않도록 보수적으로 잡는다.
+	## 지도 경계 clamp, 코헤런시/이동거리 계산 등에 쓰이는 근사 반지름.
+	## 긴 쪽 반지름을 써서(원형으로 근사) 보수적으로 잡는다. 베이스끼리의
+	## 실제 겹침 판정(물리 충돌)은 이 값이 아니라 회전된 타원 폴리곤으로
+	## 따로 처리한다 (GameBoard._resolve_position 참고).
 	return max(size_mm.x, size_mm.y) / 2.0
 
 
