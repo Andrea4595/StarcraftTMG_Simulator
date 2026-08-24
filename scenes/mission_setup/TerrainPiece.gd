@@ -5,7 +5,6 @@ extends TextureRect
 
 signal drag_requested(piece: TextureRect)
 signal menu_requested(piece: TextureRect, screen_pos: Vector2)
-signal rotate_requested(piece: TextureRect, direction: int)
 
 var module_id: String = ""
 var size_value: int = 0
@@ -51,6 +50,12 @@ func rotated_half_extent() -> Vector2:
 
 
 func _gui_input(event: InputEvent) -> void:
+	## 휠 회전은 여기서 처리하지 않는다 — 예전엔 여기서 wheel을 accept_event()
+	## 했었는데, 그러면 같은 wheel 이벤트가 MissionSetup._input()까지 오지
+	## 않아 화면 줌이 막혔다(줌 로직은 _input()에 있는데, GUI 쪽에서 먼저
+	## 소비해버리면 순서상 절대 도달할 수 없었다). 그래서 휠 회전과 줌은
+	## MissionSetup._input()에서 마우스 아래에 있는 조각을 직접 찾아 함께
+	## 처리한다 (GameBoard의 모델 회전 처리 방식과 동일).
 	if event is InputEventMouseButton and event.pressed:
 		match event.button_index:
 			MOUSE_BUTTON_LEFT:
@@ -58,10 +63,4 @@ func _gui_input(event: InputEvent) -> void:
 				accept_event()
 			MOUSE_BUTTON_RIGHT:
 				menu_requested.emit(self, event.global_position)
-				accept_event()
-			MOUSE_BUTTON_WHEEL_UP:
-				rotate_requested.emit(self, 1)
-				accept_event()
-			MOUSE_BUTTON_WHEEL_DOWN:
-				rotate_requested.emit(self, -1)
 				accept_event()

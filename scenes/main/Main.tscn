@@ -11,6 +11,15 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_main")
 
+[node name="ScreenHost" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 48.0
+grow_horizontal = 2
+grow_vertical = 2
+
 [node name="TopBar" type="HBoxContainer" parent="."]
 layout_mode = 0
 offset_left = 8.0
@@ -25,15 +34,6 @@ text = "미션 생성 화면"
 [node name="GameBoardButton" type="Button" parent="TopBar"]
 layout_mode = 2
 text = "게임 화면"
-
-[node name="ScreenHost" type="Control" parent="."]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_top = 48.0
-grow_horizontal = 2
-grow_vertical = 2
 
 [connection signal="pressed" from="TopBar/MissionSetupButton" to="." method="_on_mission_setup_button_pressed"]
 [connection signal="pressed" from="TopBar/GameBoardButton" to="." method="_on_game_board_button_pressed"]

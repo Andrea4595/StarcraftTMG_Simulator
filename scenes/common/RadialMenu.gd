@@ -46,8 +46,11 @@ func close() -> void:
 
 
 func _choose(action: String) -> void:
-	action_chosen.emit(action)
+	## close()를 emit()보다 먼저 해야 한다 — 핸들러가 새 목록으로 메뉴를
+	## 다시 열 수도 있는데(예: 범위 입력기 삭제 시 하위 목록), emit() 이후에
+	## close()를 부르면 방금 다시 연 메뉴를 즉시 닫아버리게 된다.
 	close()
+	action_chosen.emit(action)
 
 
 func _gui_input(event: InputEvent) -> void:

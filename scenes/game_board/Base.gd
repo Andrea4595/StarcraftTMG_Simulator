@@ -30,11 +30,17 @@ func _ready() -> void:
 	pivot_offset = size / 2.0
 
 
-func radius() -> float:
-	## 지도 경계 clamp, 코헤런시/이동거리 계산 등에 쓰이는 근사 반지름.
-	## 긴 쪽 반지름을 써서(원형으로 근사) 보수적으로 잡는다. 베이스끼리의
-	## 실제 겹침 판정(물리 충돌)은 이 값이 아니라 회전된 타원 폴리곤으로
-	## 따로 처리한다 (GameBoard._resolve_position 참고).
+func bounding_radius() -> float:
+	## 지도 경계 clamp, 가이드라인 시각화, 초기 배치 근사 등 "대충 이 정도
+	## 크기"면 충분한 곳에서만 쓰는 근사 반지름. 긴 쪽 반지름을 써서(원형으로
+	## 근사) 보수적으로 잡는다.
+	##
+	## 이름이 radius()가 아니라 bounding_radius()인 이유: 실제 겹침/접촉
+	## 판정(베이스끼리 물리 충돌, 변위 베이스 밀어내기 등)에 이 원형 근사를
+	## 쓰면 타원 베이스에서 틀어진 결과가 나온다 — 이런 사고가 반복됐다.
+	## 방향에 따라 달라지는 정확한 값이 필요하면 이 값 대신
+	## GameBoard._ellipse_radius_in_direction()을, 폴리곤 전체 겹침 판정이
+	## 필요하면 GameBoard._resolve_position()/_polygon_overlap_mtv()를 써라.
 	return max(size_mm.x, size_mm.y) / 2.0
 
 

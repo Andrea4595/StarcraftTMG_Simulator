@@ -18,6 +18,10 @@ const EDGE_SNAP_THRESHOLD_MM := 15.0
 const ZONE_VISUAL_THICKNESS_MM := 6.0
 const ZONE_HIT_THICKNESS_MM := 24.0
 
+const ZOOM_STEP := 1.1
+const MIN_ZOOM := 0.3
+const MAX_ZOOM := 4.0
+
 const ZONE_COLORS := {
 	"A": Color(1.0, 0.15, 0.15, 0.9),
 	"B": Color(0.15, 0.35, 1.0, 0.9),
@@ -58,6 +62,10 @@ var _current_preset: String = GameConstants.DEFAULT_MAP_SIZE_PRESET
 var _dragging_piece: TextureRect = null
 var _drag_offset: Vector2 = Vector2.ZERO
 
+var _panning: bool = false
+var _zoom_level: float = 1.0
+var _base_scale_factor: float = 1.0
+
 var _dragging_objective: Control = null
 var _drag_objective_offset: Vector2 = Vector2.ZERO
 
@@ -72,12 +80,21 @@ var _zone_candidate_v: String = "" # "left" / "right" / ""
 
 
 func _ready() -> void:
+	## 지도(_map_area)를 좌측 메뉴들보다 먼저 추가해야 한다 — 나중에 추가된
+	## 형제 노드가 위에 그려지므로, 순서가 반대면(예전처럼) 화면 이동으로
+	## 지도를 좌측 메뉴 쪽으로 끌어왔을 때 지도가 메뉴를 덮어버린다.
+	_build_map_area()
 	_build_size_row()
 	_build_palette()
-	_build_map_area()
 	_build_radial_menu()
 	_apply_preset(_current_preset)
 	resized.connect(_layout)
+	## _apply_preset()이 부른 _layout()은 이 프레임에서 아직 이 Control의
+	## size가 확정되기 전이라 잘못된 값으로 배치한다 — 창 크기를 조금이라도
+	## 바꾸면 resized가 다시 불려서 저절로 고쳐지던 게 바로 이 증상이었다.
+	## 한 프레임 뒤에 다시 배치해서, 리사이즈 없이도 처음부터 맞게 나오게 한다.
+	await get_tree().process_frame
+	_layout()
 
 
 func _build_size_row() -> void:
@@ -280,10 +297,41 @@ func _layout() -> void:
 	var map_size: Vector2 = GameConstants.MAP_SIZE_PRESETS[_current_preset]
 	var scale_factor: float = min(viewport_size.x / map_size.x, viewport_size.y / map_size.y)
 	scale_factor = min(scale_factor, 1.0)
+	_base_scale_factor = scale_factor
 
-	_map_area.scale = Vector2(scale_factor, scale_factor)
-	var scaled_size := map_size * scale_factor
+	var total_scale := scale_factor * _zoom_level
+	_map_area.scale = Vector2(total_scale, total_scale)
+	var scaled_size := map_size * total_scale
 	_map_area.position = viewport_pos + (viewport_size - scaled_size) / 2.0
+
+
+func _zoom_at(mouse_screen: Vector2, factor: float) -> void:
+	## 마우스가 가리키는 지도 위 지점이 화면상 같은 자리에 그대로 있도록
+	## 확대/축소하면서 위치를 함께 보정한다.
+	var new_zoom: float = clamp(_zoom_level * factor, MIN_ZOOM, MAX_ZOOM)
+	if is_equal_approx(new_zoom, _zoom_level):
+		return
+
+	var old_scale: float = _map_area.scale.x
+	var local_point: Vector2 = (mouse_screen - _map_area.position) / old_scale
+
+	_zoom_level = new_zoom
+	var new_scale: float = _base_scale_factor * _zoom_level
+	_map_area.scale = Vector2(new_scale, new_scale)
+	_map_area.position = mouse_screen - local_point * new_scale
+
+
+func _find_terrain_piece_at_point(point: Vector2) -> TextureRect:
+	## 마우스 아래(맨 위에 그려진 것부터)의 지형 조각을 찾는다 — 회전된
+	## 사각형 그대로 판정한다. 휠을 굴렸을 때 회전할지 줌할지 정하는 데 쓴다.
+	var children := _terrain_layer.get_children()
+	for i in range(children.size() - 1, -1, -1):
+		var piece: TextureRect = children[i]
+		var local: Vector2 = (point - piece.center()).rotated(-piece.rotation)
+		var half: Vector2 = piece.size / 2.0
+		if abs(local.x) <= half.x and abs(local.y) <= half.y:
+			return piece
+	return null
 
 
 func _on_palette_button_toggled(pressed: bool, module_id: String, button: Button) -> void:
@@ -335,6 +383,31 @@ func _clear_placement_mode() -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE:
+		_panning = event.pressed
+		get_viewport().set_input_as_handled()
+		return
+
+	if _panning and event is InputEventMouseMotion:
+		_map_area.position += event.relative
+		get_viewport().set_input_as_handled()
+		return
+
+	if event is InputEventMouseButton and event.pressed \
+			and (event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN):
+		var direction := 1 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -1
+		var hovered := _find_terrain_piece_at_point(_map_area.get_local_mouse_position())
+		if hovered != null:
+			## 지형 조각 위에서 휠을 굴리면 회전한다 (기존 동작 유지) — 다만
+			## 이제 조각 자신의 _gui_input이 아니라 여기서 직접 찾아 처리한다.
+			hovered.rotate_step(direction)
+			_clamp_piece_to_bounds(hovered)
+		else:
+			var factor := ZOOM_STEP if direction > 0 else 1.0 / ZOOM_STEP
+			_zoom_at(event.position, factor)
+		get_viewport().set_input_as_handled()
+		return
+
 	if _dragging_piece:
 		_handle_drag_input(event)
 		return
@@ -405,7 +478,6 @@ func _place_piece(module_id: String, local_point: Vector2) -> void:
 	_clamp_piece_to_bounds(piece)
 	piece.drag_requested.connect(_on_piece_drag_requested)
 	piece.menu_requested.connect(_on_piece_menu_requested)
-	piece.rotate_requested.connect(_on_piece_rotate_requested)
 
 
 func _snap_along_edge(local: Vector2, edge: String, map_size: Vector2) -> float:
@@ -599,11 +671,6 @@ func _on_piece_drag_requested(piece: TextureRect) -> void:
 	_dragging_piece = piece
 	_drag_offset = piece.center() - _map_area.get_local_mouse_position()
 	_terrain_layer.move_child(piece, _terrain_layer.get_child_count() - 1)
-
-
-func _on_piece_rotate_requested(piece: TextureRect, direction: int) -> void:
-	piece.rotate_step(direction)
-	_clamp_piece_to_bounds(piece)
 
 
 func _on_piece_menu_requested(piece: TextureRect, screen_pos: Vector2) -> void:
