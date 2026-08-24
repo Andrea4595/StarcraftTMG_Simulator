@@ -145,6 +145,17 @@ var _pending_roster_token_def: Dictionary = {} # 지금 배치 클릭을 기다�
 var _roster_token_list_box: VBoxContainer
 var _roster_token_units: Dictionary = {} # "team|name" -> Unit, 같은 토큰은 이미 배치된 것과 한 유닛으로 합쳐진다
 
+## 되돌리기(ctrl+z)/다시 실행(ctrl+shift+z). 지도 위 상태(베이스 위치/회전/
+## 생성/삭제/데미지/이름/범위표시/토큰/활성화 토큰과, 배치가 지워주는
+## 미배치 목록)만 대상 — 스코어보드(라운드/서플라이/VP)와 로스터 불러오기
+## 자체는 대상이 아니다. 전체 상태를 통째로 스냅샷하는 방식이라(diff가
+## 아니라) 구현이 단순하고, Unit/Control 인스턴스가 매번 새로 만들어지므로
+## _unit_ranges 같은 인스턴스 참조 딕셔너리도 복원 시 통째로 다시 만든다.
+var _undo_stack: Array = [] # Array[Dictionary snapshot], 오래된 것 먼저
+var _redo_stack: Array = []
+var _undo_pending_snapshot: Dictionary = {} # 지금 진행 중인 트랜잭션이 시작되기 전 상태
+var _undo_pending_active: bool = false
+
 
 func _ready() -> void:
 	var preset := MissionData.map_preset if MissionData.has_data else GameConstants.DEFAULT_MAP_SIZE_PRESET
@@ -691,6 +702,9 @@ func _on_map_background_gui_input(event: InputEvent) -> void:
 			_pending_deployment_def = {}
 			_clear_deployment_band()
 			_refresh_pending_list()
+			## _start_deployment()에서 연 트랜잭션을 그냥 버린다 — 미배치
+			## 목록에서 뺐던 걸 그대로 되돌려놨을 뿐 보드는 전혀 안 바뀌었다.
+			_undo_discard_transaction()
 			accept_event()
 			return
 
@@ -742,6 +756,7 @@ func _on_menu_action_chosen(action: String) -> void:
 func _on_base_creation_confirmed(data: Dictionary) -> void:
 	## 임시 "베이스 생성" 다이얼로 만드는 베이스는 항상 1모델짜리 새 유닛으로 취급한다.
 	## 이렇게 해야 이후 복제/유닛 이동이 이 베이스에도 동일하게 동작한다.
+	_undo_begin_transaction()
 	var unit := Unit.new()
 	unit.unit_name = data["name"]
 	unit.team = data["team"]
@@ -761,6 +776,7 @@ func _on_base_creation_confirmed(data: Dictionary) -> void:
 	_connect_base_signals(piece)
 
 	unit.models.append(piece)
+	_undo_commit_transaction()
 
 
 func _connect_base_signals(piece: Control) -> void:
@@ -778,6 +794,9 @@ func _on_base_drag_requested(piece: Control) -> void:
 			_drag_offset = piece.center() - _map_area.get_local_mouse_position()
 		return
 
+	## 유닛 이동 중이 아닌 일반 드래그 — 여기서 되돌리기 트랜잭션을 열고,
+	## 마우스를 뗄 때(_handle_base_drag_input) 실제로 뭔가 바뀌었으면 커밋한다.
+	_undo_begin_transaction()
 	_dragging_base = piece
 	_drag_offset = piece.center() - _map_area.get_local_mouse_position()
 	_base_layer.move_child(piece, _base_layer.get_child_count() - 1)
@@ -809,20 +828,24 @@ func _on_base_menu_requested(piece: Control, screen_pos: Vector2) -> void:
 func _on_damage_confirmed(value: int) -> void:
 	if _menu_target_base == null:
 		return
+	_undo_begin_transaction()
 	_menu_target_base.damage = value
 	_menu_target_base.queue_redraw()
 	_menu_target_base = null
+	_undo_commit_transaction()
 
 
 func _on_rename_confirmed(value: String) -> void:
 	if _menu_target_base == null or _menu_target_base.unit == null or value == "":
 		_menu_target_base = null
 		return
+	_undo_begin_transaction()
 	var unit: Unit = _menu_target_base.unit
 	unit.unit_name = value
 	for model in unit.models:
 		model.queue_redraw()
 	_menu_target_base = null
+	_undo_commit_transaction()
 
 
 func _revert_unit(piece: Control) -> void:
@@ -830,6 +853,7 @@ func _revert_unit(piece: Control) -> void:
 	## 그대로 유지한 채, 다시 배치할 수 있도록 미배치 목록으로 돌려보낸다.
 	if piece == null or piece.unit == null:
 		return
+	_undo_begin_transaction()
 	var unit: Unit = piece.unit
 
 	var damages: Array = []
@@ -867,6 +891,7 @@ func _revert_unit(piece: Control) -> void:
 	_pending_units.append(def)
 	_refresh_pending_list()
 	_menu_target_base = null
+	_undo_commit_transaction()
 
 
 func _on_range_confirmed(value: float, always_show: bool) -> void:
@@ -875,11 +900,13 @@ func _on_range_confirmed(value: float, always_show: bool) -> void:
 	## 들면 지우고("범위 표시 → 제거") 새로 추가하면 된다.
 	if _range_target_unit == null:
 		return
+	_undo_begin_transaction()
 	var ranges: Array = _unit_ranges.get(_range_target_unit, [])
 	ranges.append({"inch": value, "always_show": always_show})
 	_unit_ranges[_range_target_unit] = ranges
 	_range_target_unit = null
 	_refresh_range_overlays()
+	_undo_commit_transaction()
 
 
 func _refresh_range_overlays() -> void:
@@ -941,8 +968,10 @@ func _handle_delete_range_request(piece: Control) -> void:
 		return
 
 	if ranges.size() == 1:
+		_undo_begin_transaction()
 		_unit_ranges.erase(unit)
 		_refresh_range_overlays()
+		_undo_commit_transaction()
 		return
 
 	_range_delete_target_unit = unit
@@ -958,6 +987,7 @@ func _delete_range_at_index(unit: Unit, idx: int) -> void:
 	var ranges: Array = _unit_ranges[unit]
 	if idx < 0 or idx >= ranges.size():
 		return
+	_undo_begin_transaction()
 	ranges.remove_at(idx)
 	if ranges.is_empty():
 		_unit_ranges.erase(unit)
@@ -965,22 +995,26 @@ func _delete_range_at_index(unit: Unit, idx: int) -> void:
 		_unit_ranges[unit] = ranges
 	_range_delete_target_unit = null
 	_refresh_range_overlays()
+	_undo_commit_transaction()
 
 
 func _remove_base(piece: Control) -> void:
 	if piece == null:
 		return
+	_undo_begin_transaction()
 	if piece.unit != null:
 		piece.unit.models.erase(piece)
 	if _dragging_base == piece:
 		_dragging_base = null
 	piece.queue_free()
 	_menu_target_base = null
+	_undo_commit_transaction()
 
 
 func _duplicate_base(piece: Control) -> void:
 	if piece == null:
 		return
+	_undo_begin_transaction()
 
 	var new_piece := Control.new()
 	new_piece.set_script(BASE_SCRIPT)
@@ -1000,6 +1034,7 @@ func _duplicate_base(piece: Control) -> void:
 		piece.unit.models.append(new_piece)
 
 	_menu_target_base = null
+	_undo_commit_transaction()
 
 
 func _start_measuring() -> void:
@@ -1159,14 +1194,27 @@ func _update_measure_line() -> void:
 
 
 func _place_activation_token(point: Vector2) -> void:
+	_undo_begin_transaction()
 	var token := TextureRect.new()
 	token.set_script(ACTIVATION_TOKEN_SCRIPT)
 	_token_layer.add_child(token)
 	token.set_center(_clamp_token_to_map(token, point))
 	token.drag_requested.connect(_on_token_drag_requested)
+	token.right_clicked.connect(_on_token_right_clicked)
+	_undo_commit_transaction()
+
+
+func _on_token_right_clicked(piece: Control) -> void:
+	_undo_begin_transaction()
+	if piece.state == "movement":
+		piece.set_state("assault")
+	else:
+		piece.queue_free()
+	_undo_commit_transaction()
 
 
 func _on_token_drag_requested(piece: Control) -> void:
+	_undo_begin_transaction()
 	_dragging_token = piece
 	_drag_offset = piece.center() - _map_area.get_local_mouse_position()
 	_token_layer.move_child(piece, _token_layer.get_child_count() - 1)
@@ -1188,9 +1236,24 @@ func _handle_token_drag_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 		_dragging_token = null
 		get_viewport().set_input_as_handled()
+		_undo_commit_transaction()
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.keycode == KEY_Z and event.ctrl_pressed \
+			and event.pressed and not event.is_echo():
+		var focus_owner: Control = get_viewport().gui_get_focus_owner()
+		if focus_owner is LineEdit or focus_owner is TextEdit:
+			## 이름/데미지/범위 입력 필드에 포커스가 있으면 그 필드 자체의
+			## 실행취소(ctrl+z)로 남겨둔다 — 게임판 되돌리기가 가로채지 않는다.
+			return
+		if event.shift_pressed:
+			_redo()
+		else:
+			_undo()
+		get_viewport().set_input_as_handled()
+		return
+
 	if event is InputEventMouseMotion and not _unit_ranges.is_empty():
 		## 이벤트를 소비하지 않는다 — 아래 나머지 로직(드래그 등)은 평소처럼
 		## 이 같은 마우스 이동 이벤트를 계속 처리해야 하므로 return하지 않는다.
@@ -1316,6 +1379,10 @@ func _handle_base_drag_input(event: InputEvent) -> void:
 			_start_displacement_placement(moved_piece, overlapping, finished_leading)
 		elif finished_leading:
 			_finish_leading_move()
+		else:
+			## 일반 드래그(유닛 이동 중이 아님) 완료 — 변위 처리도 없었으니
+			## 여기서 바로 되돌리기 트랜잭션을 커밋한다.
+			_undo_commit_transaction()
 
 
 func _handle_follower_drag_input(event: InputEvent) -> void:
@@ -1474,7 +1541,13 @@ func _handle_displacement_placement_input(event: InputEvent) -> void:
 			_displacement_anchor = null
 			_displacement_resume_leading_finish = false
 			if resume:
+				## 유닛 이동 중에 변위를 통과한 경우 — 그 유닛 이동 트랜잭션이
+				## 아직 열려 있으니 여기서 커밋하지 않는다(완료 시점에 커밋).
 				_finish_leading_move()
+			else:
+				## 일반 드래그가 변위 베이스를 밀어낸 경우 — 원래 드래그부터
+				## 지금 이 배치까지를 한 트랜잭션으로 커밋한다.
+				_undo_commit_transaction()
 
 
 func _resolve_displacement_drag_position(piece: Control, desired_center: Vector2) -> Vector2:
@@ -1632,6 +1705,11 @@ func _start_unit_move(leading: Control) -> void:
 	if leading == null or leading.unit == null or _unit_move_active:
 		return
 
+	## 리딩 모델 배치부터 완료(또는 배치 중 취소)까지 전체를 되돌리기 한
+	## 단계로 묶는다 — _complete_unit_move()에서 커밋, _cancel_unit_move()
+	## 에서는 폐기(원래 상태로 이미 되돌렸으므로 별도 되돌리기 단계가 필요 없음).
+	_undo_begin_transaction()
+
 	_unit_move_active = true
 	_unit_move_leading = leading
 	_unit_move_unit = leading.unit
@@ -1766,6 +1844,7 @@ func _complete_unit_move() -> void:
 		_unit_move_unit.models.erase(model)
 		model.queue_free()
 
+	_undo_commit_transaction()
 	_end_unit_move()
 
 
@@ -1784,6 +1863,9 @@ func _cancel_unit_move() -> void:
 
 	_dragging_base = null
 	_dragging_follower = null
+	## 취소는 원래 상태로 되돌렸을 뿐 새로운 변화가 없으므로, 열어둔
+	## 되돌리기 트랜잭션은 커밋하지 않고 그냥 버린다.
+	_undo_discard_transaction()
 	_end_unit_move()
 
 
@@ -1855,6 +1937,9 @@ func _muted_color(c: Color, saturation_factor: float, value_factor: float) -> Co
 
 
 func _begin_roster_token_placement(click_point: Vector2) -> void:
+	## 배치 직후 바로 일반 드래그로 이어지므로(아래 _dragging_base), 커밋은
+	## _handle_base_drag_input의 드래그 종료 지점에서 자연히 이루어진다.
+	_undo_begin_transaction()
 	var def := _pending_roster_token_def
 	_pending_roster_token_def = {}
 
@@ -1902,6 +1987,12 @@ func _start_deployment(index: int) -> void:
 	if _unit_move_active or not _pending_roster_token_def.is_empty() \
 			or index < 0 or index >= _pending_units.size():
 		return
+	## 여기서 미배치 목록에서 이미 항목을 빼므로, 되돌리기 트랜잭션도 여기서
+	## 열어야 한다 — _begin_deployment_drag()에서 열면 이미 빠진 뒤라
+	## 되돌려도 미배치 목록에 복원이 안 된다. 지도 클릭 전에 우클릭으로
+	## 취소하면(_on_map_background_gui_input) 폐기, 실제로 배치까지 마치면
+	## _complete_unit_move()에서 커밋된다.
+	_undo_begin_transaction()
 	_pending_deployment_def = _pending_units[index]
 	_pending_units.remove_at(index)
 	_refresh_pending_list()
@@ -2014,6 +2105,10 @@ func _clear_deployment_band() -> void:
 
 
 func _begin_deployment_drag(click_point: Vector2) -> void:
+	## 되돌리기 트랜잭션은 이미 _start_deployment()에서 열려 있다(미배치
+	## 목록에서 항목을 뺀 시점부터 포함해야 되돌릴 때 그 목록에 복원되므로).
+	## 커밋/폐기는 _complete_unit_move()/_cancel_unit_move()에서 다른 유닛
+	## 이동과 동일하게 처리된다.
 	var def := _pending_deployment_def
 	var width: float = def["width_mm"]
 	var height: float = def["height_mm"]
@@ -2083,4 +2178,183 @@ func _resolve_deployment_leading_position(desired_center: Vector2) -> Vector2:
 	## 충돌 회피와 지도 경계만 지킨다. 리딩 모델 이동이므로 변위 베이스는
 	## 통과할 수 있다.
 	return _resolve_position(_unit_move_leading, desired_center, true)
+
+
+## ── 되돌리기(ctrl+z) / 다시 실행(ctrl+shift+z) ──────────────────────────
+## "트랜잭션 전 상태를 통째로 스냅샷 → 스택에 push" 방식. 커밋되는 모든
+## 스냅샷은 "이 트랜잭션이 시작되기 전" 상태를 담고 있으므로, undo는
+## 스택에서 하나 꺼내 그 상태로 복원하면 된다(그 전에 현재 상태를 redo
+## 스택에 넣어둔다). 드래그처럼 여러 입력 이벤트에 걸친 동작은
+## _undo_begin_transaction()을 시작 지점에서, _undo_commit_transaction()을
+## (변위 베이스를 밀어내는 후속 배치까지 포함해서) 완료 지점에서 부른다.
+
+
+func _undo_begin_transaction() -> void:
+	if _undo_pending_active:
+		return
+	_undo_pending_snapshot = _capture_board_snapshot()
+	_undo_pending_active = true
+
+
+func _undo_commit_transaction() -> void:
+	if not _undo_pending_active:
+		return
+	_undo_stack.append(_undo_pending_snapshot)
+	_redo_stack.clear()
+	_undo_pending_active = false
+	_undo_pending_snapshot = {}
+
+
+func _undo_discard_transaction() -> void:
+	_undo_pending_active = false
+	_undo_pending_snapshot = {}
+
+
+func _is_undo_blocked() -> bool:
+	## 진행 중인 트랜잭션이 있으면(드래그/유닛 이동/변위 배치 등) 그 중간
+	## 상태를 되돌리기로 덮어써서 망가뜨리면 안 되므로 무시한다. 다이얼로그나
+	## 우클릭 메뉴가 떠 있을 때도 마찬가지 — 그 뒤에서 보드가 바뀌면 열려 있는
+	## 창이 가리키는 대상(_menu_target_base 등)이 붕 뜨게 된다.
+	if _undo_pending_active:
+		return true
+	if _creation_dialog.visible or _damage_dialog.visible or _rename_dialog.visible \
+			or _range_input_dialog.visible or _unit_add_dialog.visible or _radial_menu.visible:
+		return true
+	return false
+
+
+func _undo() -> void:
+	if _is_undo_blocked() or _undo_stack.is_empty():
+		return
+	var current := _capture_board_snapshot()
+	var previous: Dictionary = _undo_stack.pop_back()
+	_redo_stack.append(current)
+	_restore_board_snapshot(previous)
+
+
+func _redo() -> void:
+	if _is_undo_blocked() or _redo_stack.is_empty():
+		return
+	var current := _capture_board_snapshot()
+	var next_state: Dictionary = _redo_stack.pop_back()
+	_undo_stack.append(current)
+	_restore_board_snapshot(next_state)
+
+
+func _capture_board_snapshot() -> Dictionary:
+	var units_data: Array = []
+	var unit_ref_ids: Dictionary = {} # Unit -> units_data의 인덱스
+
+	for piece in _base_layer.get_children():
+		var unit: Unit = piece.unit
+		if unit == null:
+			continue
+		if not unit_ref_ids.has(unit):
+			unit_ref_ids[unit] = units_data.size()
+			units_data.append({
+				"unit_name": unit.unit_name,
+				"team": unit.team,
+				"coherency_inch": unit.coherency_inch,
+				"move_inch": unit.move_inch,
+				"is_token": unit.is_token,
+				"can_move": unit.can_move,
+				"models": [],
+			})
+		var uidx: int = unit_ref_ids[unit]
+		units_data[uidx]["models"].append({
+			"center": piece.center(),
+			"rotation": piece.rotation,
+			"size_mm": piece.size_mm,
+			"fill_color": piece.fill_color,
+			"damage": piece.damage,
+			"is_displacement": piece.is_displacement,
+		})
+
+	var ranges_data: Array = []
+	for unit in _unit_ranges.keys():
+		if not unit_ref_ids.has(unit):
+			continue # 보드에 모델이 하나도 없는 유닛(방금 마지막 모델이 지워짐) — 스냅샷에서 뺀다.
+		ranges_data.append({
+			"unit_ref": unit_ref_ids[unit],
+			"ranges": _unit_ranges[unit].duplicate(true),
+		})
+
+	var tokens_data: Array = []
+	for token in _token_layer.get_children():
+		tokens_data.append({"center": token.center(), "state": token.state})
+
+	return {
+		"units": units_data,
+		"ranges": ranges_data,
+		"pending_units": _pending_units.duplicate(true),
+		"activation_tokens": tokens_data,
+	}
+
+
+func _restore_board_snapshot(snapshot: Dictionary) -> void:
+	for piece in _base_layer.get_children():
+		piece.free()
+	for token in _token_layer.get_children():
+		token.free()
+
+	## 지워진 베이스/유닛을 참조하던 값들을 전부 정리 — 복원 뒤에도 남아있으면
+	## 해제된 인스턴스를 가리키는 댕글링 참조가 된다.
+	_hovered_base = null
+	_hovered_unit = null
+	_menu_target_base = null
+	_range_target_unit = null
+	_range_delete_target_unit = null
+	_roster_token_units.clear()
+	_unit_ranges.clear()
+	_dragging_base = null
+	_dragging_follower = null
+	_dragging_token = null
+
+	var restored_units: Array = [] # units_data와 같은 순서로, ref 인덱스로 조회
+	for unit_data in snapshot["units"]:
+		var unit := Unit.new()
+		unit.unit_name = unit_data["unit_name"]
+		unit.team = unit_data["team"]
+		unit.coherency_inch = unit_data["coherency_inch"]
+		unit.move_inch = unit_data["move_inch"]
+		unit.is_token = unit_data["is_token"]
+		unit.can_move = unit_data["can_move"]
+		restored_units.append(unit)
+
+		for model_data in unit_data["models"]:
+			var piece := Control.new()
+			piece.set_script(BASE_SCRIPT)
+			piece.unit = unit
+			piece.size_mm = model_data["size_mm"]
+			piece.fill_color = model_data["fill_color"]
+			piece.is_displacement = model_data["is_displacement"]
+			piece.damage = model_data["damage"]
+			piece.size = piece.size_mm
+			piece.mouse_filter = Control.MOUSE_FILTER_STOP
+			_base_layer.add_child(piece)
+			piece.set_center(model_data["center"])
+			piece.rotation = model_data["rotation"]
+			_connect_base_signals(piece)
+			unit.models.append(piece)
+
+		if unit.is_token:
+			_roster_token_units["%s|%s" % [unit.team, unit.unit_name]] = unit
+
+	for range_entry in snapshot["ranges"]:
+		var unit: Unit = restored_units[range_entry["unit_ref"]]
+		_unit_ranges[unit] = range_entry["ranges"].duplicate(true)
+
+	_pending_units = snapshot["pending_units"].duplicate(true)
+	_refresh_pending_list()
+
+	for token_data in snapshot["activation_tokens"]:
+		var token := TextureRect.new()
+		token.set_script(ACTIVATION_TOKEN_SCRIPT)
+		token.state = token_data["state"]
+		_token_layer.add_child(token)
+		token.set_center(token_data["center"])
+		token.drag_requested.connect(_on_token_drag_requested)
+		token.right_clicked.connect(_on_token_right_clicked)
+
+	_refresh_range_overlays()
 
