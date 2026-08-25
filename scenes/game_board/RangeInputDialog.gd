@@ -83,6 +83,11 @@ func _gui_input(event: InputEvent) -> void:
 
 
 func _on_confirm_pressed() -> void:
+	## IME(한글 등) 조합 중이던 마지막 글자가 있으면 강제로 확정한다 —
+	## Godot의 LineEdit는 조합 중 텍스트가 포커스를 잃을 때만 자동으로
+	## 확정되고, 버튼 클릭 등으로 바로 값을 읽으면 그 전에 유실될 수 있다.
+	if _value_edit.has_ime_text():
+		_value_edit.apply_ime()
 	var value := 0.0
 	if _value_edit.text.is_valid_float():
 		value = float(_value_edit.text)

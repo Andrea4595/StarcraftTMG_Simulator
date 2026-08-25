@@ -19,9 +19,13 @@ const UNIT_ADD_DIALOG_SCENE := preload("res://scenes/game_board/UnitAddDialog.ts
 const BASE_SCRIPT := preload("res://scenes/game_board/Base.gd")
 const GUIDELINE_SCRIPT := preload("res://scenes/game_board/UnitMoveGuideline.gd")
 const MEASURE_OVERLAY_SCRIPT := preload("res://scenes/game_board/MeasureOverlay.gd")
-const ACTIVATION_TOKEN_SCRIPT := preload("res://scenes/game_board/ActivationToken.gd")
+const ACTIVATION_MARKER_SCRIPT := preload("res://scenes/game_board/ActivationMarker.gd")
+const CAPTURE_MARKER_SCRIPT := preload("res://scenes/game_board/CaptureMarker.gd")
+const ICON_MARKER_SCRIPT := preload("res://scenes/game_board/IconMarker.gd")
 const RANGE_INPUT_DIALOG_SCENE := preload("res://scenes/game_board/RangeInputDialog.tscn")
 const RANGE_OVERLAY_SCRIPT := preload("res://scenes/game_board/RangeOverlay.gd")
+const MEMO_INPUT_DIALOG_SCENE := preload("res://scenes/game_board/MemoInputDialog.tscn")
+const MEMO_OVERLAY_SCRIPT := preload("res://scenes/game_board/MemoOverlay.gd")
 const TERRAIN_PIECE_SCENE := preload("res://scenes/mission_setup/TerrainPiece.tscn")
 const DEPLOYMENT_ZONE_SCRIPT := preload("res://scenes/mission_setup/DeploymentZonePiece.gd")
 const OBJECTIVE_PIECE_SCRIPT := preload("res://scenes/mission_setup/MissionObjectivePiece.gd")
@@ -63,6 +67,31 @@ const OBJECTIVE_TOKEN_COLORS := {
 	5: Color(0.2, 0.7, 0.25),
 }
 
+## 상태 순환 없이 아이콘 하나로만 표시되는 간단한 마커들(IconMarker.gd).
+const ICON_MARKER_TEXTURES := {
+	"movement": preload("res://Tokens/movement.png"),
+	"assault": preload("res://Tokens/assault.png"),
+	"combat": preload("res://Tokens/combat.png"),
+	"buff": preload("res://Tokens/buff.png"),
+	"debuff": preload("res://Tokens/debuff.png"),
+}
+
+## 마커 바(화면 하단)에 이 순서대로 버튼이 뜬다. "activation"/"capture"는
+## 각각 별도 스크립트(ActivationMarker/CaptureMarker)로, 나머지는 전부
+## IconMarker.gd + ICON_MARKER_TEXTURES[kind]로 만들어진다.
+const MARKER_BAR_ENTRIES := [
+	{"kind": "activation", "label": "활성화 마커"},
+	{"kind": "capture", "label": "점령 마커"},
+	{"kind": "movement", "label": "이동 마커"},
+	{"kind": "assault", "label": "돌격 마커"},
+	{"kind": "combat", "label": "전투 마커"},
+	{"kind": "buff", "label": "버프 마커"},
+	{"kind": "debuff", "label": "디버프 마커"},
+]
+
+const MARKER_BAR_HEIGHT := 44.0
+const PLACEMENT_PREVIEW_ALPHA := 0.5
+
 var _map_size: Vector2
 
 var _map_area: Control
@@ -73,6 +102,8 @@ var _radial_menu: Control
 var _creation_dialog: Control
 var _damage_dialog: Control
 var _rename_dialog: Control
+var _memo_dialog: Control
+var _memo_layer: Control
 var _pending_base_point: Vector2 = Vector2.ZERO
 var _menu_target_base: Control = null
 
@@ -86,9 +117,13 @@ var _measuring: bool = false
 var _measure_from_point: Vector2 = Vector2.ZERO
 var _measure_from_base: Control = null # null이면 고정 지점에서, 아니면 이 베이스 테두리에서 잰다.
 
-var _token_layer: Control
-var _placing_token: bool = false
-var _dragging_token: Control = null
+var _marker_layer: Control # 모든 마커(활성화/점령/아이콘) 공용 레이어
+var _marker_bar: Control
+var _placing_marker_kind: String = "" # 비었으면 없음. MARKER_BAR_ENTRIES의 kind 값 중 하나
+var _dragging_marker: Control = null # 어느 마커든 공용 — center()/set_center()만 있으면 됨
+
+var _preview_layer: Control
+var _placement_preview: Control = null # 배치 대기 중(마커/유닛/토큰) 마우스를 따라다니는 반투명 미리보기
 
 var _range_input_dialog: Control
 var _range_layer: Control
@@ -97,7 +132,7 @@ var _range_target_unit: Unit = null
 var _range_delete_target_unit: Unit = null
 var _menu_screen_pos: Vector2 = Vector2.ZERO
 var _unit_ranges: Dictionary = {} # Unit -> Array[Dictionary] ({"inch","always_show"})
-var _hovered_base: Control = null # 지금 마우스 아래에 있는 베이스 (없으면 null)
+var _hovered_base: Control = null # 지금 마우스 아래에 있는 베이스 (없으면 null) — 범위 표시 강조 + 모델 메모 표시에 쓰임
 var _hovered_unit: Unit = null # _hovered_base.unit — "상시 표시" 아닌 범위 표시 여부 + 노란 강조에 쓰임
 
 var _unit_move_active: bool = false
@@ -165,13 +200,14 @@ func _ready() -> void:
 	_build_creation_dialog()
 	_build_damage_dialog()
 	_build_rename_dialog()
+	_build_memo_dialog()
 	_build_range_input_dialog()
 	_build_unit_move_panel()
 	_build_pending_panel()
 	_build_unit_add_dialog()
 	_build_roster_file_dialog()
 	_build_scoreboard()
-	_build_key_guide()
+	_build_marker_bar()
 	_layout()
 	resized.connect(_layout)
 	## 방금 만든 컨테이너들(스코어보드 등)은 이 프레임 안에서는 아직 실제
@@ -199,7 +235,7 @@ func _build_map_area() -> void:
 	_build_mission_data_visuals()
 
 	## 범위 표시(채우기+외곽선/거리 라벨)는 지도·지형보다는 앞에, 그러나
-	## 유닛/토큰(base_layer, token_layer)보다는 뒤에 그려져야 하므로 그 둘보다
+	## 유닛/마커(base_layer, marker_layer)보다는 뒤에 그려져야 하므로 그 둘보다
 	## 먼저(=아래에) 추가한다.
 	_range_fill_layer = Control.new()
 	_range_fill_layer.name = "RangeFillLayer"
@@ -222,10 +258,10 @@ func _build_map_area() -> void:
 	_base_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_map_area.add_child(_base_layer)
 
-	_token_layer = Control.new()
-	_token_layer.name = "TokenLayer"
-	_token_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_map_area.add_child(_token_layer)
+	_marker_layer = Control.new()
+	_marker_layer.name = "MarkerLayer"
+	_marker_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_map_area.add_child(_marker_layer)
 
 	_guideline_layer = Control.new()
 	_guideline_layer.name = "GuidelineLayer"
@@ -234,12 +270,26 @@ func _build_map_area() -> void:
 	_guideline_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_map_area.add_child(_guideline_layer)
 
+	_memo_layer = Control.new()
+	_memo_layer.name = "MemoLayer"
+	_memo_layer.set_script(MEMO_OVERLAY_SCRIPT)
+	_memo_layer.size = _map_size
+	_memo_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_map_area.add_child(_memo_layer)
+
 	_measure_layer = Control.new()
 	_measure_layer.name = "MeasureLayer"
 	_measure_layer.set_script(MEASURE_OVERLAY_SCRIPT)
 	_measure_layer.size = _map_size
 	_measure_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_map_area.add_child(_measure_layer)
+
+	## 배치 미리보기(반투명 고스트)는 맨 위에 그려져야 하므로 가장 마지막에
+	## 추가한다.
+	_preview_layer = Control.new()
+	_preview_layer.name = "PreviewLayer"
+	_preview_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_map_area.add_child(_preview_layer)
 
 
 func _build_mission_data_visuals() -> void:
@@ -320,6 +370,12 @@ func _build_rename_dialog() -> void:
 	_rename_dialog = RENAME_DIALOG_SCENE.instantiate()
 	add_child(_rename_dialog)
 	_rename_dialog.confirmed.connect(_on_rename_confirmed)
+
+
+func _build_memo_dialog() -> void:
+	_memo_dialog = MEMO_INPUT_DIALOG_SCENE.instantiate()
+	add_child(_memo_dialog)
+	_memo_dialog.confirmed.connect(_on_memo_confirmed)
 
 
 func _build_range_input_dialog() -> void:
@@ -629,15 +685,63 @@ func _refresh_total_label(player: String) -> void:
 	_total_vp_labels[player].text = "종합VP  %d" % MatchState.total_vp(player)
 
 
-func _build_key_guide() -> void:
-	var label := Label.new()
-	label.text = "스페이스바 - 거리 측정   |   1 - 활성화 토큰 배치"
-	label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.85, 0.9))
-	label.anchor_top = 1.0
-	label.anchor_bottom = 1.0
-	label.position = Vector2(MARGIN, -24.0)
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(label)
+func _build_marker_bar() -> void:
+	## PanelContainer를 쓰면 스코어보드 패널과 같은 기본 테마 배경(둥근
+	## 모서리 어두운 판)이 그대로 적용된다 — 새로 색을 정하는 대신 기존
+	## 패널들과 톤을 맞춘다.
+	_marker_bar = PanelContainer.new()
+	_marker_bar.anchor_left = 0.0
+	_marker_bar.anchor_right = 1.0
+	_marker_bar.anchor_top = 1.0
+	_marker_bar.anchor_bottom = 1.0
+	_marker_bar.offset_top = -MARKER_BAR_HEIGHT
+	_marker_bar.offset_bottom = 0.0
+	add_child(_marker_bar)
+
+	var content := Control.new()
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_marker_bar.add_child(content)
+
+	## 왼쪽: 키 가이드(마우스로 조작할 수 없는 것들만 남았다 — 마커 배치는
+	## 이제 이 바의 버튼으로 한다). 기본 앵커(왼쪽 위 기준)로 두고 바
+	## 높이 안에서 대략 세로 중앙에 오도록 y만 잡는다.
+	var key_guide := Label.new()
+	key_guide.text = "스페이스바 - 거리 측정   |   ctrl+z - 되돌리기   |   ctrl+shift+z - 다시 실행"
+	key_guide.add_theme_color_override("font_color", Color(0.85, 0.85, 0.85, 0.9))
+	key_guide.position = Vector2(0.0, MARKER_BAR_HEIGHT / 2.0 - 10.0)
+	key_guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(key_guide)
+
+	## 가운데: 마커 버튼들. 바 전체 폭 기준 CenterContainer로 감싸서, 왼쪽
+	## 키 가이드 텍스트 길이와 상관없이 항상 바 중앙에 온다. 버튼은 글자
+	## 없이 마커 이미지 자체만 보여준다.
+	var center := CenterContainer.new()
+	center.anchor_left = 0.0
+	center.anchor_right = 1.0
+	center.anchor_top = 0.0
+	center.anchor_bottom = 1.0
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(center)
+
+	var box := HBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	center.add_child(box)
+
+	for entry in MARKER_BAR_ENTRIES:
+		var kind: String = entry["kind"]
+		var btn := Button.new()
+		match kind:
+			"activation":
+				btn.icon = ACTIVATION_MARKER_SCRIPT.TEXTURE_MOVEMENT
+			"capture":
+				btn.icon = CAPTURE_MARKER_SCRIPT.TEXTURE
+			_:
+				btn.icon = ICON_MARKER_TEXTURES[kind]
+		btn.expand_icon = true
+		btn.custom_minimum_size = Vector2(MARKER_BAR_HEIGHT - 8.0, MARKER_BAR_HEIGHT - 8.0)
+		btn.tooltip_text = entry["label"]
+		btn.pressed.connect(_start_marker_placement.bind(kind))
+		box.add_child(btn)
 
 
 func _layout() -> void:
@@ -648,7 +752,7 @@ func _layout() -> void:
 	var left := MARGIN + PALETTE_WIDTH + MARGIN
 	var top := MARGIN + scoreboard_height + MARGIN
 	var pos := Vector2(left, top)
-	var avail := Vector2(max(size.x - left - MARGIN, 10.0), max(size.y - top - MARGIN, 10.0))
+	var avail := Vector2(max(size.x - left - MARGIN, 10.0), max(size.y - top - MARGIN - MARKER_BAR_HEIGHT, 10.0))
 
 	var scale_factor: float = min(avail.x / _map_size.x, avail.y / _map_size.y)
 	scale_factor = min(scale_factor, 1.0)
@@ -702,6 +806,7 @@ func _on_map_background_gui_input(event: InputEvent) -> void:
 			_pending_deployment_def = {}
 			_clear_deployment_band()
 			_refresh_pending_list()
+			_clear_placement_preview()
 			## _start_deployment()에서 연 트랜잭션을 그냥 버린다 — 미배치
 			## 목록에서 뺐던 걸 그대로 되돌려놨을 뿐 보드는 전혀 안 바뀌었다.
 			_undo_discard_transaction()
@@ -710,6 +815,7 @@ func _on_map_background_gui_input(event: InputEvent) -> void:
 
 		if not _pending_roster_token_def.is_empty():
 			_pending_roster_token_def = {}
+			_clear_placement_preview()
 			accept_event()
 			return
 
@@ -741,6 +847,8 @@ func _on_menu_action_chosen(action: String) -> void:
 			_rename_dialog.open(_menu_target_base.unit.unit_name if _menu_target_base.unit != null else "")
 		"revert_unit":
 			_revert_unit(_menu_target_base)
+		"memo":
+			_memo_dialog.open(_menu_target_base.memo if _menu_target_base != null else "")
 		"range_display":
 			_radial_menu.open([
 				{"label": "추가", "action": "range_add"},
@@ -821,6 +929,7 @@ func _on_base_menu_requested(piece: Control, screen_pos: Vector2) -> void:
 	options.append({"label": "유닛 이름 변경", "action": "rename"})
 	if not is_token_unit:
 		options.append({"label": "유닛 되돌리기", "action": "revert_unit"})
+	options.append({"label": "메모 작성", "action": "memo"})
 	options.append({"label": "범위 표시", "action": "range_display"})
 	_radial_menu.open(options, screen_pos)
 
@@ -846,6 +955,32 @@ func _on_rename_confirmed(value: String) -> void:
 		model.queue_redraw()
 	_menu_target_base = null
 	_undo_commit_transaction()
+
+
+func _on_memo_confirmed(value: String) -> void:
+	if _menu_target_base == null:
+		return
+	_undo_begin_transaction()
+	_menu_target_base.memo = value
+	_menu_target_base = null
+	_undo_commit_transaction()
+	_update_memo_overlay()
+
+
+func _update_memo_overlay() -> void:
+	## 마우스를 올린 유닛의 모델 중 메모가 있는 것 전부(호버한 모델 하나만이
+	## 아니라)를 각자 자기 자신 아래에 보여준다.
+	var entries: Array = []
+	if _hovered_unit != null:
+		for model in _hovered_unit.models:
+			if not is_instance_valid(model) or model.memo == "":
+				continue
+			entries.append({
+				"text": model.memo,
+				"pos": model.center() + Vector2(0.0, model.bounding_radius() + 10.0),
+			})
+	_memo_layer.entries = entries
+	_memo_layer.queue_redraw()
 
 
 func _revert_unit(piece: Control) -> void:
@@ -1193,48 +1328,133 @@ func _update_measure_line() -> void:
 	_measure_layer.queue_redraw()
 
 
-func _place_activation_token(point: Vector2) -> void:
+func _start_marker_placement(kind: String) -> void:
+	if _unit_move_active:
+		return
+	_placing_marker_kind = kind
+	_show_marker_placement_preview(kind)
+
+
+func _show_marker_placement_preview(kind: String) -> void:
+	_clear_placement_preview()
+	var preview := TextureRect.new()
+	match kind:
+		"activation":
+			preview.set_script(ACTIVATION_MARKER_SCRIPT)
+		"capture":
+			preview.set_script(CAPTURE_MARKER_SCRIPT)
+		_:
+			preview.set_script(ICON_MARKER_SCRIPT)
+			preview.kind = kind
+			preview.texture = ICON_MARKER_TEXTURES[kind]
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_preview_layer.add_child(preview)
+	preview.modulate.a = PLACEMENT_PREVIEW_ALPHA
+	preview.set_center(_map_area.get_local_mouse_position())
+	_placement_preview = preview
+
+
+func _show_base_placement_preview(width_mm: float, height_mm: float, fill_color: Color, is_displacement: bool) -> void:
+	_clear_placement_preview()
+	var preview := Control.new()
+	preview.set_script(BASE_SCRIPT)
+	preview.size_mm = Vector2(width_mm, height_mm)
+	preview.fill_color = fill_color
+	preview.is_displacement = is_displacement
+	preview.size = preview.size_mm
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_preview_layer.add_child(preview)
+	preview.modulate.a = PLACEMENT_PREVIEW_ALPHA
+	preview.set_center(_map_area.get_local_mouse_position())
+	_placement_preview = preview
+
+
+func _clear_placement_preview() -> void:
+	if _placement_preview != null and is_instance_valid(_placement_preview):
+		_placement_preview.free()
+	_placement_preview = null
+
+
+func _place_marker(kind: String, point: Vector2) -> void:
 	_undo_begin_transaction()
-	var token := TextureRect.new()
-	token.set_script(ACTIVATION_TOKEN_SCRIPT)
-	_token_layer.add_child(token)
-	token.set_center(_clamp_token_to_map(token, point))
-	token.drag_requested.connect(_on_token_drag_requested)
-	token.right_clicked.connect(_on_token_right_clicked)
+	var marker := TextureRect.new()
+	match kind:
+		"activation":
+			marker.set_script(ACTIVATION_MARKER_SCRIPT)
+		"capture":
+			marker.set_script(CAPTURE_MARKER_SCRIPT)
+		_:
+			marker.set_script(ICON_MARKER_SCRIPT)
+			marker.kind = kind
+			marker.texture = ICON_MARKER_TEXTURES[kind]
+	_marker_layer.add_child(marker)
+	marker.set_center(_clamp_marker_to_map(marker, point))
+	marker.drag_requested.connect(_on_marker_drag_requested)
+	match kind:
+		"activation":
+			marker.right_clicked.connect(_on_activation_marker_right_clicked)
+		"capture":
+			marker.right_clicked.connect(_on_capture_marker_right_clicked)
+		_:
+			marker.right_clicked.connect(_on_icon_marker_right_clicked)
 	_undo_commit_transaction()
 
 
-func _on_token_right_clicked(piece: Control) -> void:
+func _on_icon_marker_right_clicked(piece: Control) -> void:
+	## 순환 없이 우클릭 한 번으로 바로 삭제.
 	_undo_begin_transaction()
-	if piece.state == "movement":
-		piece.set_state("assault")
-	else:
+	piece.queue_free()
+	_undo_commit_transaction()
+
+
+func _on_activation_marker_right_clicked(piece: Control, shift_held: bool) -> void:
+	## 우클릭은 이동 → 돌격 → 완료를 계속 순환한다. shift+우클릭이 삭제.
+	_undo_begin_transaction()
+	if shift_held:
 		piece.queue_free()
+	else:
+		var sequence: Array = ACTIVATION_MARKER_SCRIPT.STATE_SEQUENCE
+		var idx: int = sequence.find(piece.state)
+		piece.set_state(sequence[(idx + 1) % sequence.size()])
 	_undo_commit_transaction()
 
 
-func _on_token_drag_requested(piece: Control) -> void:
+func _on_capture_marker_right_clicked(piece: Control, shift_held: bool) -> void:
+	## 우클릭은 흰색 → 빨간색 → 파란색을 계속 순환한다. shift+우클릭이 삭제 —
+	## 색 순환에 종료 지점이 없어서(활성화 마커처럼 마지막에 사라지는 게 아님)
+	## 삭제는 별도 입력으로 뺐다.
 	_undo_begin_transaction()
-	_dragging_token = piece
+	if shift_held:
+		piece.queue_free()
+	else:
+		var sequence: Array = CAPTURE_MARKER_SCRIPT.COLOR_SEQUENCE
+		var idx: int = sequence.find(piece.color_state)
+		piece.set_color_state(sequence[(idx + 1) % sequence.size()])
+	_undo_commit_transaction()
+
+
+func _on_marker_drag_requested(piece: Control) -> void:
+	_undo_begin_transaction()
+	_dragging_marker = piece
 	_drag_offset = piece.center() - _map_area.get_local_mouse_position()
-	_token_layer.move_child(piece, _token_layer.get_child_count() - 1)
+	_marker_layer.move_child(piece, _marker_layer.get_child_count() - 1)
 
 
-func _clamp_token_to_map(token: Control, desired_center: Vector2) -> Vector2:
-	var half: Vector2 = token.size / 2.0
+func _clamp_marker_to_map(marker: Control, desired_center: Vector2) -> Vector2:
+	var half: Vector2 = marker.size / 2.0
 	return Vector2(
 			clamp(desired_center.x, half.x, _map_size.x - half.x),
 			clamp(desired_center.y, half.y, _map_size.y - half.y))
 
 
-func _handle_token_drag_input(event: InputEvent) -> void:
+func _handle_marker_drag_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var local: Vector2 = _map_area.get_local_mouse_position()
 		var desired: Vector2 = local + _drag_offset
-		_dragging_token.set_center(_clamp_token_to_map(_dragging_token, desired))
+		_dragging_marker.set_center(_clamp_marker_to_map(_dragging_marker, desired))
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
-		_dragging_token = null
+		_dragging_marker = null
 		get_viewport().set_input_as_handled()
 		_undo_commit_transaction()
 
@@ -1254,15 +1474,22 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
-	if event is InputEventMouseMotion and not _unit_ranges.is_empty():
+	if _placement_preview != null and event is InputEventMouseMotion:
+		## 배치 대기 중인 마커/유닛/토큰 미리보기가 마우스를 따라가게 한다.
+		## 이벤트를 소비하지 않는다 — 아래 나머지 로직도 이 이동 이벤트를
+		## 평소처럼 계속 처리해야 한다.
+		_placement_preview.set_center(_map_area.get_local_mouse_position())
+
+	if event is InputEventMouseMotion:
 		## 이벤트를 소비하지 않는다 — 아래 나머지 로직(드래그 등)은 평소처럼
 		## 이 같은 마우스 이동 이벤트를 계속 처리해야 하므로 return하지 않는다.
-		## 실제 다시 그리기는 _process()가 매 프레임 _refresh_range_overlays()를
-		## 부르고 있으므로(범위 원이 움직이는 모델을 실시간으로 따라가게 하는
-		## 기존 로직) 여기서는 호버 상태만 갱신하면 된다. 등록된 범위가 하나도
-		## 없으면(대부분의 경우) 매 프레임 베이스를 뒤지는 비용을 아예 안 쓴다.
+		## 범위 표시(상시 표시 아닌 것 + 노란 강조)와 모델 메모 표시 둘 다 이
+		## 호버 상태에 기대므로 항상 갱신한다. 범위 쪽 실제 다시 그리기는
+		## _process()가 매 프레임 _refresh_range_overlays()를 불러서 처리한다
+		## (범위 원이 움직이는 모델을 실시간으로 따라가게 하는 기존 로직).
 		_hovered_base = _find_base_at_point(_map_area.get_local_mouse_position())
 		_hovered_unit = _hovered_base.unit if _hovered_base != null else null
+		_update_memo_overlay()
 
 	if event is InputEventKey and event.keycode == KEY_SPACE:
 		var focus_owner: Control = get_viewport().gui_get_focus_owner()
@@ -1279,24 +1506,16 @@ func _input(event: InputEvent) -> void:
 	if _measuring and event is InputEventMouseMotion:
 		_update_measure_line()
 
-	if event is InputEventKey and event.keycode == KEY_1 and event.pressed and not event.is_echo():
-		var focus_owner: Control = get_viewport().gui_get_focus_owner()
-		if focus_owner is LineEdit or focus_owner is TextEdit:
-			return
-		if not _unit_move_active:
-			_placing_token = true
-			get_viewport().set_input_as_handled()
-		return
-
-	if _placing_token and event is InputEventMouseButton and event.pressed:
+	if _placing_marker_kind != "" and event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_LEFT:
-			_place_activation_token(_map_area.get_local_mouse_position())
-		_placing_token = false
+			_place_marker(_placing_marker_kind, _map_area.get_local_mouse_position())
+		_placing_marker_kind = ""
+		_clear_placement_preview()
 		get_viewport().set_input_as_handled()
 		return
 
-	if _dragging_token:
-		_handle_token_drag_input(event)
+	if _dragging_marker:
+		_handle_marker_drag_input(event)
 		return
 
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE:
@@ -1930,6 +2149,11 @@ func _start_roster_token_placement(index: int) -> void:
 			or index < 0 or index >= _pending_roster_tokens.size():
 		return
 	_pending_roster_token_def = _pending_roster_tokens[index]
+	var def: Dictionary = _pending_roster_token_def
+	_show_base_placement_preview(
+			def["width_mm"], def["height_mm"],
+			_muted_color(TEAM_COLORS.get(def["team"], TEAM_COLORS["neutral"]), TOKEN_COLOR_SATURATION_FACTOR, TOKEN_COLOR_VALUE_FACTOR),
+			def.get("is_displacement", false))
 
 
 func _muted_color(c: Color, saturation_factor: float, value_factor: float) -> Color:
@@ -1939,6 +2163,7 @@ func _muted_color(c: Color, saturation_factor: float, value_factor: float) -> Co
 func _begin_roster_token_placement(click_point: Vector2) -> void:
 	## 배치 직후 바로 일반 드래그로 이어지므로(아래 _dragging_base), 커밋은
 	## _handle_base_drag_input의 드래그 종료 지점에서 자연히 이루어진다.
+	_clear_placement_preview()
 	_undo_begin_transaction()
 	var def := _pending_roster_token_def
 	_pending_roster_token_def = {}
@@ -1996,6 +2221,10 @@ func _start_deployment(index: int) -> void:
 	_pending_deployment_def = _pending_units[index]
 	_pending_units.remove_at(index)
 	_refresh_pending_list()
+	_show_base_placement_preview(
+			_pending_deployment_def["width_mm"], _pending_deployment_def["height_mm"],
+			TEAM_COLORS.get(_pending_deployment_def["team"], TEAM_COLORS["neutral"]),
+			_pending_deployment_def.get("is_displacement", false))
 	_show_deployment_band(_pending_deployment_def)
 
 
@@ -2109,6 +2338,7 @@ func _begin_deployment_drag(click_point: Vector2) -> void:
 	## 목록에서 항목을 뺀 시점부터 포함해야 되돌릴 때 그 목록에 복원되므로).
 	## 커밋/폐기는 _complete_unit_move()/_cancel_unit_move()에서 다른 유닛
 	## 이동과 동일하게 처리된다.
+	_clear_placement_preview()
 	var def := _pending_deployment_def
 	var width: float = def["width_mm"]
 	var height: float = def["height_mm"]
@@ -2268,6 +2498,7 @@ func _capture_board_snapshot() -> Dictionary:
 			"fill_color": piece.fill_color,
 			"damage": piece.damage,
 			"is_displacement": piece.is_displacement,
+			"memo": piece.memo,
 		})
 
 	var ranges_data: Array = []
@@ -2279,23 +2510,28 @@ func _capture_board_snapshot() -> Dictionary:
 			"ranges": _unit_ranges[unit].duplicate(true),
 		})
 
-	var tokens_data: Array = []
-	for token in _token_layer.get_children():
-		tokens_data.append({"center": token.center(), "state": token.state})
+	var markers_data: Array = []
+	for marker in _marker_layer.get_children():
+		if marker.get_script() == ACTIVATION_MARKER_SCRIPT:
+			markers_data.append({"kind": "activation", "center": marker.center(), "state": marker.state})
+		elif marker.get_script() == CAPTURE_MARKER_SCRIPT:
+			markers_data.append({"kind": "capture", "center": marker.center(), "color_state": marker.color_state})
+		elif marker.get_script() == ICON_MARKER_SCRIPT:
+			markers_data.append({"kind": "icon", "center": marker.center(), "icon_kind": marker.kind})
 
 	return {
 		"units": units_data,
 		"ranges": ranges_data,
 		"pending_units": _pending_units.duplicate(true),
-		"activation_tokens": tokens_data,
+		"markers": markers_data,
 	}
 
 
 func _restore_board_snapshot(snapshot: Dictionary) -> void:
 	for piece in _base_layer.get_children():
 		piece.free()
-	for token in _token_layer.get_children():
-		token.free()
+	for marker in _marker_layer.get_children():
+		marker.free()
 
 	## 지워진 베이스/유닛을 참조하던 값들을 전부 정리 — 복원 뒤에도 남아있으면
 	## 해제된 인스턴스를 가리키는 댕글링 참조가 된다.
@@ -2308,7 +2544,7 @@ func _restore_board_snapshot(snapshot: Dictionary) -> void:
 	_unit_ranges.clear()
 	_dragging_base = null
 	_dragging_follower = null
-	_dragging_token = null
+	_dragging_marker = null
 
 	var restored_units: Array = [] # units_data와 같은 순서로, ref 인덱스로 조회
 	for unit_data in snapshot["units"]:
@@ -2329,6 +2565,7 @@ func _restore_board_snapshot(snapshot: Dictionary) -> void:
 			piece.fill_color = model_data["fill_color"]
 			piece.is_displacement = model_data["is_displacement"]
 			piece.damage = model_data["damage"]
+			piece.memo = model_data.get("memo", "")
 			piece.size = piece.size_mm
 			piece.mouse_filter = Control.MOUSE_FILTER_STOP
 			_base_layer.add_child(piece)
@@ -2347,14 +2584,31 @@ func _restore_board_snapshot(snapshot: Dictionary) -> void:
 	_pending_units = snapshot["pending_units"].duplicate(true)
 	_refresh_pending_list()
 
-	for token_data in snapshot["activation_tokens"]:
-		var token := TextureRect.new()
-		token.set_script(ACTIVATION_TOKEN_SCRIPT)
-		token.state = token_data["state"]
-		_token_layer.add_child(token)
-		token.set_center(token_data["center"])
-		token.drag_requested.connect(_on_token_drag_requested)
-		token.right_clicked.connect(_on_token_right_clicked)
+	for marker_data in snapshot["markers"]:
+		var marker: Control
+		match marker_data["kind"]:
+			"activation":
+				marker = TextureRect.new()
+				marker.set_script(ACTIVATION_MARKER_SCRIPT)
+				marker.state = marker_data["state"]
+				_marker_layer.add_child(marker)
+				marker.right_clicked.connect(_on_activation_marker_right_clicked)
+			"capture":
+				marker = TextureRect.new()
+				marker.set_script(CAPTURE_MARKER_SCRIPT)
+				marker.color_state = marker_data["color_state"]
+				_marker_layer.add_child(marker)
+				marker.right_clicked.connect(_on_capture_marker_right_clicked)
+			_:
+				marker = TextureRect.new()
+				marker.set_script(ICON_MARKER_SCRIPT)
+				marker.kind = marker_data["icon_kind"]
+				marker.texture = ICON_MARKER_TEXTURES[marker_data["icon_kind"]]
+				_marker_layer.add_child(marker)
+				marker.right_clicked.connect(_on_icon_marker_right_clicked)
+		marker.set_center(marker_data["center"])
+		marker.drag_requested.connect(_on_marker_drag_requested)
 
 	_refresh_range_overlays()
+	_update_memo_overlay()
 

@@ -11,6 +11,7 @@ var unit: Unit = null
 var size_mm: Vector2 = Vector2(32.0, 32.0) # 가로, 세로 (지름)
 var fill_color: Color = Color(0.6, 0.6, 0.6, 0.85)
 var damage: int = 0
+var memo: String = "" # 이 모델에 대한 메모 — 마우스를 올리면 GameBoard가 아래에 보여준다
 
 ## 변위 베이스: 모델 메뉴얼 이동/리딩 모델 이동 중에는 이 베이스와 겹쳐서
 ## 지나갈 수 있다. 그 이동이 끝나면 GameBoard가 이 베이스를 겹치게 된

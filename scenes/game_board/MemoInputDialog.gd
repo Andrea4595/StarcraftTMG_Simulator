@@ -1,9 +1,9 @@
 extends Control
 
-## 다이얼 메뉴 a("데미지 기록")에서 뜨는 입력창. 숫자 하나만 받는다.
-## 패널 바깥을 클릭하면 취소된다.
+## 다이얼 메뉴("메모 작성")에서 뜨는 입력창. "데미지 기록"과 같은 방식 —
+## 텍스트 한 줄을 받는다. 패널 바깥을 클릭하면 취소된다.
 
-signal confirmed(value: int)
+signal confirmed(value: String)
 signal cancelled
 
 var _value_edit: LineEdit
@@ -25,21 +25,22 @@ func _build_ui() -> void:
 	center.add_child(panel)
 
 	var box := VBoxContainer.new()
-	box.custom_minimum_size = Vector2(200.0, 0.0)
+	box.custom_minimum_size = Vector2(240.0, 0.0)
 	panel.add_child(box)
 
 	var title := Label.new()
-	title.text = "데미지 입력"
+	title.text = "모델 메모"
 	box.add_child(title)
 
 	var row := HBoxContainer.new()
 	box.add_child(row)
 	var label := Label.new()
-	label.text = "데미지"
+	label.text = "메모"
 	label.custom_minimum_size = Vector2(70.0, 0.0)
 	row.add_child(label)
 	_value_edit = LineEdit.new()
-	_value_edit.custom_minimum_size = Vector2(100.0, 0.0)
+	_value_edit.custom_minimum_size = Vector2(140.0, 0.0)
+	_value_edit.text_submitted.connect(func(_t: String) -> void: _on_confirm_pressed())
 	row.add_child(_value_edit)
 
 	var button_row := HBoxContainer.new()
@@ -54,11 +55,12 @@ func _build_ui() -> void:
 	button_row.add_child(cancel_btn)
 
 
-func open(initial_value: int) -> void:
-	_value_edit.text = str(initial_value)
+func open(initial_value: String) -> void:
+	_value_edit.text = initial_value
 	visible = true
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_value_edit.grab_focus()
+	_value_edit.select_all()
 
 
 func close() -> void:
@@ -78,11 +80,9 @@ func _on_confirm_pressed() -> void:
 	## 확정되고, 버튼 클릭 등으로 바로 값을 읽으면 그 전에 유실될 수 있다.
 	if _value_edit.has_ime_text():
 		_value_edit.apply_ime()
-	var value := 0
-	if _value_edit.text.is_valid_int():
-		value = int(_value_edit.text)
+	var value := _value_edit.text.strip_edges()
 	close()
-	confirmed.emit(max(value, 0))
+	confirmed.emit(value)
 
 
 func _on_cancel_pressed() -> void:
