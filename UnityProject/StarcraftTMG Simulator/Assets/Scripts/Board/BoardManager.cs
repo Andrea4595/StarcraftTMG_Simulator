@@ -452,7 +452,10 @@ namespace TmgBoard
                 return;
             }
             _menuTarget = piece;
-            _menuScreenPos = screenPos;
+            // 마우스 우클릭 지점이 아니라, 우클릭한 모델 자체를 다이얼 중심으로
+            // 삼는다 — 패닝/줌 중인 mapArea 아래에 있는 조각의 화면 좌표를
+            // 직접 구한다(Screen Space Overlay라 카메라 인자는 null).
+            _menuScreenPos = RectTransformUtility.WorldToScreenPoint(null, piece.transform.position);
             var isTokenUnit = piece.Unit != null && piece.Unit.IsToken;
             var canMove = piece.Unit == null || piece.Unit.CanMove;
 
@@ -474,7 +477,7 @@ namespace TmgBoard
             options.Add(new RadialMenuOption("메모 작성", "memo"));
             options.Add(new RadialMenuOption("범위 표시", "range_display"));
 
-            radialMenu.Open(options, screenPos);
+            radialMenu.Open(options, _menuScreenPos);
         }
 
         private void OnActionChosen(string action)
