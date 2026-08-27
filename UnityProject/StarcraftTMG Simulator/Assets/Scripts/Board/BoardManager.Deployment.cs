@@ -10,6 +10,19 @@ namespace TmgBoard
     {
         // ── 예비대 배치 ──────────────────────────────────────────────────
 
+        // 목록 박스 최대 높이. 토큰 목록은 ListMaxHeight에서 캡(그 이상은
+        // 스크롤, 5개 미만이면 ComputeFittedHeight로 그만큼만 핏하게 줄어듦).
+        // 예비대 유닛 목록은 항상 더 큰 UnitListExpandedMaxHeight를 쓴다 —
+        // 토큰 섹션 유무와 무관하다(RefreshListHeights 참고).
+        private const float ListMaxHeight = 180f;
+        private const float UnitListExpandedMaxHeight = 480f;
+
+        // 아직 이 팀에 로스터를 하나도 안 불러왔을 때 "A 로스터 불러오기"
+        // 버튼이 패널 전체를 꽉 채우도록 쓰는 큰 높이. 로스터를 불러오고
+        // 나면(OnRosterFileSelected) 이 버튼은 아예 숨긴다 — 그 뒤로는
+        // 예비대/토큰 목록만 보인다.
+        private const float RosterImportButtonFillHeight = 400f;
+
         /// <summary>팀 A는 왼쪽, 팀 B는 오른쪽에 각자 로스터 불러오기 버튼 +
         /// 예비대 유닛 목록 + 토큰 목록을 담은 패널을 하나씩 짓는다.</summary>
         private void BuildPendingPanel()
@@ -54,15 +67,40 @@ namespace TmgBoard
             var fitter = panelGo.AddComponent<ContentSizeFitter>();
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            CreateListButton(panel, $"{team} 로스터 불러오기", () => ImportRoster(team));
+            // 아직 로스터를 안 불러온 상태에선 이 버튼이 패널을 꽉 채운
+            // 큰 호출 유도 버튼으로 보인다. OnRosterFileSelected가 임포트에
+            // 성공하면 이 버튼 자체를 SetActive(false)로 완전히 숨긴다.
+            _rosterImportButtons[team] = CreateListButton(panel, $"{team} 로스터 불러오기", () => ImportRoster(team), RosterImportButtonFillHeight);
 
-            // 예비대 유닛 목록 — 길어지면 늘어나는 대신 스크롤된다.
-            // RefreshPendingList()가 이 컨테이너의 자식만 갈아끼운다.
-            _pendingUnitsListContainers[team] = ScrollListUtil.Create(panel, 180f, new Color(0.1f, 0.1f, 0.1f, 0.6f), out _);
+            // 예비대 유닛 목록 — 항목 수만큼 핏하게 커지다가 UnitListExpandedMaxHeight
+            // 에서 스크롤로 전환된다(토큰 섹션 유무와 무관). 실제 높이는
+            // RefreshPendingList()가 매번 다시 계산해서 적용한다.
+            _pendingUnitsListContainers[team] = ScrollListUtil.Create(panel, ListMaxHeight, new Color(0.1f, 0.1f, 0.1f, 0.6f), out _, out var unitListLayoutElement);
+            _pendingUnitsListLayoutElements[team] = unitListLayoutElement;
 
             // 토큰 목록 — 유닛과 달리 배치해도 목록에서 안 지워진다(몇 번이든 재배치 가능).
-            CreateSectionLabel(panel, "토큰");
-            _rosterTokenListContainers[team] = ScrollListUtil.Create(panel, 180f, new Color(0.1f, 0.1f, 0.1f, 0.6f), out _);
+            // 라벨+목록을 한 래퍼에 담아서 통째로 켜고 끌 수 있게 한다 —
+            // 이 팀에 로스터로 들어온 토큰이 하나도 없으면 RefreshRosterTokenList가
+            // 이 래퍼 자체를 꺼서 빈 "토큰" 제목만 덩그러니 남는 걸 막는다.
+            var tokenSectionGo = new GameObject("TokenSection", typeof(RectTransform));
+            tokenSectionGo.transform.SetParent(panel, false);
+            var tokenSectionLayout = tokenSectionGo.AddComponent<VerticalLayoutGroup>();
+            tokenSectionLayout.spacing = 8f;
+            tokenSectionLayout.childControlWidth = true;
+            tokenSectionLayout.childForceExpandWidth = true;
+            tokenSectionLayout.childControlHeight = true;
+            tokenSectionLayout.childForceExpandHeight = false;
+            var tokenSectionFitter = tokenSectionGo.AddComponent<ContentSizeFitter>();
+            tokenSectionFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            CreateSectionLabel(tokenSectionGo.transform, "토큰");
+            // 토큰이 5개 미만이면 핏하게 줄어든다(같은 ComputeFittedHeight 방식) —
+            // RefreshRosterTokenList()가 매번 다시 계산해서 적용한다.
+            _rosterTokenListContainers[team] = ScrollListUtil.Create(tokenSectionGo.transform, ListMaxHeight, new Color(0.1f, 0.1f, 0.1f, 0.6f), out _, out var tokenListLayoutElement);
+            _rosterTokenListLayoutElements[team] = tokenListLayoutElement;
+
+            _tokenSectionRoots[team] = tokenSectionGo;
+            tokenSectionGo.SetActive(false); // RefreshRosterTokenList()가 토큰이 생기면 켠다.
         }
 
         private static void CreateSectionLabel(Transform parent, string text)
@@ -79,13 +117,14 @@ namespace TmgBoard
         }
 
         /// <summary>예비대 패널의 버튼 하나(로스터 불러오기/예비대 유닛/토큰이
-        /// 전부 이 모양을 공유한다).</summary>
-        private static void CreateListButton(Transform parent, string label, UnityEngine.Events.UnityAction onClick)
+        /// 전부 이 모양을 공유한다). preferredHeight를 키우면 "A 로스터
+        /// 불러오기" 버튼처럼 패널을 꽉 채우는 큰 버튼도 만들 수 있다.</summary>
+        private static GameObject CreateListButton(Transform parent, string label, UnityEngine.Events.UnityAction onClick, float preferredHeight = 32f)
         {
             var btnGo = new GameObject($"Btn_{label}", typeof(RectTransform));
             btnGo.transform.SetParent(parent, false);
             var btnLe = btnGo.AddComponent<LayoutElement>();
-            btnLe.preferredHeight = 32f;
+            btnLe.preferredHeight = preferredHeight;
             var btnImg = btnGo.AddComponent<Image>();
             btnImg.color = new Color(0.3f, 0.3f, 0.3f, 1f);
             var btn = btnGo.AddComponent<Button>();
@@ -104,6 +143,8 @@ namespace TmgBoard
             labelText.fontSize = 13f;
             labelText.color = Color.white;
             labelText.raycastTarget = false;
+
+            return btnGo;
         }
 
         private void RefreshPendingList()
@@ -128,6 +169,7 @@ namespace TmgBoard
                     CreateListButton(container, $"{def.Name} ({def.ModelCount}모델)", () => StartDeployment(capturedIndex));
                 }
             }
+            RefreshListHeights();
         }
 
         private void RefreshRosterTokenList()
@@ -141,6 +183,7 @@ namespace TmgBoard
                     Destroy(container.GetChild(i).gameObject);
                 }
 
+                bool hasAny = false;
                 for (int i = 0; i < _pendingRosterTokens.Count; i++)
                 {
                     var def = _pendingRosterTokens[i];
@@ -148,9 +191,55 @@ namespace TmgBoard
                     {
                         continue;
                     }
+                    hasAny = true;
                     int capturedIndex = i;
                     CreateListButton(container, def.Name, () => StartRosterTokenPlacement(capturedIndex));
                 }
+
+                if (_tokenSectionRoots.TryGetValue(team, out var sectionRoot))
+                {
+                    sectionRoot.SetActive(hasAny);
+                }
+            }
+            RefreshListHeights();
+        }
+
+        /// <summary>예비대 유닛/토큰 두 목록의 박스 높이를 현재 항목 수 기준으로
+        /// 다시 맞춘다 — 내용(버튼)은 안 건드리고 크기만. 두 Refresh*List()가
+        /// 끝에서 공통으로 부른다. 예비대 목록의 캡은 토큰 유무와 무관하게
+        /// 항상 UnitListExpandedMaxHeight다 — 한때 토큰이 있으면 더 좁은
+        /// ListMaxHeight로 캡했었는데, 그러면 토큰 섹션이 있다는 이유만으로
+        /// 패널 전체 세로 크기가 줄어드는 문제가 있었다(사용자 리포트). 토큰
+        /// 섹션은 있으면 그 아래에 자기 몫(ListMaxHeight 캡, 5개 미만이면 더
+        /// 줄어듦)만큼 추가로 붙을 뿐, 유닛 목록 크기에 영향을 주지 않는다.</summary>
+        private void RefreshListHeights()
+        {
+            foreach (var kv in _pendingUnitsListLayoutElements)
+            {
+                string team = kv.Key;
+                int unitCount = 0;
+                foreach (var def in _pendingUnits)
+                {
+                    if (def.Team == team)
+                    {
+                        unitCount++;
+                    }
+                }
+                ScrollListUtil.ApplyFittedHeight(kv.Value, unitCount, UnitListExpandedMaxHeight);
+            }
+
+            foreach (var kv in _rosterTokenListLayoutElements)
+            {
+                string team = kv.Key;
+                int tokenCount = 0;
+                foreach (var def in _pendingRosterTokens)
+                {
+                    if (def.Team == team)
+                    {
+                        tokenCount++;
+                    }
+                }
+                ScrollListUtil.ApplyFittedHeight(kv.Value, tokenCount, ListMaxHeight);
             }
         }
 

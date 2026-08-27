@@ -20,7 +20,15 @@ namespace TmgBoard
     {
         private const float ScrollbarWidth = 14f;
 
-        public static RectTransform Create(Transform parent, float height, Color background, out ScrollRect scrollRect)
+        // CreateListButton(BoardManager.Deployment.cs)이 쓰는 버튼 높이(32)와
+        // 이 파일의 content VerticalLayoutGroup spacing(4)/padding(4+4=8)에
+        // 맞춘 값 — ComputeFittedHeight()가 "항목 몇 개면 대략 몇 px"를
+        // 계산할 때 쓴다. 저 버튼/스페이싱 값을 바꾸면 이 상수들도 맞춰야 한다.
+        private const float RowHeight = 32f;
+        private const float RowSpacing = 4f;
+        private const float ContentPaddingVertical = 8f;
+
+        public static RectTransform Create(Transform parent, float height, Color background, out ScrollRect scrollRect, out LayoutElement layoutElement)
         {
             var scrollGo = new GameObject("ScrollList", typeof(RectTransform));
             scrollGo.transform.SetParent(parent, false);
@@ -28,6 +36,7 @@ namespace TmgBoard
             var le = scrollGo.AddComponent<LayoutElement>();
             le.preferredHeight = height;
             le.minHeight = height;
+            layoutElement = le;
             var bg = scrollGo.AddComponent<Image>();
             bg.color = background;
             scrollGo.AddComponent<RectMask2D>();
@@ -110,6 +119,30 @@ namespace TmgBoard
             scrollRect.scrollSensitivity = 30f;
 
             return content;
+        }
+
+        /// <summary>항목 개수에 맞는 "핏한" 높이 — 항목이 적으면 그만큼만,
+        /// maxHeight를 넘어서면 maxHeight로 잘라서(그 이상은 스크롤로) 돌려준다.
+        /// 항목이 0개면 그냥 maxHeight를 돌려준다(보통 이 경우 호출부가 목록
+        /// 섹션 자체를 숨기므로 실제로 화면에 보이진 않는다).</summary>
+        public static float ComputeFittedHeight(int itemCount, float maxHeight)
+        {
+            if (itemCount <= 0)
+            {
+                return maxHeight;
+            }
+            float contentHeight = ContentPaddingVertical + itemCount * RowHeight + Mathf.Max(0, itemCount - 1) * RowSpacing;
+            return Mathf.Min(contentHeight, maxHeight);
+        }
+
+        /// <summary>Create()가 돌려준 LayoutElement에 ComputeFittedHeight() 결과를
+        /// 바로 반영하는 편의 함수 — preferredHeight/minHeight 둘 다 같이
+        /// 맞춰야 실제로 크기가 바뀐다(Create()가 둘 다 설정하는 것과 동일).</summary>
+        public static void ApplyFittedHeight(LayoutElement layoutElement, int itemCount, float maxHeight)
+        {
+            float h = ComputeFittedHeight(itemCount, maxHeight);
+            layoutElement.preferredHeight = h;
+            layoutElement.minHeight = h;
         }
     }
 }

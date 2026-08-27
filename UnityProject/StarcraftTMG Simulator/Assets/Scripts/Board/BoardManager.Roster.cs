@@ -46,6 +46,11 @@ namespace TmgBoard
             _pendingRosterTokens.AddRange(tokens);
             RefreshPendingList();
             RefreshRosterTokenList();
+
+            if (_rosterImportButtons.TryGetValue(_rosterImportTeam, out var importButton))
+            {
+                importButton.SetActive(false);
+            }
         }
 
         /// <summary>토큰 정의는 유닛과 달리 목록에서 지우지 않는다 — 몇 번이든

@@ -80,6 +80,10 @@ namespace TmgBoard
         // 팀별로 별도 패널(A는 왼쪽, B는 오른쪽)에 나눠 보여준다.
         private readonly List<PendingUnitDef> _pendingUnits = new List<PendingUnitDef>();
         private readonly Dictionary<string, RectTransform> _pendingUnitsListContainers = new Dictionary<string, RectTransform>();
+        // 항목 수에 맞춰 목록 박스 높이를 그때그때 다시 맞추는 데 쓴다
+        // (ScrollListUtil.ApplyFittedHeight) — RefreshPendingList/
+        // RefreshRosterTokenList 참고.
+        private readonly Dictionary<string, LayoutElement> _pendingUnitsListLayoutElements = new Dictionary<string, LayoutElement>();
         private PendingUnitDef _pendingDeploymentDef;
         private bool _unitMoveIsDeployment;
         private PendingUnitDef _deploymentDefSnapshot;
@@ -89,8 +93,14 @@ namespace TmgBoard
         // ── 로스터 JSON 임포트 / 토큰 ────────────────────────────────────
         [SerializeField] private RosterFileDialog rosterFileDialog;
         private string _rosterImportTeam = "A";
+        // 로스터를 불러오고 나면 이 버튼 자체를 숨긴다(OnRosterFileSelected).
+        private readonly Dictionary<string, GameObject> _rosterImportButtons = new Dictionary<string, GameObject>();
         private readonly List<PendingTokenDef> _pendingRosterTokens = new List<PendingTokenDef>();
         private readonly Dictionary<string, RectTransform> _rosterTokenListContainers = new Dictionary<string, RectTransform>();
+        private readonly Dictionary<string, LayoutElement> _rosterTokenListLayoutElements = new Dictionary<string, LayoutElement>();
+        // 라벨+목록을 함께 켜고 끄기 위한 래퍼 — 토큰이 하나도 없는 팀은
+        // "토큰" 섹션 자체를 접어둔다(RefreshRosterTokenList가 관리).
+        private readonly Dictionary<string, GameObject> _tokenSectionRoots = new Dictionary<string, GameObject>();
         // "팀|이름" -> Unit. 같은 토큰은 이미 배치된 것과 한 유닛으로 합쳐진다.
         private readonly Dictionary<string, Unit> _rosterTokenUnits = new Dictionary<string, Unit>();
         private PendingTokenDef _pendingRosterTokenDef;
@@ -465,7 +475,10 @@ namespace TmgBoard
                 options.Add(new RadialMenuOption("데미지 기록", "damage"));
             }
             options.Add(new RadialMenuOption("모델 제거", "remove"));
-            options.Add(new RadialMenuOption("리스폰", "duplicate"));
+            if (!isTokenUnit)
+            {
+                options.Add(new RadialMenuOption("리스폰", "duplicate"));
+            }
             if (!isTokenUnit && canMove)
             {
                 options.Add(new RadialMenuOption("이동", "start_unit_move"));

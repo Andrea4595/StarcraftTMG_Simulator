@@ -106,7 +106,7 @@ namespace TmgBoard
             _pathLabel.overflowMode = TextOverflowModes.Truncate;
 
             // 스크롤 목록.
-            _listContent = ScrollListUtil.Create(panelGo.transform, 340f, new Color(0.1f, 0.1f, 0.1f, 1f), out _);
+            _listContent = ScrollListUtil.Create(panelGo.transform, 340f, new Color(0.1f, 0.1f, 0.1f, 1f), out _, out _);
 
             var buttonRow = new GameObject("Buttons", typeof(RectTransform));
             buttonRow.transform.SetParent(panelGo.transform, false);
