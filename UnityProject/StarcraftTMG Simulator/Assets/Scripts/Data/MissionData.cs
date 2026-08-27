@@ -12,12 +12,14 @@ namespace TmgBoard
         public static bool HasData;
         public static string MapPreset = GameConstants.DefaultMapSizePreset;
         public static readonly List<DeploymentZoneData> DeploymentZones = new List<DeploymentZoneData>();
+        public static readonly List<MissionObjectiveData> MissionObjectives = new List<MissionObjectiveData>();
 
         public static void Clear()
         {
             HasData = false;
             MapPreset = GameConstants.DefaultMapSizePreset;
             DeploymentZones.Clear();
+            MissionObjectives.Clear();
         }
     }
 }

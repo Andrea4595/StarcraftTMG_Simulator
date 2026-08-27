@@ -65,19 +65,8 @@ namespace TmgBoard
             _pendingRosterTokenDef = _pendingRosterTokens[index];
             var fillColor = GameConstants.TeamColors.TryGetValue(_pendingRosterTokenDef.Team, out var c) ? c : GameConstants.TeamColors["neutral"];
             ShowBasePlacementPreview(_pendingRosterTokenDef.SizeMm,
-                    MutedColor(fillColor, TokenColorSaturationFactor, TokenColorValueFactor),
+                    GameConstants.Muted(fillColor, TokenColorSaturationFactor, TokenColorValueFactor),
                     _pendingRosterTokenDef.IsDisplacement);
-        }
-
-        /// <summary>토큰은 팀 색을 그대로 쓰지 않고 채도를 낮추고 살짝만 어둡게
-        /// 해서 일반 모델과 구분되게 한다 — 단순히 어둡게만 하면(RGB를 그대로
-        /// 곱하면 채도는 안 바뀌고 명도만 낮아짐) 라벨 텍스트(검은색)와 대비가
-        /// 부족해져 이름이 잘 안 보였다(Godot판과 동일한 이유).</summary>
-        private static Color MutedColor(Color c, float saturationFactor, float valueFactor)
-        {
-            Color.RGBToHSV(c, out float h, out float s, out float v);
-            var rgb = Color.HSVToRGB(h, Mathf.Clamp01(s * saturationFactor), Mathf.Clamp01(v * valueFactor));
-            return new Color(rgb.r, rgb.g, rgb.b, c.a);
         }
 
         private void HandlePendingRosterTokenInput()
@@ -138,7 +127,7 @@ namespace TmgBoard
             }
 
             var fillColor = GameConstants.TeamColors.TryGetValue(def.Team, out var c) ? c : GameConstants.TeamColors["neutral"];
-            var piece = CreatePieceObject(unit, def.SizeMm, MutedColor(fillColor, TokenColorSaturationFactor, TokenColorValueFactor), def.IsDisplacement);
+            var piece = CreatePieceObject(unit, def.SizeMm, GameConstants.Muted(fillColor, TokenColorSaturationFactor, TokenColorValueFactor), def.IsDisplacement);
             unit.Models.Add(piece);
             piece.Center = ResolvePosition(piece, clickPoint, true);
             piece.Refresh();

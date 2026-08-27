@@ -9,9 +9,10 @@ namespace TmgBoard
 {
     /// <summary>
     /// 미션 생성 화면 — 지도 크기 선택 + 배치구역(팀별 지도 가장자리 구간)
-    /// 그리기. Godot판 scenes/mission_setup/MissionSetup.gd 포팅 — 지형 배치와
-    /// 미션 목표 배치는 아직 없다(텍스처/마스크 이미지 에셋이 필요해서 다음
-    /// 단계). "게임 시작"을 누르면 MissionData에 스냅샷을 채우고
+    /// 그리기 + 미션 목표(1~5번) 배치. Godot판
+    /// scenes/mission_setup/MissionSetup.gd 포팅 — 지형 배치는 아직 없다
+    /// (텍스처/마스크 이미지 에셋이 필요해서 다음 단계). "게임 시작"을 누르면
+    /// MissionData에 스냅샷을 채우고
     /// StartGameRequested를 올린다 — 실제 화면 전환은 이 컴포넌트를 만든 쪽
     /// (부트스트랩)이 그 이벤트를 구독해서 처리한다.
     ///
@@ -41,12 +42,19 @@ namespace TmgBoard
         private RectTransform _mapBackgroundRect;
         private RectTransform _gridRect;
         private RectTransform _zoneLayer;
+        private RectTransform _objectiveLayer;
 
         private readonly Dictionary<string, Button> _sizeButtons = new Dictionary<string, Button>();
         private readonly Dictionary<string, Button> _zoneButtons = new Dictionary<string, Button>();
+        private readonly Dictionary<int, Button> _objectiveButtons = new Dictionary<int, Button>();
+        private readonly Dictionary<int, MissionObjectivePiece> _objectivePieces = new Dictionary<int, MissionObjectivePiece>();
 
         private string _currentPreset = GameConstants.DefaultMapSizePreset;
         private string _activeZonePlayer = "";
+        private int _activeObjectiveNumber;
+
+        private MissionObjectivePiece _draggingObjective;
+        private Vector2 _dragObjectiveOffset;
 
         private int _lastScreenWidth;
         private int _lastScreenHeight;
@@ -81,6 +89,12 @@ namespace TmgBoard
                 UpdateMapLayout();
             }
 
+            if (_draggingObjective != null)
+            {
+                HandleObjectiveDragInput();
+                return;
+            }
+
             if (_drawingZone != null)
             {
                 if (TryGetLocalMouse(out var local))
@@ -100,6 +114,12 @@ namespace TmgBoard
                 {
                     HandleZoneStartClick(local);
                 }
+                return;
+            }
+
+            if (_activeObjectiveNumber != 0 && Input.GetMouseButtonDown(0) && !IsPointerOverUi())
+            {
+                HandleObjectivePlacementClick();
             }
         }
 
@@ -179,6 +199,19 @@ namespace TmgBoard
                 le.preferredHeight = 32f;
                 _zoneButtons[player] = btn;
             }
+
+            var objectiveLabel = CreateLabel(panelRect, "미션 목표");
+            var objectiveLabelLe = objectiveLabel.gameObject.AddComponent<LayoutElement>();
+            objectiveLabelLe.preferredHeight = 20f;
+
+            foreach (var number in GameConstants.MissionObjectiveNumbers)
+            {
+                int captured = number;
+                var btn = CreateButton(panelRect, $"목표 {number}", () => OnObjectiveButtonClicked(captured));
+                var le = btn.gameObject.AddComponent<LayoutElement>();
+                le.preferredHeight = 32f;
+                _objectiveButtons[number] = btn;
+            }
         }
 
         private void BuildMapArea()
@@ -217,6 +250,14 @@ namespace TmgBoard
             _zoneLayer.anchorMax = Vector2.zero;
             _zoneLayer.pivot = Vector2.zero;
             _zoneLayer.anchoredPosition = Vector2.zero;
+
+            var objectiveLayerGo = new GameObject("ObjectiveLayer", typeof(RectTransform));
+            objectiveLayerGo.transform.SetParent(_mapArea, false);
+            _objectiveLayer = (RectTransform)objectiveLayerGo.transform;
+            _objectiveLayer.anchorMin = Vector2.zero;
+            _objectiveLayer.anchorMax = Vector2.zero;
+            _objectiveLayer.pivot = Vector2.zero;
+            _objectiveLayer.anchoredPosition = Vector2.zero;
         }
 
         private static string PresetLabel(string presetName)
@@ -314,10 +355,24 @@ namespace TmgBoard
             }
             _drawingZone = null;
 
+            for (int i = _objectiveLayer.childCount - 1; i >= 0; i--)
+            {
+                Destroy(_objectiveLayer.GetChild(i).gameObject);
+            }
+            _objectivePieces.Clear();
+            _draggingObjective = null;
+            _activeObjectiveNumber = 0;
+            foreach (var btn in _objectiveButtons.Values)
+            {
+                btn.interactable = true;
+                SetButtonHighlighted(btn, false);
+            }
+
             Vector2 mapSize = MapSize;
             _mapBackgroundRect.sizeDelta = mapSize;
             _gridRect.sizeDelta = mapSize;
             _zoneLayer.sizeDelta = mapSize;
+            _objectiveLayer.sizeDelta = mapSize;
             UpdateMapLayout();
         }
 
@@ -355,6 +410,7 @@ namespace TmgBoard
             {
                 SetButtonHighlighted(kv.Value, kv.Key == _activeZonePlayer);
             }
+            ClearObjectiveMode();
         }
 
         private void HandleZoneStartClick(Vector2 local)
@@ -481,6 +537,133 @@ namespace TmgBoard
             return piece;
         }
 
+        // ── 미션 목표 배치 ──────────────────────────────────────────────
+        // Godot판 MissionSetup.gd의 objective 관련 함수들 포팅. 배치구역과
+        // 마찬가지로 팔레트에서 번호를 고르고(한 번에 하나만 배치 모드) 지도를
+        // 클릭하면 놓인다 — 1인치 격자에 스냅, 드래그로 재배치, 우클릭으로
+        // 바로 삭제(메뉴 없음 — 선택지가 삭제 하나뿐이라서, 배치구역과 동일한
+        // 원칙). 번호당 하나만 놓을 수 있어 놓으면 그 팔레트 버튼이
+        // 비활성화되고, 지우면 다시 활성화된다.
+
+        private void OnObjectiveButtonClicked(int number)
+        {
+            _activeObjectiveNumber = _activeObjectiveNumber == number ? 0 : number;
+            _activeZonePlayer = "";
+            foreach (var kv in _zoneButtons)
+            {
+                SetButtonHighlighted(kv.Value, false);
+            }
+            foreach (var kv in _objectiveButtons)
+            {
+                SetButtonHighlighted(kv.Value, kv.Key == _activeObjectiveNumber);
+            }
+        }
+
+        private void ClearObjectiveMode()
+        {
+            int number = _activeObjectiveNumber;
+            _activeObjectiveNumber = 0;
+            if (_objectiveButtons.TryGetValue(number, out var btn))
+            {
+                SetButtonHighlighted(btn, false);
+            }
+        }
+
+        private void HandleObjectivePlacementClick()
+        {
+            if (!TryGetLocalMouse(out var local))
+            {
+                return;
+            }
+            Vector2 mapSize = MapSize;
+            if (local.x < 0f || local.x > mapSize.x || local.y < 0f || local.y > mapSize.y)
+            {
+                return;
+            }
+
+            PlaceObjective(_activeObjectiveNumber, SnapToInchGrid(local));
+            ClearObjectiveMode();
+        }
+
+        private void PlaceObjective(int number, Vector2 localPoint)
+        {
+            float diameter = GameConstants.MissionObjectiveTokenDiameterMm
+                    + 2f * GameConstants.MissionObjectiveCaptureMarginInch * GameConstants.MmPerInch;
+
+            var go = new GameObject($"Objective_{number}", typeof(RectTransform));
+            go.transform.SetParent(_objectiveLayer, false);
+            var piece = go.AddComponent<MissionObjectivePiece>();
+            piece.Number = number;
+            var baseColor = GameConstants.MissionObjectiveTokenColors.TryGetValue(number, out var c)
+                    ? c
+                    : new Color(0.85f, 0.85f, 0.8f);
+            piece.TokenColor = GameConstants.Muted(baseColor, GameConstants.MissionObjectiveSaturationFactor, GameConstants.MissionObjectiveValueFactor);
+            piece.RectTransform.anchorMin = Vector2.zero;
+            piece.RectTransform.anchorMax = Vector2.zero;
+            piece.RectTransform.sizeDelta = new Vector2(diameter, diameter);
+            piece.Center = localPoint;
+            ClampObjectiveToBounds(piece);
+            piece.DragRequested += OnObjectiveDragRequested;
+            piece.DeleteRequested += OnObjectiveDeleteRequested;
+
+            _objectivePieces[number] = piece;
+            if (_objectiveButtons.TryGetValue(number, out var btn))
+            {
+                btn.interactable = false;
+            }
+        }
+
+        private void ClampObjectiveToBounds(MissionObjectivePiece piece)
+        {
+            Vector2 mapSize = MapSize;
+            float margin = GameConstants.MissionObjectiveTokenDiameterMm / 2f;
+            Vector2 c = piece.Center;
+            c.x = Mathf.Clamp(c.x, margin, Mathf.Max(margin, mapSize.x - margin));
+            c.y = Mathf.Clamp(c.y, margin, Mathf.Max(margin, mapSize.y - margin));
+            piece.Center = c;
+        }
+
+        private void HandleObjectiveDragInput()
+        {
+            if (TryGetLocalMouse(out var local))
+            {
+                _draggingObjective.Center = SnapToInchGrid(local + _dragObjectiveOffset);
+                ClampObjectiveToBounds(_draggingObjective);
+            }
+            if (Input.GetMouseButtonUp(0))
+            {
+                _draggingObjective = null;
+            }
+        }
+
+        private void OnObjectiveDragRequested(MissionObjectivePiece piece)
+        {
+            _draggingObjective = piece;
+            TryGetLocalMouse(out var local);
+            _dragObjectiveOffset = piece.Center - local;
+            piece.transform.SetAsLastSibling();
+        }
+
+        private void OnObjectiveDeleteRequested(MissionObjectivePiece piece)
+        {
+            int number = piece.Number;
+            Destroy(piece.gameObject);
+            if (_objectivePieces.TryGetValue(number, out var existing) && existing == piece)
+            {
+                _objectivePieces.Remove(number);
+            }
+            if (_objectiveButtons.TryGetValue(number, out var btn))
+            {
+                btn.interactable = true;
+            }
+        }
+
+        private static Vector2 SnapToInchGrid(Vector2 point)
+        {
+            float step = GameConstants.MmPerInch;
+            return new Vector2(Mathf.Round(point.x / step) * step, Mathf.Round(point.y / step) * step);
+        }
+
         // ── 게임 시작 ────────────────────────────────────────────────
 
         private void OnStartGamePressed()
@@ -502,6 +685,15 @@ namespace TmgBoard
                     Player = piece.OwnerPlayer,
                     StartAlong = piece.StartAlong,
                     EndAlong = piece.EndAlong,
+                });
+            }
+
+            foreach (var kv in _objectivePieces)
+            {
+                MissionData.MissionObjectives.Add(new MissionObjectiveData
+                {
+                    Number = kv.Key,
+                    Position = kv.Value.Center,
                 });
             }
 
