@@ -21,5 +21,9 @@ namespace TmgBoard
         public bool CanMove = true;
         public bool IsDisplacement;
         public List<int> Damages = new List<int>();
+
+        /// <summary>배치될 때 그대로 "범위 표시"에 등록될 사거리들(로스터 임포트,
+        /// 또는 "유닛 되돌리기"로 되돌아오며 유지된 것).</summary>
+        public List<RangeSpec> Ranges = new List<RangeSpec>();
     }
 }

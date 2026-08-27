@@ -50,8 +50,9 @@ namespace TmgBoard
             layout.padding = new RectOffset(16, 16, 16, 16);
             layout.spacing = 10f;
             layout.childControlWidth = true;
-            layout.childControlHeight = false;
+            layout.childControlHeight = true;
             layout.childForceExpandWidth = true;
+            layout.childForceExpandHeight = false;
 
             _titleLabel = CreateLabel(panelGo.transform, "", 18f);
 
@@ -63,6 +64,7 @@ namespace TmgBoard
             buttonRowLayout.spacing = 8f;
             buttonRowLayout.childControlWidth = true;
             buttonRowLayout.childForceExpandWidth = true;
+            buttonRowLayout.childControlHeight = true;
 
             CreateButton(buttonRow.transform, "확인", OnConfirmPressed);
             CreateButton(buttonRow.transform, "취소", OnCancelPressed);

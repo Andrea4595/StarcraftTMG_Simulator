@@ -217,9 +217,137 @@ namespace TmgBoard
                 }
             }
 
-            pos.x = Mathf.Clamp(pos.x, boundingRadius, Mathf.Max(boundingRadius, mapSize.x - boundingRadius));
-            pos.y = Mathf.Clamp(pos.y, boundingRadius, Mathf.Max(boundingRadius, mapSize.y - boundingRadius));
+            // baseLayer는 중심-원점 mm 좌표계다(지도 중심이 (0,0), 범위는
+            // [-mapSize/2, +mapSize/2]) — Base 조각의 anchoredPosition이 그대로
+            // 이 좌표계를 따른다. 예전엔 여기가 [0, mapSize] 모서리-원점으로
+            // 잘못 클램프돼 있어서, 지도 왼쪽 절반/아래쪽 절반으로는 드래그가
+            // 전혀 안 먹혔다(그쪽으로 옮기려 하면 전부 중심 쪽 모서리 근처로
+            // 튕겨 나갔다) — 지도 배경을 추가하고 나서야 실제로 드러난 버그.
+            float halfX = mapSize.x / 2f;
+            float halfY = mapSize.y / 2f;
+            pos.x = Mathf.Clamp(pos.x, -halfX + boundingRadius, Mathf.Max(-halfX + boundingRadius, halfX - boundingRadius));
+            pos.y = Mathf.Clamp(pos.y, -halfY + boundingRadius, Mathf.Max(-halfY + boundingRadius, halfY - boundingRadius));
             return pos;
+        }
+
+        /// <summary>Eberly의 robust point-to-ellipse 최근접점 알고리즘에서 쓰는
+        /// 이분법 루트 찾기. 뉴턴법과 달리 중심 근처 등에서도 항상 안정적으로
+        /// 수렴한다(측정 도구의 거리 재기에 씀).</summary>
+        private static float EllipseDistanceRoot(float r0, float z0, float z1, float g0)
+        {
+            float n0 = r0 * z0;
+            float s0 = z1 - 1f;
+            float s1 = g0 < 0f ? 0f : Mathf.Sqrt(n0 * n0 + z1 * z1) - 1f;
+            float s = 0f;
+            for (int i = 0; i < 64; i++)
+            {
+                s = (s0 + s1) / 2f;
+                if (s == s0 || s == s1)
+                {
+                    break;
+                }
+                float ratio0 = n0 / (s + r0);
+                float ratio1 = z1 / (s + 1f);
+                float g = ratio0 * ratio0 + ratio1 * ratio1 - 1f;
+                if (g > 0f)
+                {
+                    s0 = s;
+                }
+                else if (g < 0f)
+                {
+                    s1 = s;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            return s;
+        }
+
+        /// <summary>
+        /// 중심이 원점이고 회전되지 않은 타원(반지름 rx,ry) 테두리에서
+        /// localTarget에 실제로 가장 가까운 점 — 단순히 중심 방향으로 투사하는
+        /// 것과 달리 진짜 최근접점(Eberly의 강건한 point-to-ellipse 알고리즘 포팅).
+        /// 타원은 중심에서 본 방향과 실제 최근접점 방향이(원과 달리) 대체로 다르다.
+        /// </summary>
+        public static Vector2 ClosestPointOnEllipseLocal(Vector2 localTarget, float rx, float ry)
+        {
+            if (rx < 0.0001f || ry < 0.0001f)
+            {
+                return Vector2.zero;
+            }
+
+            // 알고리즘은 e0 >= e1을 가정하므로 필요하면 축을 맞바꿔 풀고 되돌린다.
+            bool swapped = rx < ry;
+            float e0 = swapped ? ry : rx;
+            float e1 = swapped ? rx : ry;
+            float in0 = swapped ? localTarget.y : localTarget.x;
+            float in1 = swapped ? localTarget.x : localTarget.y;
+
+            float sx = in0 >= 0f ? 1f : -1f;
+            float sy = in1 >= 0f ? 1f : -1f;
+            float y0 = Mathf.Abs(in0);
+            float y1 = Mathf.Abs(in1);
+
+            float x0, x1;
+
+            if (y1 > 0.0001f)
+            {
+                if (y0 > 0.0001f)
+                {
+                    float z0 = y0 / e0;
+                    float z1 = y1 / e1;
+                    float g = z0 * z0 + z1 * z1 - 1f;
+                    if (Mathf.Abs(g) > 0.000001f)
+                    {
+                        float r0 = (e0 / e1) * (e0 / e1);
+                        float s = EllipseDistanceRoot(r0, z0, z1, g);
+                        x0 = r0 * y0 / (s + r0);
+                        x1 = y1 / (s + 1f);
+                    }
+                    else
+                    {
+                        x0 = y0;
+                        x1 = y1;
+                    }
+                }
+                else
+                {
+                    x0 = 0f;
+                    x1 = e1;
+                }
+            }
+            else
+            {
+                float numer0 = e0 * y0;
+                float denom0 = e0 * e0 - e1 * e1;
+                if (numer0 < denom0)
+                {
+                    float xde0 = numer0 / denom0;
+                    x0 = e0 * xde0;
+                    x1 = e1 * Mathf.Sqrt(Mathf.Max(1f - xde0 * xde0, 0f));
+                }
+                else
+                {
+                    x0 = e0;
+                    x1 = 0f;
+                }
+            }
+
+            x0 *= sx;
+            x1 *= sy;
+
+            return swapped ? new Vector2(x1, x0) : new Vector2(x0, x1);
+        }
+
+        /// <summary>회전+이동된 타원(center, rot)의 테두리에서 world-space target에
+        /// 가장 가까운 점(world 좌표).</summary>
+        public static Vector2 ClosestPointOnEllipseWorld(Vector2 center, Vector2 sizeMm, float rot, Vector2 target)
+        {
+            Vector2 localTarget = Rotate(target - center, -rot);
+            Vector2 localPoint = ClosestPointOnEllipseLocal(localTarget, sizeMm.x / 2f, sizeMm.y / 2f);
+            return center + Rotate(localPoint, rot);
         }
     }
 }

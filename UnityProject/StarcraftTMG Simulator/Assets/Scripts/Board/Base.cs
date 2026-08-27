@@ -29,10 +29,13 @@ namespace TmgBoard
         public Unit Unit;
         public string Memo = "";
 
+        private const float CoherencyFlashSpeed = 6f; // 라디안/초
+
         [SerializeField] private Vector2 sizeMm = new Vector2(32f, 32f);
         [SerializeField] private Color fillColor = new Color(0.6f, 0.6f, 0.6f, 0.85f);
         [SerializeField] private int damage;
         [SerializeField] private bool isDisplacement;
+        private bool _coherencyWarning;
 
         private RectTransform _rectTransform;
         private TextMeshProUGUI _nameLabel;
@@ -66,6 +69,22 @@ namespace TmgBoard
         {
             get => isDisplacement;
             set => isDisplacement = value;
+        }
+
+        /// <summary>true면 하얗게 반짝이며 코헤런시 이탈을 알린다(유닛 이동 중
+        /// BoardManager.UpdateUnitMoveWarning()이 매 프레임 갱신).</summary>
+        public bool CoherencyWarning
+        {
+            get => _coherencyWarning;
+            set
+            {
+                if (_coherencyWarning == value)
+                {
+                    return;
+                }
+                _coherencyWarning = value;
+                SetVerticesDirty();
+            }
         }
 
         public RectTransform RectTransform => _rectTransform != null ? _rectTransform : (_rectTransform = (RectTransform)transform);
@@ -164,6 +183,16 @@ namespace TmgBoard
             }
         }
 
+        /// <summary>반짝임 애니메이션 — 켜져 있을 때만 매 프레임 메시를 다시
+        /// 그리게 한다(꺼져 있으면 아무 비용도 없다).</summary>
+        private void Update()
+        {
+            if (_coherencyWarning)
+            {
+                SetVerticesDirty();
+            }
+        }
+
         protected override void OnPopulateMesh(VertexHelper vh)
         {
             vh.Clear();
@@ -172,9 +201,21 @@ namespace TmgBoard
             float ry = sizeMm.y / 2f;
             var outlineColor = isDisplacement ? DisplacementOutlineColor : OutlineColor;
             float outlineWidth = isDisplacement ? 3f : 1.5f;
+            var drawFillColor = fillColor;
+
+            if (_coherencyWarning)
+            {
+                // 코헤런시를 벗어난 모델은 하얗게 반짝인다 — 사인파로 흰색과
+                // 원래 색 사이를 오간다. Update()가 매 프레임 SetVerticesDirty()를
+                // 불러 이 메서드가 다시 실행되게 해서 재생된다.
+                float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * CoherencyFlashSpeed);
+                drawFillColor = Color.Lerp(fillColor, Color.white, pulse);
+                outlineColor = Color.Lerp(outlineColor, Color.white, pulse);
+                outlineWidth = Mathf.Max(outlineWidth, 2.5f);
+            }
 
             // 채우기: 중심에서 팬(fan) 삼각분할.
-            var center = new UIVertex { color = fillColor, position = Vector3.zero };
+            var center = new UIVertex { color = drawFillColor, position = Vector3.zero };
             vh.AddVert(center);
 
             var edge = new Vector3[VisualSides];
@@ -182,7 +223,7 @@ namespace TmgBoard
             {
                 float angle = i * Mathf.PI * 2f / VisualSides;
                 edge[i] = new Vector3(Mathf.Cos(angle) * rx, Mathf.Sin(angle) * ry, 0f);
-                vh.AddVert(new UIVertex { color = fillColor, position = edge[i] });
+                vh.AddVert(new UIVertex { color = drawFillColor, position = edge[i] });
             }
 
             for (int i = 0; i < VisualSides; i++)
