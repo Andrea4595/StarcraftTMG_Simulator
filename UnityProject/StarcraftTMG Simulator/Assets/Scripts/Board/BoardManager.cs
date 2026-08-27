@@ -35,6 +35,7 @@ namespace TmgBoard
         [SerializeField] private RangeOverlay rangeFillLayer;
         [SerializeField] private MeasureOverlay measureLayer;
         [SerializeField] private RectTransform markerLayer;
+        [SerializeField] private RectTransform terrainLayer;
         [SerializeField] private Vector2 mapSizeMm = new Vector2(36f * GameConstants.MmPerInch, 36f * GameConstants.MmPerInch);
 
         private const float DuplicateGapMm = 4f;
@@ -196,6 +197,7 @@ namespace TmgBoard
             UpdateMapLayout();
             InitScreenshotSession();
             BuildMissionObjectiveVisuals();
+            BuildTerrainVisuals();
         }
 
         /// <summary>씬을 코드로 구성할 때(부트스트랩 등) 인스펙터 대신 쓰는 초기화.</summary>
@@ -237,6 +239,13 @@ namespace TmgBoard
         public void ConfigureRoster(RosterFileDialog rosterFileDialogRef)
         {
             rosterFileDialog = rosterFileDialogRef;
+        }
+
+        /// <summary>미션 설정에서 넘어온 지형 조각(읽기 전용 표시용) 레이어를
+        /// 주입한다 — 물리 없는 순수 시각 참고용(사용자와 합의된 방침).</summary>
+        public void ConfigureTerrain(RectTransform terrainLayerRef)
+        {
+            terrainLayer = terrainLayerRef;
         }
 
         /// <summary>미션 설정 핸드오프 등, 인스펙터 대신 코드로 지도 크기를

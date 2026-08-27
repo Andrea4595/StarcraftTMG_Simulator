@@ -92,6 +92,16 @@ public static class GameFlowTestBootstrap
         mapBackgroundRect.offsetMin = Vector2.zero;
         mapBackgroundRect.offsetMax = Vector2.zero;
 
+        // 지형 — 물리 없는 순수 시각 참고용(사용자와 합의된 방침)이라 지도
+        // 배경 바로 위, 범위 표시/베이스 조각들보다는 아래에 깐다.
+        var terrainLayerGo = new GameObject("TerrainLayer", typeof(RectTransform));
+        terrainLayerGo.transform.SetParent(mapAreaRect, false);
+        var terrainLayerRect = (RectTransform)terrainLayerGo.transform;
+        terrainLayerRect.anchorMin = Vector2.zero;
+        terrainLayerRect.anchorMax = Vector2.one;
+        terrainLayerRect.offsetMin = Vector2.zero;
+        terrainLayerRect.offsetMax = Vector2.zero;
+
         // 범위 표시(채우기+점선 테두리)는 지도보다는 앞에, 그러나 실제 베이스
         // 조각들보다는 뒤에 그려져야 한다 — mapArea 자식 중 BaseLayer보다
         // 먼저(=아래에) 추가한다. fill이 outline보다 더 아래(Godot판과 동일).
@@ -195,6 +205,7 @@ public static class GameFlowTestBootstrap
                 Resources.Load<Texture2D>("Tokens/flag"),
                 iconTextures);
         board.ConfigureRoster(rosterFileDialog);
+        board.ConfigureTerrain(terrainLayerRect);
         scoreboard.SetBoardManager(board);
 
         if (MissionData.HasData && GameConstants.MapSizePresets.TryGetValue(MissionData.MapPreset, out var mapSize))

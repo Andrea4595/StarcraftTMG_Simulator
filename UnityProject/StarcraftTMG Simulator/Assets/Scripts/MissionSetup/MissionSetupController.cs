@@ -42,16 +42,22 @@ namespace TmgBoard
         private RectTransform _mapBackgroundRect;
         private RectTransform _gridRect;
         private RectTransform _zoneLayer;
+        private RectTransform _terrainLayer;
         private RectTransform _objectiveLayer;
 
         private readonly Dictionary<string, Button> _sizeButtons = new Dictionary<string, Button>();
+        private readonly Dictionary<string, Button> _terrainButtons = new Dictionary<string, Button>();
         private readonly Dictionary<string, Button> _zoneButtons = new Dictionary<string, Button>();
         private readonly Dictionary<int, Button> _objectiveButtons = new Dictionary<int, Button>();
         private readonly Dictionary<int, MissionObjectivePiece> _objectivePieces = new Dictionary<int, MissionObjectivePiece>();
 
         private string _currentPreset = GameConstants.DefaultMapSizePreset;
+        private string _placementModuleId = "";
         private string _activeZonePlayer = "";
         private int _activeObjectiveNumber;
+
+        private TerrainPiece _draggingPiece;
+        private Vector2 _dragPieceOffset;
 
         private MissionObjectivePiece _draggingObjective;
         private Vector2 _dragObjectiveOffset;
@@ -89,6 +95,25 @@ namespace TmgBoard
                 UpdateMapLayout();
             }
 
+            // 이 화면엔 아직 팬/줌이 없어서(게임 보드와 다름), 지형 조각 위에서
+            // 휠을 굴리면 그냥 무조건 회전한다 — Godot판처럼 "지형 위면 회전,
+            // 아니면 줌"으로 분기할 필요가 없다.
+            float scroll = Input.mouseScrollDelta.y;
+            if (!Mathf.Approximately(scroll, 0f) && TryGetLocalMouse(out var wheelLocal))
+            {
+                var hovered = FindTerrainPieceAt(wheelLocal);
+                if (hovered != null)
+                {
+                    hovered.RotateStep(scroll > 0f ? 1 : -1);
+                }
+            }
+
+            if (_draggingPiece != null)
+            {
+                HandleDragInput();
+                return;
+            }
+
             if (_draggingObjective != null)
             {
                 HandleObjectiveDragInput();
@@ -120,6 +145,12 @@ namespace TmgBoard
             if (_activeObjectiveNumber != 0 && Input.GetMouseButtonDown(0) && !IsPointerOverUi())
             {
                 HandleObjectivePlacementClick();
+                return;
+            }
+
+            if (_placementModuleId != "" && Input.GetMouseButtonDown(0) && !IsPointerOverUi())
+            {
+                HandlePlacementClick();
             }
         }
 
@@ -188,6 +219,19 @@ namespace TmgBoard
             var fitter = panelGo.AddComponent<ContentSizeFitter>();
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
+            var terrainLabel = CreateLabel(panelRect, "지형 (휠로 회전, 우클릭 메뉴로 삭제)");
+            var terrainLabelLe = terrainLabel.gameObject.AddComponent<LayoutElement>();
+            terrainLabelLe.preferredHeight = 32f;
+
+            foreach (var module in TerrainCatalog.Modules)
+            {
+                string capturedId = module.Id;
+                var btn = CreateButton(panelRect, module.DisplayName, () => OnTerrainButtonToggled(capturedId));
+                var btnLe = btn.gameObject.AddComponent<LayoutElement>();
+                btnLe.preferredHeight = 32f;
+                _terrainButtons[module.Id] = btn;
+            }
+
             var instructionLabel = CreateLabel(panelRect, "배치구역 (지도 가장자리에서 드래그, 우클릭으로 삭제)");
             var instructionLe = instructionLabel.gameObject.AddComponent<LayoutElement>();
             instructionLe.preferredHeight = 44f;
@@ -250,6 +294,14 @@ namespace TmgBoard
             _zoneLayer.anchorMax = Vector2.zero;
             _zoneLayer.pivot = Vector2.zero;
             _zoneLayer.anchoredPosition = Vector2.zero;
+
+            var terrainLayerGo = new GameObject("TerrainLayer", typeof(RectTransform));
+            terrainLayerGo.transform.SetParent(_mapArea, false);
+            _terrainLayer = (RectTransform)terrainLayerGo.transform;
+            _terrainLayer.anchorMin = Vector2.zero;
+            _terrainLayer.anchorMax = Vector2.zero;
+            _terrainLayer.pivot = Vector2.zero;
+            _terrainLayer.anchoredPosition = Vector2.zero;
 
             var objectiveLayerGo = new GameObject("ObjectiveLayer", typeof(RectTransform));
             objectiveLayerGo.transform.SetParent(_mapArea, false);
@@ -355,6 +407,17 @@ namespace TmgBoard
             }
             _drawingZone = null;
 
+            for (int i = _terrainLayer.childCount - 1; i >= 0; i--)
+            {
+                Destroy(_terrainLayer.GetChild(i).gameObject);
+            }
+            _draggingPiece = null;
+            _placementModuleId = "";
+            foreach (var kv in _terrainButtons)
+            {
+                SetButtonHighlighted(kv.Value, false);
+            }
+
             for (int i = _objectiveLayer.childCount - 1; i >= 0; i--)
             {
                 Destroy(_objectiveLayer.GetChild(i).gameObject);
@@ -372,6 +435,7 @@ namespace TmgBoard
             _mapBackgroundRect.sizeDelta = mapSize;
             _gridRect.sizeDelta = mapSize;
             _zoneLayer.sizeDelta = mapSize;
+            _terrainLayer.sizeDelta = mapSize;
             _objectiveLayer.sizeDelta = mapSize;
             UpdateMapLayout();
         }
@@ -401,6 +465,133 @@ namespace TmgBoard
             _mapArea.anchoredPosition = new Vector2(left, MarginPx);
         }
 
+        // ── 지형 배치 ────────────────────────────────────────────────────
+        // Godot판 TerrainPiece.gd/TerrainCatalog.gd + MissionSetup.gd의 지형
+        // 관련 함수들 포팅. 물리/충돌은 없다 — 순수 시각 참고용으로만
+        // 배치한다(고지대 경사로 통행 등은 사람이 직접 판정, 사용자와 합의된
+        // 방침). 회전은 휠로만 하고, 우클릭은 배치구역/미션 목표와 동일하게
+        // 바로 삭제한다(옵션이 하나뿐이면 즉시 실행하는 이 프로젝트 규칙).
+
+        private const float TerrainGridSizeMm = GameConstants.MmPerInch / 2f; // 0.5인치
+
+        private void OnTerrainButtonToggled(string moduleId)
+        {
+            bool nowActive = _placementModuleId != moduleId;
+            _placementModuleId = nowActive ? moduleId : "";
+            foreach (var kv in _terrainButtons)
+            {
+                SetButtonHighlighted(kv.Value, nowActive && kv.Key == moduleId);
+            }
+            _activeZonePlayer = "";
+            foreach (var kv in _zoneButtons)
+            {
+                SetButtonHighlighted(kv.Value, false);
+            }
+            ClearObjectiveMode();
+        }
+
+        private void ClearTerrainPlacementMode()
+        {
+            _placementModuleId = "";
+            foreach (var kv in _terrainButtons)
+            {
+                SetButtonHighlighted(kv.Value, false);
+            }
+        }
+
+        private void HandlePlacementClick()
+        {
+            if (!TryGetLocalMouse(out var local))
+            {
+                return;
+            }
+            Vector2 mapSize = MapSize;
+            if (local.x < 0f || local.x > mapSize.x || local.y < 0f || local.y > mapSize.y)
+            {
+                return;
+            }
+
+            PlacePiece(_placementModuleId, SnapToGrid(local));
+            ClearTerrainPlacementMode();
+        }
+
+        private void PlacePiece(string moduleId, Vector2 localPoint)
+        {
+            var module = TerrainCatalog.Get(moduleId);
+            if (module == null)
+            {
+                return;
+            }
+
+            var go = new GameObject($"Terrain_{module.Id}", typeof(RectTransform));
+            go.transform.SetParent(_terrainLayer, false);
+            var piece = go.AddComponent<TerrainPiece>();
+            piece.RectTransform.anchorMin = Vector2.zero;
+            piece.RectTransform.anchorMax = Vector2.zero;
+            piece.Setup(module);
+            piece.Center = localPoint;
+            piece.DragRequested += OnPieceDragRequested;
+            piece.DeleteRequested += OnPieceDeleteRequested;
+        }
+
+        private void HandleDragInput()
+        {
+            if (TryGetLocalMouse(out var local))
+            {
+                _draggingPiece.Center = SnapToGrid(local + _dragPieceOffset);
+            }
+            if (Input.GetMouseButtonUp(0))
+            {
+                _draggingPiece = null;
+            }
+        }
+
+        private void OnPieceDragRequested(TerrainPiece piece)
+        {
+            _draggingPiece = piece;
+            TryGetLocalMouse(out var local);
+            _dragPieceOffset = piece.Center - local;
+            piece.transform.SetAsLastSibling();
+        }
+
+        private void OnPieceDeleteRequested(TerrainPiece piece)
+        {
+            Destroy(piece.gameObject);
+        }
+
+        /// <summary>마우스 아래(맨 위에 그려진 것부터)의 지형 조각을 찾는다 —
+        /// 회전된 사각형 그대로 판정한다(Godot판 _find_terrain_piece_at_point
+        /// 포팅). 휠을 굴렸을 때 회전할지 말지 정하는 데 쓴다.</summary>
+        private TerrainPiece FindTerrainPieceAt(Vector2 point)
+        {
+            for (int i = _terrainLayer.childCount - 1; i >= 0; i--)
+            {
+                var piece = _terrainLayer.GetChild(i).GetComponent<TerrainPiece>();
+                if (piece == null)
+                {
+                    continue;
+                }
+                float rad = -piece.RotationDegrees * Mathf.Deg2Rad;
+                Vector2 offset = point - piece.Center;
+                float cos = Mathf.Cos(rad);
+                float sin = Mathf.Sin(rad);
+                Vector2 local = new Vector2(offset.x * cos - offset.y * sin, offset.x * sin + offset.y * cos);
+                Vector2 half = piece.RectTransform.sizeDelta / 2f;
+                if (Mathf.Abs(local.x) <= half.x && Mathf.Abs(local.y) <= half.y)
+                {
+                    return piece;
+                }
+            }
+            return null;
+        }
+
+        private static Vector2 SnapToGrid(Vector2 point)
+        {
+            return new Vector2(
+                    Mathf.Round(point.x / TerrainGridSizeMm) * TerrainGridSizeMm,
+                    Mathf.Round(point.y / TerrainGridSizeMm) * TerrainGridSizeMm);
+        }
+
         // ── 배치구역 그리기 ─────────────────────────────────────────────
 
         private void OnZoneButtonClicked(string player)
@@ -411,6 +602,7 @@ namespace TmgBoard
                 SetButtonHighlighted(kv.Value, kv.Key == _activeZonePlayer);
             }
             ClearObjectiveMode();
+            ClearTerrainPlacementMode();
         }
 
         private void HandleZoneStartClick(Vector2 local)
@@ -557,6 +749,7 @@ namespace TmgBoard
             {
                 SetButtonHighlighted(kv.Value, kv.Key == _activeObjectiveNumber);
             }
+            ClearTerrainPlacementMode();
         }
 
         private void ClearObjectiveMode()
@@ -694,6 +887,21 @@ namespace TmgBoard
                 {
                     Number = kv.Key,
                     Position = kv.Value.Center,
+                });
+            }
+
+            for (int i = 0; i < _terrainLayer.childCount; i++)
+            {
+                var piece = _terrainLayer.GetChild(i).GetComponent<TerrainPiece>();
+                if (piece == null)
+                {
+                    continue;
+                }
+                MissionData.TerrainPieces.Add(new TerrainPieceData
+                {
+                    ModuleId = piece.ModuleId,
+                    Position = piece.Center,
+                    RotationDeg = piece.RotationDegrees,
                 });
             }
 

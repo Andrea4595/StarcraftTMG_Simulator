@@ -13,6 +13,7 @@ namespace TmgBoard
         public static string MapPreset = GameConstants.DefaultMapSizePreset;
         public static readonly List<DeploymentZoneData> DeploymentZones = new List<DeploymentZoneData>();
         public static readonly List<MissionObjectiveData> MissionObjectives = new List<MissionObjectiveData>();
+        public static readonly List<TerrainPieceData> TerrainPieces = new List<TerrainPieceData>();
 
         public static void Clear()
         {
@@ -20,6 +21,7 @@ namespace TmgBoard
             MapPreset = GameConstants.DefaultMapSizePreset;
             DeploymentZones.Clear();
             MissionObjectives.Clear();
+            TerrainPieces.Clear();
         }
     }
 }
