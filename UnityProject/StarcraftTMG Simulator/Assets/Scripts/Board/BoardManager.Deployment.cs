@@ -35,7 +35,9 @@ namespace TmgBoard
             panel.anchorMin = new Vector2(xAnchor, 1f);
             panel.anchorMax = new Vector2(xAnchor, 1f);
             panel.pivot = new Vector2(xAnchor, 1f);
-            panel.anchoredPosition = new Vector2(left ? 16f : -16f, -16f);
+            // 상단 스코어보드 바(ScoreboardPanel, 화면 맨 위를 가로지름) 아래로
+            // 내려서 겹치지 않게 한다.
+            panel.anchoredPosition = new Vector2(left ? 16f : -16f, -(GameConstants.ScoreboardHeight + 16f));
             panel.sizeDelta = new Vector2(220f, 40f);
 
             var bg = panelGo.AddComponent<Image>();

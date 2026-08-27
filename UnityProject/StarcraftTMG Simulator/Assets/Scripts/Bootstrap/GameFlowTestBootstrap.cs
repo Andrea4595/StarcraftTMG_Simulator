@@ -27,6 +27,15 @@ public static class GameFlowTestBootstrap
             eventSystemGo.AddComponent<StandaloneInputModule>();
         }
 
+        // 지도(정사각형)가 화면(와이드) 비율에 안 맞아 남는 여백에 Unity 기본
+        // 카메라 배경색(파란빛)이 그대로 비쳐 보이는 문제 — 화면 공간
+        // Overlay 캔버스는 카메라가 그린 배경 위에 그려지므로, 카메라가 있다면
+        // 배경색을 어두운 색으로 맞춰준다.
+        if (Camera.main != null)
+        {
+            Camera.main.backgroundColor = new Color(0.05f, 0.05f, 0.05f, 1f);
+        }
+
         BuildMissionSetup();
     }
 
@@ -122,13 +131,14 @@ public static class GameFlowTestBootstrap
         markerLayerRect.offsetMin = Vector2.zero;
         markerLayerRect.offsetMax = Vector2.zero;
 
+        var scoreboard = new GameObject("Scoreboard").AddComponent<ScoreboardPanel>();
+        scoreboard.transform.SetParent(canvasGo.transform, false);
+
         var radialMenu = new GameObject("RadialMenu").AddComponent<RadialMenu>();
         radialMenu.transform.SetParent(canvasGo.transform, false);
 
         var damageDialog = new GameObject("DamageDialog").AddComponent<InputDialog>();
         damageDialog.transform.SetParent(canvasGo.transform, false);
-        var renameDialog = new GameObject("RenameDialog").AddComponent<InputDialog>();
-        renameDialog.transform.SetParent(canvasGo.transform, false);
         var memoDialog = new GameObject("MemoDialog").AddComponent<InputDialog>();
         memoDialog.transform.SetParent(canvasGo.transform, false);
         var rangeInputDialog = new GameObject("RangeInputDialog").AddComponent<RangeInputDialog>();
@@ -164,7 +174,7 @@ public static class GameFlowTestBootstrap
 
         var boardGo = new GameObject("BoardManager");
         var board = boardGo.AddComponent<BoardManager>();
-        board.Configure(baseLayerRect, mapAreaRect, radialMenu, damageDialog, renameDialog, memoDialog, guideline, memoOverlay,
+        board.Configure(baseLayerRect, mapAreaRect, radialMenu, damageDialog, memoDialog, guideline, memoOverlay,
                 rangeInputDialog, rangeOutlineLayer, rangeFillLayer, measureLayer);
 
         // 마커 텍스처는 Resources/Tokens/*.png(Godot의 Tokens/ 폴더에서 그대로
@@ -185,6 +195,7 @@ public static class GameFlowTestBootstrap
                 Resources.Load<Texture2D>("Tokens/flag"),
                 iconTextures);
         board.ConfigureRoster(rosterFileDialog);
+        scoreboard.SetBoardManager(board);
 
         if (MissionData.HasData && GameConstants.MapSizePresets.TryGetValue(MissionData.MapPreset, out var mapSize))
         {

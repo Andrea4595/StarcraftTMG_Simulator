@@ -10,7 +10,11 @@ namespace TmgBoard
     /// _parse_roster_speed/_parse_roster_ranges 포팅 — MiniJson으로 판 JSON
     /// 트리(Dictionary/List)를 그대로 순회한다. 팀은 파일에 없고 불러올 때
     /// 고른 쪽으로 붙는다. tags/abilities 등 시뮬레이터가 안 쓰는 나머지
-    /// 텍스트 필드는 그냥 무시한다(Godot판과 동일).
+    /// 텍스트 필드는 그냥 무시한다(Godot판과 동일). "squad_tiers"(남은 모델
+    /// 수 구간별 서플라이 단계표)는 읽는다(pts는 여전히 무시) — 스코어보드의
+    /// 팀별 서플라이 표시에 쓰인다. "squad_tier_index"(로스터 작성 시 고른
+    /// 단계)는 안 읽는다 — 인게임 현재 서플라이는 항상 남은 모델 수로
+    /// 그때그때 다시 찾으므로 필요 없다.
     /// </summary>
     public static class RosterImporter
     {
@@ -69,6 +73,7 @@ namespace TmgBoard
                         CoherencyInch = speed.CoherencyInch,
                         CanMove = speed.CanMove,
                         IsDisplacement = GetBool(unitData, "is_displacement", false),
+                        SupplyTiers = ParseSupplyTiers(GetList(unitData, "squad_tiers")),
                         Ranges = ParseRosterRanges(GetList(unitData, "ranges")),
                     });
                 }
@@ -178,6 +183,29 @@ namespace TmgBoard
                     continue;
                 }
                 result.Add(new RangeSpec { Inch = inch, AlwaysShow = GetBool(r, "always_show", true) });
+            }
+            return result;
+        }
+
+        private static List<SupplyTier> ParseSupplyTiers(List<object> raw)
+        {
+            var result = new List<SupplyTier>();
+            if (raw == null)
+            {
+                return result;
+            }
+            foreach (var item in raw)
+            {
+                if (!(item is Dictionary<string, object> t))
+                {
+                    continue;
+                }
+                result.Add(new SupplyTier
+                {
+                    ModelMin = (int)GetFloat(t, "model_min", 0f),
+                    ModelMax = (int)GetFloat(t, "model_max", int.MaxValue),
+                    Supply = (int)GetFloat(t, "supply", 0f),
+                });
             }
             return result;
         }

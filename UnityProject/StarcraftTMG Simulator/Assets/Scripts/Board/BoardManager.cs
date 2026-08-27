@@ -8,7 +8,7 @@ namespace TmgBoard
 {
     /// <summary>
     /// 보드 위 베이스 조각들을 소유하고, 다이얼 메뉴 액션(데미지 기록/모델
-    /// 제거/복제/이름 변경/메모/유닛 되돌리기)과 유닛 이동 워크플로우(리딩 모델
+    /// 제거/리스폰/메모/리저브 복귀)과 유닛 이동 워크플로우(리딩 모델
     /// 배치→팔로워 배치→완료/취소, 코헤런시 판정), 예비대 배치(배치 목록→리딩
     /// 모델 드래그→팔로워 자동 배치), 변위 베이스 재배치(밀어낸 자리 재지정)를
     /// 처리한다. Godot판 GameBoard.gd 포팅. 배치 밴드는 MissionData에 이
@@ -27,7 +27,6 @@ namespace TmgBoard
         [SerializeField] private RectTransform mapArea;
         [SerializeField] private RadialMenu radialMenu;
         [SerializeField] private InputDialog damageDialog;
-        [SerializeField] private InputDialog renameDialog;
         [SerializeField] private InputDialog memoDialog;
         [SerializeField] private GuidelineOverlay guideline;
         [SerializeField] private MemoOverlay memoOverlay;
@@ -161,7 +160,6 @@ namespace TmgBoard
             // 이후·Start 이전에 끝나므로 여기서는 항상 필드가 채워져 있다.
             radialMenu.ActionChosen += OnActionChosen;
             damageDialog.Confirmed += OnDamageConfirmed;
-            renameDialog.Confirmed += OnRenameConfirmed;
             memoDialog.Confirmed += OnMemoConfirmed;
             rangeInputDialog.Confirmed += OnRangeConfirmed;
             rangeInputDialog.Cancelled += () => _rangeTargetUnit = null;
@@ -180,7 +178,7 @@ namespace TmgBoard
 
         /// <summary>씬을 코드로 구성할 때(부트스트랩 등) 인스펙터 대신 쓰는 초기화.</summary>
         public void Configure(RectTransform baseLayerRef, RectTransform mapAreaRef, RadialMenu radialMenuRef,
-                InputDialog damageDialogRef, InputDialog renameDialogRef, InputDialog memoDialogRef,
+                InputDialog damageDialogRef, InputDialog memoDialogRef,
                 GuidelineOverlay guidelineRef, MemoOverlay memoOverlayRef,
                 RangeInputDialog rangeInputDialogRef, RangeOverlay rangeOutlineLayerRef, RangeOverlay rangeFillLayerRef,
                 MeasureOverlay measureLayerRef)
@@ -189,7 +187,6 @@ namespace TmgBoard
             mapArea = mapAreaRef;
             radialMenu = radialMenuRef;
             damageDialog = damageDialogRef;
-            renameDialog = renameDialogRef;
             memoDialog = memoDialogRef;
             guideline = guidelineRef;
             memoOverlay = memoOverlayRef;
@@ -465,15 +462,14 @@ namespace TmgBoard
                 options.Add(new RadialMenuOption("데미지 기록", "damage"));
             }
             options.Add(new RadialMenuOption("모델 제거", "remove"));
-            options.Add(new RadialMenuOption("모델 복제", "duplicate"));
+            options.Add(new RadialMenuOption("리스폰", "duplicate"));
             if (!isTokenUnit && canMove)
             {
-                options.Add(new RadialMenuOption("유닛 이동 시작", "start_unit_move"));
+                options.Add(new RadialMenuOption("이동", "start_unit_move"));
             }
-            options.Add(new RadialMenuOption("유닛 이름 변경", "rename"));
             if (!isTokenUnit)
             {
-                options.Add(new RadialMenuOption("유닛 되돌리기", "revert_unit"));
+                options.Add(new RadialMenuOption("리저브 복귀", "revert_unit"));
             }
             options.Add(new RadialMenuOption("메모 작성", "memo"));
             options.Add(new RadialMenuOption("범위 표시", "range_display"));
@@ -505,9 +501,6 @@ namespace TmgBoard
                     break;
                 case "duplicate":
                     DuplicateBase(_menuTarget);
-                    break;
-                case "rename":
-                    renameDialog.Open("유닛 이름 변경", _menuTarget.Unit != null ? _menuTarget.Unit.UnitName : "");
                     break;
                 case "memo":
                     memoDialog.Open("모델 메모", _menuTarget.Memo);
@@ -546,24 +539,6 @@ namespace TmgBoard
             {
                 _menuTarget.Damage = Mathf.Max(dmg, 0);
                 _menuTarget.Refresh();
-            }
-            _menuTarget = null;
-            CommitUndoTransaction();
-        }
-
-        private void OnRenameConfirmed(string value)
-        {
-            if (_menuTarget == null || _menuTarget.Unit == null || string.IsNullOrWhiteSpace(value))
-            {
-                _menuTarget = null;
-                return;
-            }
-            BeginUndoTransaction();
-            var unit = _menuTarget.Unit;
-            unit.UnitName = value.Trim();
-            foreach (var model in unit.Models)
-            {
-                model.Refresh();
             }
             _menuTarget = null;
             CommitUndoTransaction();
@@ -638,6 +613,7 @@ namespace TmgBoard
                 CoherencyInch = unit.CoherencyInch,
                 CanMove = unit.CanMove,
                 IsDisplacement = piece.IsDisplacement,
+                SupplyTiers = new List<SupplyTier>(unit.SupplyTiers),
                 Damages = damages,
                 Ranges = ranges,
             };

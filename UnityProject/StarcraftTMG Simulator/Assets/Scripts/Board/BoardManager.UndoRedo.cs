@@ -74,7 +74,7 @@ namespace TmgBoard
             {
                 return true;
             }
-            if (IsDialogVisible(damageDialog) || IsDialogVisible(renameDialog) || IsDialogVisible(memoDialog)
+            if (IsDialogVisible(damageDialog) || IsDialogVisible(memoDialog)
                     || IsDialogVisible(rangeInputDialog) || (radialMenu != null && radialMenu.gameObject.activeSelf))
             {
                 return true;
@@ -135,7 +135,7 @@ namespace TmgBoard
                 {
                     uidx = snapshot.Units.Count;
                     unitRefIds[unit] = uidx;
-                    snapshot.Units.Add(new UnitSnapshot
+                    var unitSnap = new UnitSnapshot
                     {
                         UnitName = unit.UnitName,
                         Team = unit.Team,
@@ -143,7 +143,9 @@ namespace TmgBoard
                         MoveInch = unit.MoveInch,
                         IsToken = unit.IsToken,
                         CanMove = unit.CanMove,
-                    });
+                    };
+                    unitSnap.SupplyTiers.AddRange(unit.SupplyTiers);
+                    snapshot.Units.Add(unitSnap);
                 }
                 snapshot.Units[uidx].Models.Add(new ModelSnapshot
                 {
@@ -250,6 +252,7 @@ namespace TmgBoard
                     IsToken = unitSnap.IsToken,
                     CanMove = unitSnap.CanMove,
                 };
+                unit.SupplyTiers.AddRange(unitSnap.SupplyTiers);
                 restoredUnits.Add(unit);
                 if (unit.IsToken)
                 {
@@ -328,6 +331,7 @@ namespace TmgBoard
                 CoherencyInch = def.CoherencyInch,
                 CanMove = def.CanMove,
                 IsDisplacement = def.IsDisplacement,
+                SupplyTiers = new List<SupplyTier>(def.SupplyTiers),
                 Damages = new List<int>(def.Damages),
                 Ranges = new List<RangeSpec>(def.Ranges),
             };
@@ -353,6 +357,7 @@ namespace TmgBoard
             public float MoveInch;
             public bool IsToken;
             public bool CanMove;
+            public readonly List<SupplyTier> SupplyTiers = new List<SupplyTier>();
             public readonly List<ModelSnapshot> Models = new List<ModelSnapshot>();
         }
 

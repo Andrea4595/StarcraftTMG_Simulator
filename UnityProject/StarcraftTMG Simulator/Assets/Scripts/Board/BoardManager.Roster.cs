@@ -164,6 +164,7 @@ namespace TmgBoard
                 MoveInch = def.MoveInch,
                 CanMove = def.CanMove,
             };
+            unit.SupplyTiers.AddRange(def.SupplyTiers);
 
             var leading = CreatePieceObject(unit, def.SizeMm, def.FillColor, def.IsDisplacement);
             // "유닛 되돌리기"로 되돌아온 유닛은 데미지 기록을 유지한 채 재배치된다.

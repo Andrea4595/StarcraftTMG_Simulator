@@ -20,6 +20,7 @@ namespace TmgBoard
         public float CoherencyInch = GameConstants.DefaultCoherencyInch;
         public bool CanMove = true;
         public bool IsDisplacement;
+        public List<SupplyTier> SupplyTiers = new List<SupplyTier>();
         public List<int> Damages = new List<int>();
 
         /// <summary>배치될 때 그대로 "범위 표시"에 등록될 사거리들(로스터 임포트,
