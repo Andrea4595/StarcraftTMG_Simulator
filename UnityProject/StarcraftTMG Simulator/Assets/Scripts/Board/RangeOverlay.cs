@@ -34,7 +34,9 @@ namespace TmgBoard
     /// 다각형 하나로 합치는 것)는 포팅하지 않았다 — Unity에 다각형 불리언
     /// 유틸이 없어서(미션설정 배치구역 포팅 때와 같은 이유). 대신 Outline은
     /// 각 변을 그리기 전에 "같은 항목의 다른 모델 다각형 안"에 들어가는
-    /// 구간을 골라내 그 부분만 빼고 그린다(AddDashedPolylineExcludingOverlap)
+    /// 구간을 골라내 그 부분만 빼고 그린다(AddDashedPolylineExcludingOverlap,
+    /// 클리핑 자체는 EllipseMath.TryClipSegmentToConvexPolygon 공용 유틸 —
+    /// 배치구역 밴드가 겹칠 때 GuidelineOverlay가 쓰는 것과 동일한 함수)
     /// — 실제로 하나의 다각형으로 합친 건 아니지만, 겹치는 자리에는 선이
     /// 안 보이므로 시각적으로는 병합된 것처럼 보인다. 이 클리핑은 각
     /// 다각형이 볼록(convex)이라고 가정한다 — 타원 오프셋 다각형은 거의
@@ -256,12 +258,12 @@ namespace TmgBoard
                 var insideIntervals = new List<(float From, float To)>();
                 foreach (var other in otherPolygons)
                 {
-                    if (TryClipSegmentToConvexPolygon(a, b, other, out float tEnter, out float tExit))
+                    if (EllipseMath.TryClipSegmentToConvexPolygon(a, b, other, out float tEnter, out float tExit))
                     {
                         insideIntervals.Add((tEnter, tExit));
                     }
                 }
-                var outsideIntervals = ComplementIntervals(insideIntervals);
+                var outsideIntervals = EllipseMath.ComplementIntervals(insideIntervals);
 
                 float traveled = 0f;
                 while (traveled < segLen)
@@ -288,95 +290,6 @@ namespace TmgBoard
                 }
                 cumulative += segLen;
             }
-        }
-
-        /// <summary>선분(a→b)이 볼록 다각형 polygon 내부에 들어가는 매개변수
-        /// t구간 [tEnter,tExit](0~1 기준)을 구한다 — Cyrus-Beck 볼록 다각형
-        /// 선분 클리핑. polygon은 반시계 방향(CCW)이라고 가정한다(타원 오프셋
-        /// 다각형 생성 순서가 항상 CCW).</summary>
-        private static bool TryClipSegmentToConvexPolygon(Vector2 a, Vector2 b, Vector2[] polygon, out float tEnter, out float tExit)
-        {
-            tEnter = 0f;
-            tExit = 1f;
-            Vector2 ab = b - a;
-            for (int i = 0; i < polygon.Length; i++)
-            {
-                Vector2 e0 = polygon[i];
-                Vector2 e1 = polygon[(i + 1) % polygon.Length];
-                Vector2 edge = e1 - e0;
-                Vector2 outwardNormal = new Vector2(edge.y, -edge.x);
-
-                float w = Vector2.Dot(a - e0, outwardNormal);
-                float d = Vector2.Dot(ab, outwardNormal);
-                if (Mathf.Abs(d) < 1e-8f)
-                {
-                    if (w > 0f)
-                    {
-                        return false; // 이 변과 평행하면서 완전히 바깥쪽 — 다각형과 만나지 않는다.
-                    }
-                    continue;
-                }
-                float t = -w / d;
-                if (d < 0f)
-                {
-                    if (t > tEnter)
-                    {
-                        tEnter = t;
-                    }
-                }
-                else
-                {
-                    if (t < tExit)
-                    {
-                        tExit = t;
-                    }
-                }
-                if (tEnter > tExit)
-                {
-                    return false;
-                }
-            }
-            return tEnter < tExit;
-        }
-
-        /// <summary>[0,1] 구간에서 insides(다른 다각형 안쪽 구간들, 겹치거나
-        /// 순서 없어도 됨)를 뺀 나머지("바깥쪽") 구간들을 돌려준다.</summary>
-        private static List<(float From, float To)> ComplementIntervals(List<(float From, float To)> insides)
-        {
-            if (insides.Count == 0)
-            {
-                return new List<(float, float)> { (0f, 1f) };
-            }
-            insides.Sort((x, y) => x.From.CompareTo(y.From));
-            var merged = new List<(float From, float To)>();
-            foreach (var iv in insides)
-            {
-                if (merged.Count > 0 && iv.From <= merged[merged.Count - 1].To)
-                {
-                    var last = merged[merged.Count - 1];
-                    merged[merged.Count - 1] = (last.From, Mathf.Max(last.To, iv.To));
-                }
-                else
-                {
-                    merged.Add(iv);
-                }
-            }
-
-            var outside = new List<(float From, float To)>();
-            float cursor = 0f;
-            foreach (var iv in merged)
-            {
-                if (iv.From > cursor)
-                {
-                    outside.Add((cursor, iv.From));
-                }
-                cursor = Mathf.Max(cursor, iv.To);
-            }
-            if (cursor < 1f)
-            {
-                outside.Add((cursor, 1f));
-            }
-            return outside;
         }
 
         private static void AddLineQuad(VertexHelper vh, Vector2 a, Vector2 b, Color color, float halfWidth)

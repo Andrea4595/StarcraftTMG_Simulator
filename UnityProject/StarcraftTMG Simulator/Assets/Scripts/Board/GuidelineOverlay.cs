@@ -9,6 +9,15 @@ namespace TmgBoard
     /// 유닛 이동 중 보여주는 참고용 시각 요소 — 이동거리 원, 코헤런시 경계
     /// 폴리곤, 이동 거리/경고 텍스트. Godot판 UnitMoveGuideline.gd 포팅.
     /// 전부 참고용일 뿐 실제 clamp에는 안 쓰인다(그 철학은 로직 쪽에 있다).
+    ///
+    /// 배치구역 밴드(BandPolylines)가 여러 개고(같은 팀의 인접한 구역들)
+    /// 서로 겹칠 때는 Godot의 Geometry2D.merge_polygons 같은 실제 다각형
+    /// 합치기 대신, RangeOverlay의 범위 겹침 처리와 똑같은 트릭을 쓴다 —
+    /// 각 밴드를 그리기 전에 "다른 밴드 다각형 안"에 들어가는 구간만 빼고
+    /// 그린다(AddPolylineExcludingOverlap, 클리핑은 공용 유틸
+    /// EllipseMath.TryClipSegmentToConvexPolygon). 실제로 합쳐진 다각형은
+    /// 아니지만 겹치는 자리에 이중선이 안 보여서 시각적으로는 병합된 것
+    /// 처럼 보인다.
     /// </summary>
     [RequireComponent(typeof(RectTransform))]
     [RequireComponent(typeof(CanvasRenderer))]
@@ -91,9 +100,26 @@ namespace TmgBoard
                 AddPolyline(vh, circle, true);
             }
 
-            foreach (var band in _bandPolylines)
+            int bandCount = _bandPolylines.Count;
+            for (int bi = 0; bi < bandCount; bi++)
             {
-                AddPolyline(vh, band, false);
+                var band = _bandPolylines[bi];
+                if (bandCount > 1)
+                {
+                    var others = new List<Vector2[]>(bandCount - 1);
+                    for (int bj = 0; bj < bandCount; bj++)
+                    {
+                        if (bj != bi)
+                        {
+                            others.Add(_bandPolylines[bj]);
+                        }
+                    }
+                    AddPolylineExcludingOverlap(vh, band, others);
+                }
+                else
+                {
+                    AddPolyline(vh, band, false);
+                }
             }
         }
 
@@ -110,20 +136,76 @@ namespace TmgBoard
             {
                 Vector2 a = points[i];
                 Vector2 b = points[(i + 1) % count];
-                Vector2 dir = (b - a).normalized;
-                Vector2 normal = new Vector2(-dir.y, dir.x) * half;
-
-                int vi = vh.currentVertCount;
-                Vector3 a3 = a;
-                Vector3 b3 = b;
-                Vector3 normal3 = normal;
-                vh.AddVert(new UIVertex { color = LineColor, position = a3 - normal3 });
-                vh.AddVert(new UIVertex { color = LineColor, position = a3 + normal3 });
-                vh.AddVert(new UIVertex { color = LineColor, position = b3 - normal3 });
-                vh.AddVert(new UIVertex { color = LineColor, position = b3 + normal3 });
-                vh.AddTriangle(vi, vi + 1, vi + 2);
-                vh.AddTriangle(vi + 1, vi + 3, vi + 2);
+                AddLineQuad(vh, a, b, half);
             }
+        }
+
+        /// <summary>다른 밴드 다각형들 안쪽에 들어가는 구간은 빼고 그리는
+        /// 폴리라인 — 여러 배치구역 밴드가 마치 하나로 병합된 것처럼 보이게
+        /// 한다(RangeOverlay.AddDashedPolylineExcludingOverlap과 같은 원리,
+        /// 여긴 점선이 아니라 실선이라 점선 리듬 계산만 뺐다). 마지막 구간
+        /// (BoardManager.Roster.cs의 BuildCapsulePolygon이 만드는 두 호(arc)
+        /// 끝점을 지도 가장자리를 따라 잇는, 밴드를 "닫는" 구간)만은 예외로
+        /// 클리핑 없이 항상 그린다 — 인접한 밴드끼리 지도 테두리 쪽에서 서로
+        /// 겹치면 이 구간이 서로를 지워버려서 정작 지도 테두리 선 자체가
+        /// 안 보이는 문제가 있었다.</summary>
+        private static void AddPolylineExcludingOverlap(VertexHelper vh, Vector2[] points, List<Vector2[]> otherPolygons)
+        {
+            if (points.Length < 2)
+            {
+                return;
+            }
+            int closingSegment = points.Length - 2;
+            for (int i = 0; i < points.Length - 1; i++)
+            {
+                Vector2 a = points[i];
+                Vector2 b = points[i + 1];
+                if (i == closingSegment)
+                {
+                    AddLineQuad(vh, a, b, LineWidth / 2f);
+                    continue;
+                }
+                float segLen = Vector2.Distance(a, b);
+                if (segLen < 0.0001f)
+                {
+                    continue;
+                }
+                Vector2 dir = (b - a) / segLen;
+
+                var insideIntervals = new List<(float From, float To)>();
+                foreach (var other in otherPolygons)
+                {
+                    if (EllipseMath.TryClipSegmentToConvexPolygon(a, b, other, out float tEnter, out float tExit))
+                    {
+                        insideIntervals.Add((tEnter, tExit));
+                    }
+                }
+                var outsideIntervals = EllipseMath.ComplementIntervals(insideIntervals);
+                foreach (var (from, to) in outsideIntervals)
+                {
+                    if (to - from < 0.0001f)
+                    {
+                        continue;
+                    }
+                    AddLineQuad(vh, a + dir * (from * segLen), a + dir * (to * segLen), LineWidth / 2f);
+                }
+            }
+        }
+
+        private static void AddLineQuad(VertexHelper vh, Vector2 a, Vector2 b, float halfWidth)
+        {
+            Vector2 dir = (b - a).normalized;
+            Vector2 normal = new Vector2(-dir.y, dir.x) * halfWidth;
+            int vi = vh.currentVertCount;
+            Vector3 a3 = a;
+            Vector3 b3 = b;
+            Vector3 normal3 = normal;
+            vh.AddVert(new UIVertex { color = LineColor, position = a3 - normal3 });
+            vh.AddVert(new UIVertex { color = LineColor, position = a3 + normal3 });
+            vh.AddVert(new UIVertex { color = LineColor, position = b3 - normal3 });
+            vh.AddVert(new UIVertex { color = LineColor, position = b3 + normal3 });
+            vh.AddTriangle(vi, vi + 1, vi + 2);
+            vh.AddTriangle(vi + 1, vi + 3, vi + 2);
         }
     }
 }

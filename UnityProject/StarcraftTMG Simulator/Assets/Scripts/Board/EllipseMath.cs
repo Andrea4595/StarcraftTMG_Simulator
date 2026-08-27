@@ -108,6 +108,115 @@ namespace TmgBoard
             return true;
         }
 
+        /// <summary>선분(a→b)이 볼록 다각형 polygon 내부에 들어가는 매개변수
+        /// t구간 [tEnter,tExit](0~1 기준)을 구한다 — Cyrus-Beck 볼록 다각형
+        /// 선분 클리핑. 다각형의 감김 방향(CW/CCW)에 무관하게 동작한다(부호
+        /// 있는 넓이로 자동 판별) — 겹치는 다각형 무리를 실제로 하나로 합치는
+        /// 대신, 다른 다각형 안쪽에 들어가는 구간만 그리지 않아서 "병합된
+        /// 것처럼" 보이게 하는 트릭에 쓴다(범위 표시 겹침, 배치구역 밴드
+        /// 겹침 양쪽에서 재사용).</summary>
+        public static bool TryClipSegmentToConvexPolygon(Vector2 a, Vector2 b, Vector2[] polygon, out float tEnter, out float tExit)
+        {
+            tEnter = 0f;
+            tExit = 1f;
+            if (polygon.Length < 3)
+            {
+                return false;
+            }
+            float windingSign = SignedArea(polygon) >= 0f ? 1f : -1f;
+            Vector2 ab = b - a;
+            for (int i = 0; i < polygon.Length; i++)
+            {
+                Vector2 e0 = polygon[i];
+                Vector2 e1 = polygon[(i + 1) % polygon.Length];
+                Vector2 edge = e1 - e0;
+                Vector2 outwardNormal = new Vector2(edge.y, -edge.x) * windingSign;
+
+                float w = Vector2.Dot(a - e0, outwardNormal);
+                float d = Vector2.Dot(ab, outwardNormal);
+                if (Mathf.Abs(d) < 1e-8f)
+                {
+                    if (w > 0f)
+                    {
+                        return false; // 이 변과 평행하면서 완전히 바깥쪽 — 다각형과 만나지 않는다.
+                    }
+                    continue;
+                }
+                float t = -w / d;
+                if (d < 0f)
+                {
+                    if (t > tEnter)
+                    {
+                        tEnter = t;
+                    }
+                }
+                else
+                {
+                    if (t < tExit)
+                    {
+                        tExit = t;
+                    }
+                }
+                if (tEnter > tExit)
+                {
+                    return false;
+                }
+            }
+            return tEnter < tExit;
+        }
+
+        private static float SignedArea(Vector2[] polygon)
+        {
+            float sum = 0f;
+            for (int i = 0; i < polygon.Length; i++)
+            {
+                Vector2 a = polygon[i];
+                Vector2 b = polygon[(i + 1) % polygon.Length];
+                sum += a.x * b.y - b.x * a.y;
+            }
+            return sum;
+        }
+
+        /// <summary>[0,1] 구간에서 insides(다른 다각형 안쪽 구간들, 겹치거나
+        /// 순서 없어도 됨)를 뺀 나머지("바깥쪽") 구간들을 돌려준다.</summary>
+        public static List<(float From, float To)> ComplementIntervals(List<(float From, float To)> insides)
+        {
+            if (insides.Count == 0)
+            {
+                return new List<(float, float)> { (0f, 1f) };
+            }
+            insides.Sort((x, y) => x.From.CompareTo(y.From));
+            var merged = new List<(float From, float To)>();
+            foreach (var iv in insides)
+            {
+                if (merged.Count > 0 && iv.From <= merged[merged.Count - 1].To)
+                {
+                    var last = merged[merged.Count - 1];
+                    merged[merged.Count - 1] = (last.From, Mathf.Max(last.To, iv.To));
+                }
+                else
+                {
+                    merged.Add(iv);
+                }
+            }
+
+            var outside = new List<(float From, float To)>();
+            float cursor = 0f;
+            foreach (var iv in merged)
+            {
+                if (iv.From > cursor)
+                {
+                    outside.Add((cursor, iv.From));
+                }
+                cursor = Mathf.Max(cursor, iv.To);
+            }
+            if (cursor < 1f)
+            {
+                outside.Add((cursor, 1f));
+            }
+            return outside;
+        }
+
         /// <summary>
         /// 분리축 정리(SAT)로 두 볼록 다각형이 겹치는지 확인하고, 겹친다면 a를
         /// b로부터 밀어낼 최소 이동 벡터(MTV)를 돌려준다. 안 겹치면 null.

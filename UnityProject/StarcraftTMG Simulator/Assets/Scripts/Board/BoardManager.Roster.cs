@@ -309,9 +309,11 @@ namespace TmgBoard
         /// <summary>구간 [a,b]에서 depth만큼 보드 안쪽으로 뻗은 "약통" 모양(양
         /// 끝은 컴퍼스로 그린 것처럼 둥글게) 외곽선. 지도 가장자리 쪽은 닫지
         /// 않아도 된다 — 밴드를 그릴 때 마지막 점을 첫 점과 이어서 자연히
-        /// 가장자리를 따라 닫히게 한다(호출부에서 처리). 여러 구역을 하나의
-        /// 다각형으로 합치는 것(Godot판의 Geometry2D.merge_polygons)은 아직
-        /// 안 한다 — 인접한 구역끼리는 윤곽선이 겹쳐 보일 수 있다.</summary>
+        /// 가장자리를 따라 닫히게 한다(호출부에서 처리). 여러 구역을 실제
+        /// 다각형 하나로 합치진 않지만(Godot판의 Geometry2D.merge_polygons에
+        /// 대응하는 Unity 다각형 불리언 유틸이 없음), GuidelineOverlay가 겹치는
+        /// 구간의 윤곽선을 그리지 않아서 시각적으로는 병합된 것처럼 보인다
+        /// (RangeOverlay의 범위 겹침 처리와 같은 트릭).</summary>
         private Vector2[] BuildCapsulePolygon(string edge, float a, float b, float depth)
         {
             const int steps = 16;
