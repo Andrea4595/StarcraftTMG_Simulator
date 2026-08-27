@@ -14,15 +14,19 @@ namespace TmgBoard
     /// 수 구간별 서플라이 단계표)는 읽는다(pts는 여전히 무시) — 스코어보드의
     /// 팀별 서플라이 표시에 쓰인다. "squad_tier_index"(로스터 작성 시 고른
     /// 단계)는 안 읽는다 — 인게임 현재 서플라이는 항상 남은 모델 수로
-    /// 그때그때 다시 찾으므로 필요 없다.
+    /// 그때그때 다시 찾으므로 필요 없다. "tactical_cards"는 name/count만
+    /// 읽는다(gas_cost/resource/slots/abilities는 무시) — 예비대 패널의
+    /// 택티컬 카드 목록에 쓰인다.
     /// </summary>
     public static class RosterImporter
     {
         public static bool TryImport(string jsonText, string team,
-                out List<PendingUnitDef> units, out List<PendingTokenDef> tokens, out string error)
+                out List<PendingUnitDef> units, out List<PendingTokenDef> tokens,
+                out List<TacticalCardDef> tacticalCards, out string error)
         {
             units = new List<PendingUnitDef>();
             tokens = new List<PendingTokenDef>();
+            tacticalCards = new List<TacticalCardDef>();
             error = null;
 
             object parsed;
@@ -103,6 +107,30 @@ namespace TmgBoard
                         SizeMm = new Vector2(Mathf.Max(width, 1f), Mathf.Max(height, 1f)),
                         IsDisplacement = GetBool(tokenData, "is_displacement", false),
                         Ranges = ParseRosterRanges(GetList(tokenData, "ranges")),
+                    });
+                }
+            }
+
+            if (root.TryGetValue("tactical_cards", out var cardsRaw) && cardsRaw is List<object> cardList)
+            {
+                foreach (var raw in cardList)
+                {
+                    if (!(raw is Dictionary<string, object> cardData) || !cardData.ContainsKey("name"))
+                    {
+                        continue;
+                    }
+                    string cardName = ParseRosterName(cardData["name"]);
+                    if (string.IsNullOrEmpty(cardName))
+                    {
+                        continue;
+                    }
+                    int count = Mathf.Max((int)GetFloat(cardData, "count", 1f), 1);
+                    tacticalCards.Add(new TacticalCardDef
+                    {
+                        Name = cardName,
+                        Team = team,
+                        Count = count,
+                        Remaining = count,
                     });
                 }
             }

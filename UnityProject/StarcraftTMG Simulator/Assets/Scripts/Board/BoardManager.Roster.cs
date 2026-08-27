@@ -36,7 +36,7 @@ namespace TmgBoard
                 return;
             }
 
-            if (!RosterImporter.TryImport(jsonText, _rosterImportTeam, out var units, out var tokens, out var error))
+            if (!RosterImporter.TryImport(jsonText, _rosterImportTeam, out var units, out var tokens, out var tacticalCards, out var error))
             {
                 Debug.LogWarning($"로스터 파일 형식이 올바르지 않습니다: {path} — {error}");
                 return;
@@ -44,6 +44,7 @@ namespace TmgBoard
 
             _pendingUnits.AddRange(units);
             _pendingRosterTokens.AddRange(tokens);
+            _pendingTacticalCards.AddRange(tacticalCards);
             // 임포트 자체가 "로드됨" 확정 신호 — 방금 불러온 파일이 유닛/토큰을
             // 하나도 안 줬어도(형식은 맞았지만 내용이 빈 롤스터), 버튼을 다시
             // 안 보여준다. RefreshPendingList/RefreshRosterTokenList가 끝에서
@@ -51,6 +52,7 @@ namespace TmgBoard
             _rosterLoadedTeams.Add(_rosterImportTeam);
             RefreshPendingList();
             RefreshRosterTokenList();
+            RefreshTacticalCardList();
         }
 
         /// <summary>토큰 정의는 유닛과 달리 목록에서 지우지 않는다 — 몇 번이든

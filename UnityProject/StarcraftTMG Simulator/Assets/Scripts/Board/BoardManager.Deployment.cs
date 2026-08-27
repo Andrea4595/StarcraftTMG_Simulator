@@ -20,8 +20,10 @@ namespace TmgBoard
         // 아직 이 팀에 로스터를 하나도 안 불러왔을 때 "A 로스터 불러오기"
         // 버튼이 패널 전체를 꽉 채우도록 쓰는 큰 높이. 로스터를 불러오고
         // 나면(OnRosterFileSelected) 이 버튼은 아예 숨긴다 — 그 뒤로는
-        // 예비대/토큰 목록만 보인다.
+        // 예비대/토큰/택티컬 카드 목록만 보인다.
         private const float RosterImportButtonFillHeight = 400f;
+
+        private const float PendingPanelWidth = 280f;
 
         /// <summary>팀 A는 왼쪽, 팀 B는 오른쪽에 각자 로스터 불러오기 버튼 +
         /// 예비대 유닛 목록 + 토큰 목록을 담은 패널을 하나씩 짓는다.</summary>
@@ -45,13 +47,17 @@ namespace TmgBoard
             panelGo.transform.SetParent(canvasParent, false);
             var panel = (RectTransform)panelGo.transform;
             float xAnchor = left ? 0f : 1f;
-            panel.anchorMin = new Vector2(xAnchor, 1f);
+            // 화면 좌/우 가장자리에 딱 붙이고, 세로는 상단 바(스코어보드)와
+            // 하단 바(마커바) 사이 구간에 꽉 채운다 — X는 점 앵커(고정 폭은
+            // sizeDelta.x), Y는 스트레치 앵커(0~1)로 두고 그 구간 높이만큼
+            // sizeDelta.y를 음수로 줄여서 정확히 그 사이만 차지하게 한다.
+            // anchoredPosition.y는 스크린샷 뷰 피봇과 같은 이유로 두 바
+            // 높이가 다르니(84 vs 44) 그 차이의 절반만큼 보정한다.
+            panel.anchorMin = new Vector2(xAnchor, 0f);
             panel.anchorMax = new Vector2(xAnchor, 1f);
-            panel.pivot = new Vector2(xAnchor, 1f);
-            // 상단 스코어보드 바(ScoreboardPanel, 화면 맨 위를 가로지름) 아래로
-            // 내려서 겹치지 않게 한다.
-            panel.anchoredPosition = new Vector2(left ? 16f : -16f, -(GameConstants.ScoreboardHeight + 16f));
-            panel.sizeDelta = new Vector2(220f, 40f);
+            panel.pivot = new Vector2(xAnchor, 0.5f);
+            panel.anchoredPosition = new Vector2(0f, (MarkerBarHeight - GameConstants.ScoreboardHeight) / 2f);
+            panel.sizeDelta = new Vector2(PendingPanelWidth, -(GameConstants.ScoreboardHeight + MarkerBarHeight));
 
             var bg = panelGo.AddComponent<Image>();
             bg.color = new Color(0.15f, 0.15f, 0.15f, 0.95f);
@@ -63,9 +69,10 @@ namespace TmgBoard
             layout.childForceExpandWidth = true;
             layout.childControlHeight = true;
             layout.childForceExpandHeight = false;
-
-            var fitter = panelGo.AddComponent<ContentSizeFitter>();
-            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            // ContentSizeFitter를 일부러 안 붙인다 — 패널 세로 크기는 위
+            // sizeDelta.y로 이미 고정돼 있다(화면 크기에 따라 스트레치 앵커가
+            // 자동으로 다시 계산해준다). 아래 택티컬 카드 섹션이
+            // flexibleHeight=1로 남는 공간을 다 차지한다.
 
             // 아직 로스터를 안 불러온 상태에선 이 버튼이 패널을 꽉 채운
             // 큰 호출 유도 버튼으로 보인다. OnRosterFileSelected가 임포트에
@@ -102,6 +109,30 @@ namespace TmgBoard
 
             _tokenSectionRoots[team] = tokenSectionGo;
             tokenSectionGo.SetActive(false); // RefreshRosterTokenList()가 토큰이 생기면 켠다.
+
+            // 택티컬 카드 — 패널 하단의 남는 공간을 전부 차지한다(요청: "하단의
+            // 영역에 택티컬 카드 리스트를 보여주는거야"). 위 두 섹션과 달리
+            // ContentSizeFitter가 없다 — 목록 박스에 flexibleHeight=1을 직접
+            // 줘서, 이 섹션(그리고 그걸 감싼 이 래퍼)이 panel의
+            // VerticalLayoutGroup에 "남는 세로 공간을 나한테 달라"고 보고하게
+            // 한다(LayoutGroup은 자기 자식들의 flexibleHeight 합을 그대로
+            // 위로 전달한다).
+            var tacticalSectionGo = new GameObject("TacticalSection", typeof(RectTransform));
+            tacticalSectionGo.transform.SetParent(panel, false);
+            var tacticalSectionLayout = tacticalSectionGo.AddComponent<VerticalLayoutGroup>();
+            tacticalSectionLayout.spacing = 8f;
+            tacticalSectionLayout.childControlWidth = true;
+            tacticalSectionLayout.childForceExpandWidth = true;
+            tacticalSectionLayout.childControlHeight = true;
+            tacticalSectionLayout.childForceExpandHeight = false;
+
+            CreateSectionLabel(tacticalSectionGo.transform, "택티컬 카드");
+            _tacticalCardListContainers[team] = ScrollListUtil.Create(tacticalSectionGo.transform, ListMaxHeight, new Color(0.1f, 0.1f, 0.1f, 0.6f), out _, out var tacticalListLayoutElement);
+            tacticalListLayoutElement.flexibleHeight = 1f;
+            _tacticalCardListLayoutElements[team] = tacticalListLayoutElement;
+
+            _tacticalCardSectionRoots[team] = tacticalSectionGo;
+            tacticalSectionGo.SetActive(false); // RefreshTacticalCardList()가 카드가 생기면 켠다.
         }
 
         private static void CreateSectionLabel(Transform parent, string text)
@@ -203,6 +234,156 @@ namespace TmgBoard
                 }
             }
             RefreshPanelLayout();
+        }
+
+        /// <summary>택티컬 카드 목록을 다시 그린다 — 임포트 때만 불린다(카드
+        /// 자체의 좌/우클릭 소진·복구는 버튼을 다시 그리지 않고 핍 색만
+        /// 바로 바꾼다, RefreshTacticalCardPips 참고). 카드가 하나도 없는
+        /// 팀은 "택티컬 카드" 섹션 자체를 접어둔다(토큰 섹션과 동일한 패턴).</summary>
+        private void RefreshTacticalCardList()
+        {
+            foreach (var kv in _tacticalCardListContainers)
+            {
+                string team = kv.Key;
+                var container = kv.Value;
+                for (int i = container.childCount - 1; i >= 0; i--)
+                {
+                    Destroy(container.GetChild(i).gameObject);
+                }
+
+                bool hasAny = false;
+                foreach (var def in _pendingTacticalCards)
+                {
+                    if (def.Team != team)
+                    {
+                        continue;
+                    }
+                    hasAny = true;
+                    CreateTacticalCardButton(container, def);
+                }
+
+                if (_tacticalCardSectionRoots.TryGetValue(team, out var sectionRoot))
+                {
+                    sectionRoot.SetActive(hasAny);
+                }
+            }
+        }
+
+        /// <summary>카드 이름 + 보유 매수만큼의 핍(Resources/UI/TacticalCount.png)을
+        /// 담은 버튼 하나. 좌클릭하면 핍을 하나 소진(회색으로)하고, 이미 다
+        /// 소진된 상태에서 좌클릭하면 전부 복구된다. 우클릭은 반대 —
+        /// 하나씩 복구하다가, 이미 꽉 찬 상태에서 우클릭하면 전부
+        /// 소진된다(사용자 요청).</summary>
+        private void CreateTacticalCardButton(Transform parent, TacticalCardDef def)
+        {
+            var btnGo = new GameObject($"Card_{def.Name}", typeof(RectTransform));
+            btnGo.transform.SetParent(parent, false);
+            var btnLe = btnGo.AddComponent<LayoutElement>();
+            btnLe.preferredHeight = 32f;
+            var btnImg = btnGo.AddComponent<Image>();
+            btnImg.color = TacticalCardNormalColor;
+
+            var layout = btnGo.AddComponent<HorizontalLayoutGroup>();
+            layout.padding = new RectOffset(8, 6, 4, 4);
+            layout.spacing = 4f;
+            layout.childAlignment = TextAnchor.MiddleLeft;
+            layout.childControlWidth = true;
+            layout.childForceExpandWidth = false;
+            layout.childControlHeight = true;
+            layout.childForceExpandHeight = true;
+
+            var nameGo = new GameObject("Name", typeof(RectTransform));
+            nameGo.transform.SetParent(btnGo.transform, false);
+            var nameLabel = nameGo.AddComponent<TextMeshProUGUI>();
+            nameLabel.text = def.Name;
+            nameLabel.fontSize = 13f;
+            nameLabel.color = Color.white;
+            nameLabel.raycastTarget = false;
+            nameLabel.enableWordWrapping = false;
+            nameLabel.overflowMode = TextOverflowModes.Ellipsis;
+            var nameLe = nameGo.AddComponent<LayoutElement>();
+            nameLe.flexibleWidth = 1f; // 이름이 남는 폭을 먹고, 핍은 오른쪽에 자기 크기만.
+
+            var pipsGo = new GameObject("Pips", typeof(RectTransform));
+            pipsGo.transform.SetParent(btnGo.transform, false);
+            var pipsLayout = pipsGo.AddComponent<HorizontalLayoutGroup>();
+            pipsLayout.spacing = 2f;
+            pipsLayout.childAlignment = TextAnchor.MiddleRight;
+            pipsLayout.childControlWidth = false;
+            pipsLayout.childControlHeight = false;
+            pipsLayout.childForceExpandWidth = false;
+            pipsLayout.childForceExpandHeight = false;
+            var pipsLe = pipsGo.AddComponent<LayoutElement>();
+            pipsLe.preferredWidth = def.Count * 12f + Mathf.Max(0, def.Count - 1) * 2f;
+
+            var pipTexture = Resources.Load<Texture2D>("UI/TacticalCount");
+            var pips = new List<RawImage>();
+            for (int i = 0; i < def.Count; i++)
+            {
+                var pipGo = new GameObject("Pip", typeof(RectTransform));
+                pipGo.transform.SetParent(pipsGo.transform, false);
+                var pipRect = (RectTransform)pipGo.transform;
+                pipRect.sizeDelta = new Vector2(12f, 20f); // 원본(297x525) 비율에 가깝게.
+                var pipImg = pipGo.AddComponent<RawImage>();
+                pipImg.texture = pipTexture;
+                pipImg.raycastTarget = false;
+                pips.Add(pipImg);
+            }
+            RefreshTacticalCardVisual(btnImg, nameLabel, pips, def);
+
+            var handler = btnGo.AddComponent<TacticalCardClickHandler>();
+            handler.OnLeftClick = () =>
+            {
+                def.Remaining = def.Remaining > 0 ? def.Remaining - 1 : def.Count;
+                RefreshTacticalCardVisual(btnImg, nameLabel, pips, def);
+            };
+            handler.OnRightClick = () =>
+            {
+                def.Remaining = def.Remaining < def.Count ? def.Remaining + 1 : 0;
+                RefreshTacticalCardVisual(btnImg, nameLabel, pips, def);
+            };
+        }
+
+        private static readonly Color TacticalCardNormalColor = new Color(0.3f, 0.3f, 0.3f, 1f);
+        private static readonly Color TacticalCardExhaustedColor = new Color(0.14f, 0.14f, 0.14f, 1f);
+        private static readonly Color TacticalCardNameNormalColor = Color.white;
+        private static readonly Color TacticalCardNameDimColor = new Color(0.45f, 0.45f, 0.45f, 1f);
+        private static readonly Color TacticalPipUsedColor = new Color(0.4f, 0.4f, 0.4f, 1f);
+
+        /// <summary>핍 색뿐 아니라 버튼 배경/이름 폰트 색도 같이 갱신한다 — 다
+        /// 소진되면(Remaining==0) 카드 버튼 전체가 어두워지는데, 이때 흰색
+        /// 폰트만 혼자 튀지 않도록 폰트도 같이 어둡게 낮춘다(사용자 요청).</summary>
+        private static void RefreshTacticalCardVisual(Image btnImg, TextMeshProUGUI nameLabel, List<RawImage> pips, TacticalCardDef def)
+        {
+            bool exhausted = def.Remaining <= 0;
+            int used = def.Count - def.Remaining;
+            for (int i = 0; i < pips.Count; i++)
+            {
+                pips[i].color = i < used ? TacticalPipUsedColor : Color.white;
+            }
+            btnImg.color = exhausted ? TacticalCardExhaustedColor : TacticalCardNormalColor;
+            nameLabel.color = exhausted ? TacticalCardNameDimColor : TacticalCardNameNormalColor;
+        }
+
+        /// <summary>택티컬 카드 버튼 하나에만 붙는다 — Button은 좌클릭만 다룰 수
+        /// 있어서, 좌/우클릭을 둘 다 받으려면 IPointerDownHandler를 직접
+        /// 구현해야 한다(MarkerBase/MissionObjectivePiece와 같은 패턴).</summary>
+        private class TacticalCardClickHandler : MonoBehaviour, IPointerDownHandler
+        {
+            public System.Action OnLeftClick;
+            public System.Action OnRightClick;
+
+            public void OnPointerDown(PointerEventData eventData)
+            {
+                if (eventData.button == PointerEventData.InputButton.Left)
+                {
+                    OnLeftClick?.Invoke();
+                }
+                else if (eventData.button == PointerEventData.InputButton.Right)
+                {
+                    OnRightClick?.Invoke();
+                }
+            }
         }
 
         /// <summary>팀별로 (1) "로스터 불러오기" 큰 버튼 vs 예비대 유닛 목록 중

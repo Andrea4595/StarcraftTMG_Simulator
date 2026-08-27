@@ -108,6 +108,13 @@ namespace TmgBoard
         private readonly Dictionary<string, Unit> _rosterTokenUnits = new Dictionary<string, Unit>();
         private PendingTokenDef _pendingRosterTokenDef;
 
+        // 택티컬 카드 — 배치되는 게 아니라 그냥 목록에서 켜고 끄기만 하므로
+        // (좌클릭 소진/우클릭 복구) 토큰과 달리 "배치 중" 상태 자체가 없다.
+        private readonly List<TacticalCardDef> _pendingTacticalCards = new List<TacticalCardDef>();
+        private readonly Dictionary<string, RectTransform> _tacticalCardListContainers = new Dictionary<string, RectTransform>();
+        private readonly Dictionary<string, LayoutElement> _tacticalCardListLayoutElements = new Dictionary<string, LayoutElement>();
+        private readonly Dictionary<string, GameObject> _tacticalCardSectionRoots = new Dictionary<string, GameObject>();
+
         // ── 변위 베이스 재배치 ──────────────────────────────────────────
         private Base _displacementAnchor;
         private readonly List<Base> _displacementQueue = new List<Base>();
