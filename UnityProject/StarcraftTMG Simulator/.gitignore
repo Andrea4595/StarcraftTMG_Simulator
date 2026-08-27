@@ -41,3 +41,7 @@ sysinfo.txt
 /[Aa]ssets/AddressableAssetsData/*/*.bin*
 /[Aa]ssets/[Ss]treamingAssets/aa.meta
 /[Aa]ssets/[Ss]treamingAssets/aa/*
+
+# Runtime screenshot output (BoardManager.Screenshot.cs) — saved next to the
+# exe/project folder at runtime, not source.
+/Screenshots/

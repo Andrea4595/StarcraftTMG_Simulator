@@ -187,6 +187,7 @@ namespace TmgBoard
                 BuildMarkerBar();
             }
             UpdateMapLayout();
+            InitScreenshotSession();
         }
 
         /// <summary>씬을 코드로 구성할 때(부트스트랩 등) 인스펙터 대신 쓰는 초기화.</summary>

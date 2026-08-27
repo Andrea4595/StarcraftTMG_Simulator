@@ -10,15 +10,13 @@ namespace TmgBoard
     {
         // ── 마커(활성화/점령/아이콘) ───────────────────────────────────
 
-        /// <summary>화면 하단 중앙에 마커 종류별 버튼을 모아 놓은 작은 패널을
-        /// 띄운다 — 누르면 StartMarkerPlacement()로 배치 모드에 들어간다.
-        /// Godot판 _build_marker_bar() 포팅. 버튼은 아이콘만 보여준다(글자
-        /// 없음). 패널 자체가 ContentSizeFitter로 버튼 묶음 크기에 딱 맞게
-        /// 줄어들고 화면 폭 전체가 아니라 중앙 한 곳에 뭉쳐 보이도록, 예전의
-        /// "화면 전체 폭 바 + 그 안의 줄"(HorizontalLayoutGroup의
-        /// childForceExpand 기본값이 true라서 버튼들이 그 넓은 폭에 흩뿌려져
-        /// 보였다) 대신 바 자체를 레이아웃 그룹으로 두고 내용물 크기로
-        /// 줄어들게 했다.</summary>
+        /// <summary>화면 맨 아래를 가로지르는 바 — 마커 종류별 버튼은 중앙에
+        /// 모아두고, 스크린샷 버튼은 우측 하단에 고정한다. 누르면
+        /// StartMarkerPlacement()로 배치 모드에 들어간다. Godot판
+        /// _build_marker_bar() 포팅이지만 배치는 새로 짰다(원래는 화면 하단
+        /// 중앙에 붕 뜬 작은 패널이었다 — 스코어보드 바와 같은 "화면 끝까지
+        /// 가로지르는 바 + 그 안에 독립적으로 앵커된 구역들" 방식으로
+        /// 바꿨다).</summary>
         private void BuildMarkerBar()
         {
             var canvasParent = GetCanvasParent();
@@ -26,15 +24,25 @@ namespace TmgBoard
             var barGo = new GameObject("MarkerBar", typeof(RectTransform));
             barGo.transform.SetParent(canvasParent, false);
             var barRect = (RectTransform)barGo.transform;
-            barRect.anchorMin = new Vector2(0.5f, 0f);
-            barRect.anchorMax = new Vector2(0.5f, 0f);
+            barRect.anchorMin = new Vector2(0f, 0f);
+            barRect.anchorMax = new Vector2(1f, 0f);
             barRect.pivot = new Vector2(0.5f, 0f);
-            barRect.anchoredPosition = new Vector2(0f, 8f);
+            barRect.anchoredPosition = Vector2.zero;
+            barRect.sizeDelta = new Vector2(0f, MarkerBarHeight);
 
             var bg = barGo.AddComponent<Image>();
             bg.color = new Color(0.08f, 0.08f, 0.08f, 0.85f);
 
-            var layout = barGo.AddComponent<HorizontalLayoutGroup>();
+            // 마커 아이콘들 — 화면 정중앙에 모아둔다(예전과 같은 자리).
+            var iconsGo = new GameObject("MarkerIcons", typeof(RectTransform));
+            iconsGo.transform.SetParent(barRect, false);
+            var iconsRect = (RectTransform)iconsGo.transform;
+            iconsRect.anchorMin = new Vector2(0.5f, 0.5f);
+            iconsRect.anchorMax = new Vector2(0.5f, 0.5f);
+            iconsRect.pivot = new Vector2(0.5f, 0.5f);
+            iconsRect.anchoredPosition = Vector2.zero;
+
+            var layout = iconsGo.AddComponent<HorizontalLayoutGroup>();
             layout.padding = new RectOffset(10, 10, 6, 6);
             layout.spacing = 6f;
             layout.childAlignment = TextAnchor.MiddleCenter;
@@ -43,7 +51,7 @@ namespace TmgBoard
             layout.childForceExpandWidth = false;
             layout.childForceExpandHeight = false;
 
-            var fitter = barGo.AddComponent<ContentSizeFitter>();
+            var fitter = iconsGo.AddComponent<ContentSizeFitter>();
             fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
@@ -55,8 +63,29 @@ namespace TmgBoard
                     "capture" => _captureTexture,
                     _ => _iconTextures != null && _iconTextures.TryGetValue(entry.Kind, out var t) ? t : null,
                 };
-                CreateMarkerBarButton(barRect, entry.Kind, icon);
+                CreateMarkerBarButton(iconsRect, entry.Kind, icon);
             }
+
+            CreateScreenshotButton(barRect);
+        }
+
+        private void CreateScreenshotButton(Transform parent)
+        {
+            var go = new GameObject("ScreenshotButton", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(1f, 0.5f);
+            rect.anchorMax = new Vector2(1f, 0.5f);
+            rect.pivot = new Vector2(1f, 0.5f);
+            rect.anchoredPosition = new Vector2(-10f, 0f);
+            rect.sizeDelta = new Vector2(MarkerBarHeight - 8f, MarkerBarHeight - 8f);
+
+            var img = go.AddComponent<RawImage>();
+            img.texture = Resources.Load<Texture2D>("UI/ScreenshotButton");
+
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(TakeScreenshot);
         }
 
         private void CreateMarkerBarButton(Transform parent, string kind, Texture2D icon)
