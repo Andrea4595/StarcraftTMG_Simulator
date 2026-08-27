@@ -93,8 +93,11 @@ namespace TmgBoard
         // ── 로스터 JSON 임포트 / 토큰 ────────────────────────────────────
         [SerializeField] private RosterFileDialog rosterFileDialog;
         private string _rosterImportTeam = "A";
-        // 로스터를 불러오고 나면 이 버튼 자체를 숨긴다(OnRosterFileSelected).
+        // 로스터를 불러오고 나면(또는 이미 예비대가 있으면) 이 버튼은 숨기고
+        // 목록을 보여준다 — 한 번 "로드됨"으로 판정되면 나중에 목록이 다시
+        // 비어도(전부 배치해서) 버튼이 되살아나지 않는다. RefreshPanelLayout 참고.
         private readonly Dictionary<string, GameObject> _rosterImportButtons = new Dictionary<string, GameObject>();
+        private readonly HashSet<string> _rosterLoadedTeams = new HashSet<string>();
         private readonly List<PendingTokenDef> _pendingRosterTokens = new List<PendingTokenDef>();
         private readonly Dictionary<string, RectTransform> _rosterTokenListContainers = new Dictionary<string, RectTransform>();
         private readonly Dictionary<string, LayoutElement> _rosterTokenListLayoutElements = new Dictionary<string, LayoutElement>();

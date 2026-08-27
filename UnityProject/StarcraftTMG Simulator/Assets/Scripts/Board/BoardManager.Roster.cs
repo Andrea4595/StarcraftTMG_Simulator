@@ -44,13 +44,13 @@ namespace TmgBoard
 
             _pendingUnits.AddRange(units);
             _pendingRosterTokens.AddRange(tokens);
+            // 임포트 자체가 "로드됨" 확정 신호 — 방금 불러온 파일이 유닛/토큰을
+            // 하나도 안 줬어도(형식은 맞았지만 내용이 빈 롤스터), 버튼을 다시
+            // 안 보여준다. RefreshPendingList/RefreshRosterTokenList가 끝에서
+            // 부르는 RefreshPanelLayout()이 이 집합을 보고 버튼/목록을 정리한다.
+            _rosterLoadedTeams.Add(_rosterImportTeam);
             RefreshPendingList();
             RefreshRosterTokenList();
-
-            if (_rosterImportButtons.TryGetValue(_rosterImportTeam, out var importButton))
-            {
-                importButton.SetActive(false);
-            }
         }
 
         /// <summary>토큰 정의는 유닛과 달리 목록에서 지우지 않는다 — 몇 번이든

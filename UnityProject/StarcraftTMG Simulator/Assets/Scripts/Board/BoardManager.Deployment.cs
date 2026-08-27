@@ -77,6 +77,7 @@ namespace TmgBoard
             // RefreshPendingList()가 매번 다시 계산해서 적용한다.
             _pendingUnitsListContainers[team] = ScrollListUtil.Create(panel, ListMaxHeight, new Color(0.1f, 0.1f, 0.1f, 0.6f), out _, out var unitListLayoutElement);
             _pendingUnitsListLayoutElements[team] = unitListLayoutElement;
+            unitListLayoutElement.gameObject.SetActive(false); // RefreshPanelLayout()이 로드 여부에 따라 켠다.
 
             // 토큰 목록 — 유닛과 달리 배치해도 목록에서 안 지워진다(몇 번이든 재배치 가능).
             // 라벨+목록을 한 래퍼에 담아서 통째로 켜고 끌 수 있게 한다 —
@@ -169,7 +170,7 @@ namespace TmgBoard
                     CreateListButton(container, $"{def.Name} ({def.ModelCount}모델)", () => StartDeployment(capturedIndex));
                 }
             }
-            RefreshListHeights();
+            RefreshPanelLayout();
         }
 
         private void RefreshRosterTokenList()
@@ -201,18 +202,29 @@ namespace TmgBoard
                     sectionRoot.SetActive(hasAny);
                 }
             }
-            RefreshListHeights();
+            RefreshPanelLayout();
         }
 
-        /// <summary>예비대 유닛/토큰 두 목록의 박스 높이를 현재 항목 수 기준으로
-        /// 다시 맞춘다 — 내용(버튼)은 안 건드리고 크기만. 두 Refresh*List()가
-        /// 끝에서 공통으로 부른다. 예비대 목록의 캡은 토큰 유무와 무관하게
-        /// 항상 UnitListExpandedMaxHeight다 — 한때 토큰이 있으면 더 좁은
+        /// <summary>팀별로 (1) "로스터 불러오기" 큰 버튼 vs 예비대 유닛 목록 중
+        /// 뭘 보여줄지 정하고, (2) 목록 박스 높이를 현재 항목 수에 맞게 다시
+        /// 잡는다. 두 Refresh*List()가 끝에서 공통으로 부른다.
+        ///
+        /// 로드 판정(_rosterLoadedTeams)은 한 번 켜지면 계속 유지되는
+        /// 단방향 스위치다 — 예비대를 전부 배치해서 목록이 다시 비어도 큰
+        /// 버튼이 되살아나면 안 되기 때문(사용자 요청). 임포트 성공 시
+        /// OnRosterFileSelected가 직접 이 집합에 team을 추가하고, 여기서는
+        /// 그 집합에 없더라도 "이미 예비대/토큰이 있는" 팀은 로드된 것으로
+        /// 취급해 자동으로 편입한다 — 부트스트랩의 AddPendingUnit()이
+        /// Start() 이전에 미리 예비대를 채워 넣는 경로(임포트를 거치지
+        /// 않음)까지 같이 커버하기 위해서다.
+        ///
+        /// 예비대 목록의 높이 캡은 토큰 유무와 무관하게 항상
+        /// UnitListExpandedMaxHeight다 — 한때 토큰이 있으면 더 좁은
         /// ListMaxHeight로 캡했었는데, 그러면 토큰 섹션이 있다는 이유만으로
         /// 패널 전체 세로 크기가 줄어드는 문제가 있었다(사용자 리포트). 토큰
         /// 섹션은 있으면 그 아래에 자기 몫(ListMaxHeight 캡, 5개 미만이면 더
         /// 줄어듦)만큼 추가로 붙을 뿐, 유닛 목록 크기에 영향을 주지 않는다.</summary>
-        private void RefreshListHeights()
+        private void RefreshPanelLayout()
         {
             foreach (var kv in _pendingUnitsListLayoutElements)
             {
@@ -225,6 +237,26 @@ namespace TmgBoard
                         unitCount++;
                     }
                 }
+                int tokenCount = 0;
+                foreach (var def in _pendingRosterTokens)
+                {
+                    if (def.Team == team)
+                    {
+                        tokenCount++;
+                    }
+                }
+
+                if (!_rosterLoadedTeams.Contains(team) && (unitCount > 0 || tokenCount > 0))
+                {
+                    _rosterLoadedTeams.Add(team);
+                }
+                bool loaded = _rosterLoadedTeams.Contains(team);
+
+                if (_rosterImportButtons.TryGetValue(team, out var importButton))
+                {
+                    importButton.SetActive(!loaded);
+                }
+                kv.Value.gameObject.SetActive(loaded);
                 ScrollListUtil.ApplyFittedHeight(kv.Value, unitCount, UnitListExpandedMaxHeight);
             }
 
