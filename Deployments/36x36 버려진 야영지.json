@@ -1,0 +1,14 @@
+{
+  "map_preset": "36x36",
+  "deployment_zones": [
+    {"edge": "bottom", "player": "A", "start_along": 0, "end_along": 914.4},
+    {"edge": "top", "player": "B", "start_along": 0, "end_along": 914.4}
+  ],
+  "mission_objectives": [
+    {"number": 1, "x": 152.4, "y": 457.2},
+    {"number": 2, "x": 762, "y": 457.2},
+    {"number": 5, "x": 457.2, "y": 457.2}
+  ],
+  "terrain_pieces": [
+  ]
+}

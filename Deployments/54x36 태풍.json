@@ -1,0 +1,18 @@
+{
+  "map_preset": "54x36",
+  "deployment_zones": [
+    {"edge": "bottom", "player": "A", "start_along": 762, "end_along": 1371.6},
+    {"edge": "right", "player": "A", "start_along": 457.2, "end_along": 914.4},
+    {"edge": "top", "player": "B", "start_along": 0, "end_along": 609.6},
+    {"edge": "left", "player": "B", "start_along": 0, "end_along": 457.2}
+  ],
+  "mission_objectives": [
+    {"number": 5, "x": 685.8, "y": 457.2},
+    {"number": 1, "x": 457.2, "y": 609.6},
+    {"number": 4, "x": 914.4, "y": 304.8},
+    {"number": 2, "x": 152.4, "y": 762},
+    {"number": 3, "x": 1219.2, "y": 152.4}
+  ],
+  "terrain_pieces": [
+  ]
+}
