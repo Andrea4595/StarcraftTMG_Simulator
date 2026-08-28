@@ -12,8 +12,42 @@ namespace TmgBoard
 
         private void UpdateHoveredUnit()
         {
+            var previousHoveredUnit = _hoveredUnit;
             _hoveredBase = TryGetLocalMouse(out var mouseLocal) ? FindBaseAtPoint(mouseLocal) : null;
             _hoveredUnit = _hoveredBase != null ? _hoveredBase.Unit : null;
+
+            // 마우스가 올라간 모델이 속한 유닛 전체를 하이라이팅한다(사용자
+            // 요청 — 처음엔 그 모델 하나만 켰었다) — 유닛이 바뀐 프레임에만
+            // 이전 유닛의 모든 모델을 끄고 새 유닛의 모든 모델을 켠다. 같은
+            // 유닛 안에서 모델만 바뀌는 경우(예: 팔로워 사이 이동)는 그대로
+            // 켜져 있어야 하므로 다시 손대지 않는다. 모델 하나하나에 대해
+            // "그냥 != null"이 아니라 Unity의 오버로드된 bool 변환(if (obj))으로
+            // 확인한다 — 지난 프레임 이후 다이얼 메뉴로 모델이 제거됐다면 C#
+            // 참조는 남아있어도 네이티브 객체는 이미 파괴된 "가짜 null" 상태라,
+            // != null만으로는 못 걸러내고 Highlighted 세터 호출 시 예외가 난다.
+            if (previousHoveredUnit != _hoveredUnit)
+            {
+                if (previousHoveredUnit != null)
+                {
+                    foreach (var model in previousHoveredUnit.Models)
+                    {
+                        if (model)
+                        {
+                            model.Highlighted = false;
+                        }
+                    }
+                }
+                if (_hoveredUnit != null)
+                {
+                    foreach (var model in _hoveredUnit.Models)
+                    {
+                        if (model)
+                        {
+                            model.Highlighted = true;
+                        }
+                    }
+                }
+            }
 
             _memoEntries.Clear();
             if (_hoveredUnit != null)

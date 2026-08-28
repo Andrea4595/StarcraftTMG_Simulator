@@ -25,6 +25,7 @@ namespace TmgBoard
         private const float DamageBadgeRadiusMm = 8f;
         private static readonly Color OutlineColor = new Color(0.05f, 0.05f, 0.05f, 0.9f);
         private static readonly Color DisplacementOutlineColor = new Color(0.2f, 0.9f, 0.9f, 0.95f);
+        private static readonly Color HighlightOutlineColor = new Color(1f, 0.92f, 0.25f, 1f);
 
         public Unit Unit;
         public string Memo = "";
@@ -36,6 +37,7 @@ namespace TmgBoard
         [SerializeField] private int damage;
         [SerializeField] private bool isDisplacement;
         private bool _coherencyWarning;
+        private bool _highlighted;
 
         private RectTransform _rectTransform;
         private TextMeshProUGUI _nameLabel;
@@ -83,6 +85,25 @@ namespace TmgBoard
                     return;
                 }
                 _coherencyWarning = value;
+                SetVerticesDirty();
+            }
+        }
+
+        /// <summary>true면 테두리가 밝은 노란색으로 두꺼워진다 — 마우스가 올라간
+        /// 모델임을 보여준다(BoardManager.UpdateHoveredUnit이 매 프레임 갱신).
+        /// CoherencyWarning의 펄스와는 다르게 고정된 밝기다(경고는 눈에 띄게
+        /// 깜빡여야 하지만, 호버는 그냥 "지금 이거"를 보여주는 용도라 차분한
+        /// 편이 낫다) — 둘 다 켜져 있으면 같이 적용된다(서로 안 가린다).</summary>
+        public bool Highlighted
+        {
+            get => _highlighted;
+            set
+            {
+                if (_highlighted == value)
+                {
+                    return;
+                }
+                _highlighted = value;
                 SetVerticesDirty();
             }
         }
@@ -213,6 +234,12 @@ namespace TmgBoard
             var outlineColor = isDisplacement ? DisplacementOutlineColor : OutlineColor;
             float outlineWidth = isDisplacement ? 3f : 1.5f;
             var drawFillColor = fillColor;
+
+            if (_highlighted)
+            {
+                outlineColor = HighlightOutlineColor;
+                outlineWidth = Mathf.Max(outlineWidth, 3f);
+            }
 
             if (_coherencyWarning)
             {
