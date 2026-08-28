@@ -21,6 +21,16 @@ namespace TmgBoard
         public const int CollisionSides = 64;
         public const int CollisionIterations = 8;
 
+        /// <summary>"타원 전체가 어느 볼록 경계 안에 완전히 들어가는가"를
+        /// 판정할 때(MaxRadialDistanceFullyInside/MinPushDistanceFullyInside)
+        /// 쓰는 여유값 — 두 도형 다 유한 개 점으로 근사한 다각형이라, 정확히
+        /// 접하는 지점에서도 이산화 오차 때문에 판정이 항상 거짓으로 나올 수
+        /// 있다(부동소수점 문제가 아니라 다각형 근사 자체의 오차). 이
+        /// 프로젝트가 코헤런시 경고 판정에서 CoherencyEpsilonMm로 이미 겪은
+        /// 것과 같은 종류의 문제 — 판정용 타원만 이만큼 줄여서 오차를
+        /// 흡수한다.</summary>
+        private const float FullyInsideEpsilonMm = 0.5f;
+
         public static float BoundingRadius(Vector2 sizeMm)
         {
             return Mathf.Max(sizeMm.x, sizeMm.y) / 2f;
@@ -130,6 +140,21 @@ namespace TmgBoard
                 }
             }
             return true;
+        }
+
+        /// <summary>point가 polygons(볼록 다각형 여러 개 — 배치구역이 여러
+        /// 조각일 때처럼) 중 하나에라도 들어가면 true. "합쳐진 영역 안에
+        /// 있는가"를 실제로 폴리곤을 합치지 않고 판정하는 용도.</summary>
+        public static bool PointInAnyConvexPolygon(Vector2 point, List<Vector2[]> polygons)
+        {
+            foreach (var polygon in polygons)
+            {
+                if (PointInConvexPolygon(point, polygon))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>선분(a→b)이 볼록 다각형 polygon 내부에 들어가는 매개변수
@@ -350,16 +375,34 @@ namespace TmgBoard
                 }
             }
 
-            // baseLayer는 중심-원점 mm 좌표계다(지도 중심이 (0,0), 범위는
-            // [-mapSize/2, +mapSize/2]) — Base 조각의 anchoredPosition이 그대로
-            // 이 좌표계를 따른다. 예전엔 여기가 [0, mapSize] 모서리-원점으로
-            // 잘못 클램프돼 있어서, 지도 왼쪽 절반/아래쪽 절반으로는 드래그가
-            // 전혀 안 먹혔다(그쪽으로 옮기려 하면 전부 중심 쪽 모서리 근처로
-            // 튕겨 나갔다) — 지도 배경을 추가하고 나서야 실제로 드러난 버그.
+            return ClampToMapBounds(pos, self.SizeMm, self.RotationRadians, mapSize);
+        }
+
+        /// <summary>baseLayer는 중심-원점 mm 좌표계다(지도 중심이 (0,0), 범위는
+        /// [-mapSize/2, +mapSize/2]) — Base 조각의 anchoredPosition이 그대로
+        /// 이 좌표계를 따른다. 예전엔 여기가 [0, mapSize] 모서리-원점으로
+        /// 잘못 클램프돼 있어서, 지도 왼쪽 절반/아래쪽 절반으로는 드래그가
+        /// 전혀 안 먹혔다(그쪽으로 옮기려 하면 전부 중심 쪽 모서리 근처로
+        /// 튕겨 나갔다) — 지도 배경을 추가하고 나서야 실제로 드러난 버그.
+        /// 지도 가장자리는 x/y축에 평행한 직선이므로, 그 직선에 닿는 한도는
+        /// boundingRadius(긴 축 기준 원형 근사)가 아니라 그 축 방향의
+        /// 지지함수(EllipseSupportInDirection)라야 정확하다 — 회전된
+        /// 타원은 짧은 축이 그 가장자리를 향할 때 실제로 훨씬 더 가까이
+        /// 갈 수 있는데, boundingRadius를 쓰면 항상 긴 축 기준으로만
+        /// 여유를 두어 마치 원형인 것처럼 판정됐다(사용자 지적). ResolvePosition
+        /// (충돌 회피 후 클램프)과, 충돌 회피 없이 마우스를 그대로 따라다니는
+        /// 배치 고스트 미리보기(BoardManager.Roster.cs UpdatePlacementPreviewPosition)
+        /// 둘 다 이 함수 하나를 공유한다 — 고스트는 예전에 지도 경계 클램프
+        /// 자체가 아예 없어서, 스냅이 밴드 가장자리(지도 경계 근처일 수 있는)로
+        /// 밀어줄 때 지도 밖으로 나가는 버그가 있었다(사용자가 실제로 겪음).</summary>
+        public static Vector2 ClampToMapBounds(Vector2 pos, Vector2 sizeMm, float rot, Vector2 mapSize)
+        {
             float halfX = mapSize.x / 2f;
             float halfY = mapSize.y / 2f;
-            pos.x = Mathf.Clamp(pos.x, -halfX + boundingRadius, Mathf.Max(-halfX + boundingRadius, halfX - boundingRadius));
-            pos.y = Mathf.Clamp(pos.y, -halfY + boundingRadius, Mathf.Max(-halfY + boundingRadius, halfY - boundingRadius));
+            float supportX = EllipseSupportInDirection(sizeMm, rot, Vector2.right);
+            float supportY = EllipseSupportInDirection(sizeMm, rot, Vector2.up);
+            pos.x = Mathf.Clamp(pos.x, -halfX + supportX, Mathf.Max(-halfX + supportX, halfX - supportX));
+            pos.y = Mathf.Clamp(pos.y, -halfY + supportY, Mathf.Max(-halfY + supportY, halfY - supportY));
             return pos;
         }
 
@@ -586,9 +629,16 @@ namespace TmgBoard
         /// </summary>
         public static float MaxRadialDistanceFullyInside(Vector2 center, Vector2 dir, Vector2[] boundaryPolygon, Vector2 sizeMm, float rot, float upperBound, int iterations = 18)
         {
+            // 접하는 정확한 지점에서도 폴리곤 근사(64각) 사이 이산화 오차 때문에
+            // "완전히 안"이 거짓으로 나올 수 있다(부동소수점 문제가 아니라
+            // 다각형 근사 자체의 오차 — 이 프로젝트가 코헤런시 경고 판정에서
+            // CoherencyEpsilonMm로 이미 한 번 겪은 것과 같은 문제). 판정용
+            // 타원만 살짝(FullyInsideEpsilonMm) 줄여서 그 오차를 흡수한다 —
+            // 실제로 돌려주는 위치 자체는 줄이지 않는다.
+            var testSizeMm = new Vector2(Mathf.Max(sizeMm.x - FullyInsideEpsilonMm * 2f, 0.01f), Mathf.Max(sizeMm.y - FullyInsideEpsilonMm * 2f, 0.01f));
             bool FullyInside(float t)
             {
-                var poly = EllipsePolygonAt(center + dir * t, sizeMm, rot);
+                var poly = EllipsePolygonAt(center + dir * t, testSizeMm, rot);
                 foreach (var p in poly)
                 {
                     if (!PointInConvexPolygon(p, boundaryPolygon))
@@ -622,6 +672,69 @@ namespace TmgBoard
                 }
             }
             return lo;
+        }
+
+        /// <summary>
+        /// MaxRadialDistanceFullyInside와 같은 이유(테두리 한 점/한 변만
+        /// 검증하면 회전된 타원이 실제로 다른 방향에서 새어나갈 수 있다)로
+        /// 필요한, "경계 위 점 기준" 버전 — 배치구역 밴드처럼 고정된 내부
+        /// 중심점이 없어 반직선을 못 쏘는 경우용이다. origin(경계 위의 한
+        /// 점, 예: 가장 가까운 변 위 최근접점)에서 dir(그 변의 안쪽 법선)
+        /// 방향으로 origin + t·dir를 밀어내며, 타원 테두리 전체가
+        /// boundaryPolygons(여러 조각 — PointInAnyConvexPolygon) 중 하나에라도
+        /// 완전히 들어가는 가장 작은 t를 이분 탐색으로 찾는다. 단일 변의
+        /// 지지함수만으로 계산한 lowerBound(대개 정답에 가깝다 — 둥근 모서리
+        /// 근처가 아니면 실제로 정답과 같다)에서 시작해서, 그 변 하나만으론
+        /// 부족한 경우(둥근 모서리에서 애매한 각도로 접근할 때, 사용자가 실제로
+        /// 겪음)에만 더 밀어낸다.
+        /// </summary>
+        public static float MinPushDistanceFullyInside(Vector2 origin, Vector2 dir, List<Vector2[]> boundaryPolygons, Vector2 sizeMm, float rot, float lowerBound, float upperBound, int iterations = 18)
+        {
+            // MaxRadialDistanceFullyInside와 같은 이유로 판정용 타원만 살짝
+            // 줄인다(FullyInsideEpsilonMm) — 다각형 근사 사이 이산화 오차 때문에
+            // 정확히 접하는 지점에서도 "완전히 안"이 거짓으로 나오는 걸 막는다.
+            var testSizeMm = new Vector2(Mathf.Max(sizeMm.x - FullyInsideEpsilonMm * 2f, 0.01f), Mathf.Max(sizeMm.y - FullyInsideEpsilonMm * 2f, 0.01f));
+            bool FullyInside(float t)
+            {
+                var poly = EllipsePolygonAt(origin + dir * t, testSizeMm, rot);
+                foreach (var p in poly)
+                {
+                    if (!PointInAnyConvexPolygon(p, boundaryPolygons))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            if (FullyInside(lowerBound))
+            {
+                return lowerBound;
+            }
+            // upperBound가 판정을 통과 못 하면(멀리 있는 벽까지도 안 들어간다는
+            // 뜻 — 이산화 오차거나 정말로 좁은 공간이거나) 상한 쪽으로 넘어가지
+            // 않는다 — 그러면 엉뚱하게 먼 지점으로 튀어버린다(사용자가 실제로
+            // 겪은 버그). 대신 안전한 쪽(원래 하한 — 변 하나짜리 지지함수 답,
+            // 예전 동작)으로 되돌아간다.
+            if (upperBound <= lowerBound || !FullyInside(upperBound))
+            {
+                return lowerBound;
+            }
+            float lo = lowerBound;
+            float hi = upperBound;
+            for (int i = 0; i < iterations; i++)
+            {
+                float mid = (lo + hi) * 0.5f;
+                if (FullyInside(mid))
+                {
+                    hi = mid;
+                }
+                else
+                {
+                    lo = mid;
+                }
+            }
+            return hi;
         }
     }
 }

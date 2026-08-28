@@ -316,22 +316,19 @@ namespace TmgBoard
         /// (HandlePendingDeploymentInput) 둘 다에서 공유해서 쓴다(사용자 요청
         /// — 미리보기 단계에서도 가이드라인처럼 스냅/차단이 보여야 자연스럽다).
         ///
-        /// EllipseMath.ClosestPointOnPolylines가 돌려주는 closest/inward(그
-        /// 변의 정확한 안쪽 법선)를 이용해, 그 법선이 나타내는 직선에 이
-        /// 타원이 닿으려면 중심이 최소 얼마나 떨어져야 하는지(EllipseSupportInDirection
-        /// — 지지함수. 회전된 타원이 대각선으로 다가올 땐 반직선 거리보다
-        /// 항상 크거나 같다)를 radius로 삼는다.
-        /// desired의 부호 있는 거리(signedDist = Dot(desired-closest, inward),
-        /// 안쪽이면 양수)가 radius 이상이면(테두리가 아직 선 안쪽) 충분히
-        /// 여유로울 땐 그대로 자유배치, 선에 문턱 이내로 가까워지면 착 붙도록
-        /// 스냅한다. signedDist가 radius 미만이면(테두리가 이미 선에 닿았거나
-        /// 넘어감) — 사용자 요청대로 스냅 문턱과 무관하게 무조건 딱 그
-        /// 경계(closest + inward*radius)로 눌러붙인다(하드 클램프). 배치는
-        /// 클릭 한 번짜리 짧은 상호작용이라 팔로워처럼 "desired가 가만히
-        /// 있어도 진동" 문제가 실제로 보고되진 않았다 — 문제가 생기면 이
-        /// 함수도 ClampTowardCenter 계열로 옮기는 걸 고려. SnapEnabled 자체도
-        /// 여기서 다시 확인한다 — 호출부(미리보기)는 Shift 여부를 미리 안
-        /// 걸러주므로.</summary>
+        /// EllipseMath.ClosestPointOnPolylines가 돌려주는 closest/inward(가장
+        /// 가까운 변 하나의 정확한 안쪽 법선)로 문턱 판정용 radius/signedDist를
+        /// 구하되, 실제로 스냅/클램프하는 지점은 그 변 하나만으로 계산하지
+        /// 않는다 — 변 하나의 지지함수만 쓰면, 둥근 모서리(짧은 변 여러 개가
+        /// 이어진 곳)를 애매한 각도(45도 근처 등)로 접근할 때 타원이 실제로는
+        /// "가장 가까운" 변이 아닌 이웃한 변을 살짝 넘어가는데도 통과시켜버리는
+        /// 버그가 있었다(사용자가 실제로 겪음 — 코헤런시 스냅에서 먼저 고친
+        /// 것과 같은 종류의 문제). 대신 PushToFullyInsideBand로 "타원 테두리
+        /// 전체가 밴드(여러 구역이면 그 중 하나에라도) 완전히 들어가는" 지점을
+        /// 직접 검증하며 이분 탐색으로 찾는다. 배치는 클릭 한 번짜리 짧은
+        /// 상호작용이라 팔로워처럼 "desired가 가만히 있어도 진동"하는 문제는
+        /// 보고되지 않았다. SnapEnabled 자체도 여기서 다시 확인한다 — 호출부
+        /// (미리보기)는 Shift 여부를 미리 안 걸러주므로.</summary>
         private Vector2 SnapToGuidelineBoundary(Vector2 desired, Vector2 sizeMm, float rotationRadians)
         {
             if (!SnapEnabled || guideline.BandPolylines == null || guideline.BandPolylines.Count == 0)
@@ -347,9 +344,30 @@ namespace TmgBoard
             float signedDist = Vector2.Dot(desired - closest, inward);
             if (signedDist >= radius)
             {
-                return signedDist - radius <= FollowerSnapThresholdMm ? closest + inward * radius : desired;
+                return signedDist - radius <= FollowerSnapThresholdMm ? PushToFullyInsideBand(closest, inward, sizeMm, rotationRadians, radius) : desired;
             }
-            return closest + inward * radius;
+            return PushToFullyInsideBand(closest, inward, sizeMm, rotationRadians, radius);
+        }
+
+        /// <summary>closest(가장 가까운 변 위의 점)에서 inward 방향으로, 타원
+        /// (sizeMm/rotationRadians) 전체가 guideline.BandPolylines 중 하나에라도
+        /// 완전히 들어가는 가장 가까운 지점까지 밀어낸다 — singleSegmentRadius
+        /// (그 변 하나만의 지지함수, 둥근 모서리가 아니면 대개 정답과 같다)를
+        /// 이분 탐색의 하한으로 쓰고, 같은 방향으로 밴드 반대편까지의 실제
+        /// 거리(RayDistanceToPolylines)를 상한으로 쓴다 — 상한까지 밀었는데도
+        /// 안 들어가는 예외적인 경우엔(반직선이 아무 것도 못 만나는 등) 그냥
+        /// singleSegmentRadius 지점을 쓴다(예전 동작으로 안전하게 되돌아감).
+        /// 반직선은 closest에서 바로 안 쏜다 — closest 자체가 그 변 위의
+        /// 점이라, 그대로 쏘면 자기 자신이 속한 변과 t≈0에서 "만나서" 상한이
+        /// 항상 하한과 같아지는 버그가 있었다(사용자가 실제로 겪음). 대신
+        /// inward 쪽으로 살짝(RayOriginOffsetMm) 물러난 지점에서 쏜다.</summary>
+        private Vector2 PushToFullyInsideBand(Vector2 closest, Vector2 inward, Vector2 sizeMm, float rotationRadians, float singleSegmentRadius)
+        {
+            Vector2 rayOrigin = closest + inward * RayOriginOffsetMm;
+            float? farHit = EllipseMath.RayDistanceToPolylines(rayOrigin, inward, guideline.BandPolylines);
+            float upperBound = farHit.HasValue ? Mathf.Max(farHit.Value + RayOriginOffsetMm, singleSegmentRadius) : singleSegmentRadius;
+            float pushDist = EllipseMath.MinPushDistanceFullyInside(closest, inward, guideline.BandPolylines, sizeMm, rotationRadians, singleSegmentRadius, upperBound);
+            return closest + inward * pushDist;
         }
 
         private void OnUnitMoveCompletePressed()

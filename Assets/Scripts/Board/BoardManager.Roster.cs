@@ -236,11 +236,18 @@ namespace TmgBoard
             _placementPreview = preview;
         }
 
+        /// <summary>고스트 미리보기는(실제 배치와 달리) ResolvePosition을 안
+        /// 거친다 — 충돌 회피는 일부러 안 한다(그냥 위치를 미리 보여주는
+        /// 용도). 하지만 지도 경계는 항상 지켜야 한다 — 예전엔 이 클램프
+        /// 자체가 아예 없어서, 배치 밴드 스냅(Shift)이 지도 경계 근처의 밴드
+        /// 가장자리로 고스트를 밀어줄 때 지도 밖으로 나가는 버그가 있었다
+        /// (사용자가 실제로 겪음). EllipseMath.ClampToMapBounds를 재사용한다
+        /// — ResolvePosition의 경계 클램프와 같은 함수.</summary>
         private void UpdatePlacementPreviewPosition(Vector2 localMouse)
         {
             if (_placementPreview != null)
             {
-                _placementPreview.Center = localMouse;
+                _placementPreview.Center = EllipseMath.ClampToMapBounds(localMouse, _placementPreview.SizeMm, _placementPreview.RotationRadians, mapSizeMm);
             }
         }
 

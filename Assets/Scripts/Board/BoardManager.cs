@@ -42,6 +42,7 @@ namespace TmgBoard
         private const float FollowerRingFraction = 0.7f;
         private const float CoherencyEpsilonMm = 0.5f; // 경계에 스냅됐을 때 부동소수점 오차로 오탐지되는 것 방지
         private const float FollowerSnapThresholdMm = 6f;
+        private const float RayOriginOffsetMm = 1f; // 배치 밴드 경계 위 점에서 반직선을 쏠 때, 자기 자신이 속한 변과의 자기교차(t≈0) 방지
 
         // ── 화면 이동/확대축소(패닝/줌) ─────────────────────────────────
         // mapArea가 baseLayer/guideline/memoOverlay를 감싸고, 이 하나의
