@@ -75,7 +75,8 @@ namespace TmgBoard
                 return true;
             }
             if (IsDialogVisible(damageDialog) || IsDialogVisible(memoDialog)
-                    || IsDialogVisible(rangeInputDialog) || (radialMenu != null && radialMenu.gameObject.activeSelf))
+                    || IsDialogVisible(rangeInputDialog) || (radialMenu != null && radialMenu.gameObject.activeSelf)
+                    || (diceRollDialog != null && diceRollDialog.gameObject.activeSelf))
             {
                 return true;
             }

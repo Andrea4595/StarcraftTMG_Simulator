@@ -36,6 +36,7 @@ namespace TmgBoard
         [SerializeField] private MeasureOverlay measureLayer;
         [SerializeField] private RectTransform markerLayer;
         [SerializeField] private RectTransform terrainLayer;
+        [SerializeField] private DiceRollDialog diceRollDialog;
         [SerializeField] private Vector2 mapSizeMm = new Vector2(36f * GameConstants.MmPerInch, 36f * GameConstants.MmPerInch);
 
         private const float DuplicateGapMm = 4f;
@@ -269,6 +270,14 @@ namespace TmgBoard
         public void ConfigureTerrain(RectTransform terrainLayerRef)
         {
             terrainLayer = terrainLayerRef;
+        }
+
+        /// <summary>주사위 굴리기 툴 창을 주입한다 — 보드 상태와 완전히 무관한
+        /// 독립 컴포넌트라 마커바 버튼에서 여닫는 것 외에는 BoardManager가
+        /// 손댈 일이 없다.</summary>
+        public void ConfigureDiceRoll(DiceRollDialog diceRollDialogRef)
+        {
+            diceRollDialog = diceRollDialogRef;
         }
 
         /// <summary>미션 설정 핸드오프 등, 인스펙터 대신 코드로 지도 크기를

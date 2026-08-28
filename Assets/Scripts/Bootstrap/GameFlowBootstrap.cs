@@ -178,6 +178,8 @@ public static class GameFlowBootstrap
         rangeInputDialog.transform.SetParent(canvasGo.transform, false);
         var rosterFileDialog = new GameObject("RosterFileDialog").AddComponent<RosterFileDialog>();
         rosterFileDialog.transform.SetParent(canvasGo.transform, false);
+        var diceRollDialog = new GameObject("DiceRollDialog").AddComponent<DiceRollDialog>();
+        diceRollDialog.transform.SetParent(canvasGo.transform, false);
 
         var guideline = new GameObject("Guideline").AddComponent<GuidelineOverlay>();
         guideline.transform.SetParent(mapAreaRect, false);
@@ -229,6 +231,7 @@ public static class GameFlowBootstrap
                 iconTextures);
         board.ConfigureRoster(rosterFileDialog);
         board.ConfigureTerrain(terrainLayerRect);
+        board.ConfigureDiceRoll(diceRollDialog);
         scoreboard.SetBoardManager(board);
 
         if (MissionData.HasData && GameConstants.MapSizePresets.TryGetValue(MissionData.MapPreset, out var mapSize))

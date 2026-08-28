@@ -69,6 +69,7 @@ namespace TmgBoard
             CreateMarkerHintLabel(barRect);
             CreateScreenshotButton(barRect);
             CreateFitButton(barRect);
+            CreateDiceButton(barRect);
         }
 
         /// <summary>마커 아이콘 오른쪽에 조작법을 띄워주는 라벨(사용자 요청) —
@@ -142,6 +143,33 @@ namespace TmgBoard
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(FitMapToView);
+        }
+
+        /// <summary>Fit 버튼 바로 왼쪽 — 주사위 굴리기 툴(DiceRollDialog)을
+        /// 연다. 보드 상태와 무관한 독립 창이라 여기선 그냥 여는 것만 한다.</summary>
+        private void CreateDiceButton(Transform parent)
+        {
+            var go = new GameObject("DiceButton", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(1f, 0.5f);
+            rect.anchorMax = new Vector2(1f, 0.5f);
+            rect.pivot = new Vector2(1f, 0.5f);
+            rect.anchoredPosition = new Vector2(-10f - 2f * (MarkerBarHeight - 8f) - 12f, 0f);
+            rect.sizeDelta = new Vector2(MarkerBarHeight - 8f, MarkerBarHeight - 8f);
+
+            var img = go.AddComponent<RawImage>();
+            img.texture = Resources.Load<Texture2D>("UI/DiceButton");
+
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() =>
+            {
+                if (diceRollDialog != null)
+                {
+                    diceRollDialog.Open();
+                }
+            });
         }
 
         private void CreateMarkerBarButton(Transform parent, string kind, Texture2D icon)
