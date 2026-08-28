@@ -2,41 +2,68 @@ using System.Collections.Generic;
 using TmgBoard;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 /// <summary>
-/// 임시 확인용 — 미션 설정 화면(지도 크기 선택 + 배치구역 그리기) → "게임
-/// 시작" → 게임 보드(BoardManager) 핸드오프 전체 흐름을 눈으로 확인하기
-/// 위한 부트스트랩. 확인 끝나면 지운다(실제 게임 화면 구성/씬 전환은 별도로
-/// 만든다). 이전의 BaseRenderTestBootstrap을 대체한다 — 보드 단독 스모크
-/// 테스트 내용은 BuildGameBoard()로 그대로 옮겨왔다.
+/// 실제 Unity 씬 전환(MissionSetup 씬 ↔ GameBoard 씬)에 맞춰 각 씬의 UI를
+/// 코드로 짓는 부트스트랩 — 이전 GameFlowTestBootstrap이 같은 씬 안에서
+/// 캔버스만 바꿔치기하던 임시 방식을 대체한다. 씬 파일 자체는 카메라 하나만
+/// 있는 빈 씬이고(에디터에서 손으로 만든 게 아니라 기존 SampleScene을
+/// 복사한 최소 구성), 실제 UI 구성은 전부 여기서 한다 — 이 프로젝트의
+/// "UI는 코드로 짓는다" 기존 방침을 그대로 유지.
 ///
-/// Godot판은 별도 씬(mission_setup.tscn ↔ game_board.tscn) 전환이지만,
-/// 여기선 아직 씬 관리가 없어서 같은 씬 안에서 미션 설정 캔버스를 지우고
-/// 보드 캔버스를 새로 짓는 것으로 대신한다.
+/// EventSystem은 씬을 넘나들며 살아있어야 하므로 DontDestroyOnLoad로 한 번만
+/// 만든다. MissionData(Data/MissionData.cs)는 static 클래스라 씬 전환과
+/// 무관하게 그대로 유지된다 — 별도 전달 장치가 필요 없다.
 /// </summary>
-public static class GameFlowTestBootstrap
+public static class GameFlowBootstrap
 {
+    private const string MissionSetupSceneName = "MissionSetup";
+    private const string GameBoardSceneName = "GameBoard";
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Init()
     {
-        if (Object.FindFirstObjectByType<EventSystem>() == null)
+        EnsureEventSystem();
+        SceneManager.sceneLoaded += (scene, mode) => HandleSceneLoaded(scene);
+        // sceneLoaded 이벤트는 앱 시작 시 최초로 로드된 씬에는 발생하지
+        // 않으므로(Unity의 알려진 동작), 지금 이미 떠 있는 씬은 직접 처리한다.
+        HandleSceneLoaded(SceneManager.GetActiveScene());
+    }
+
+    private static void EnsureEventSystem()
+    {
+        if (Object.FindFirstObjectByType<EventSystem>() != null)
         {
-            var eventSystemGo = new GameObject("EventSystem");
-            eventSystemGo.AddComponent<EventSystem>();
-            eventSystemGo.AddComponent<StandaloneInputModule>();
+            return;
         }
 
+        var eventSystemGo = new GameObject("EventSystem");
+        eventSystemGo.AddComponent<EventSystem>();
+        eventSystemGo.AddComponent<StandaloneInputModule>();
+        Object.DontDestroyOnLoad(eventSystemGo);
+    }
+
+    private static void HandleSceneLoaded(Scene scene)
+    {
         // 지도(정사각형)가 화면(와이드) 비율에 안 맞아 남는 여백에 Unity 기본
-        // 카메라 배경색(파란빛)이 그대로 비쳐 보이는 문제 — 화면 공간
-        // Overlay 캔버스는 카메라가 그린 배경 위에 그려지므로, 카메라가 있다면
-        // 배경색을 어두운 색으로 맞춰준다.
+        // 카메라 배경색(파란빛)이 그대로 비쳐 보이는 문제 — 씬마다 카메라가
+        // 새로 생기므로 로드될 때마다 다시 맞춰준다.
         if (Camera.main != null)
         {
             Camera.main.backgroundColor = new Color(0.05f, 0.05f, 0.05f, 1f);
         }
 
-        BuildMissionSetup();
+        switch (scene.name)
+        {
+            case MissionSetupSceneName:
+                BuildMissionSetup();
+                break;
+            case GameBoardSceneName:
+                BuildGameBoard();
+                break;
+        }
     }
 
     private static void BuildMissionSetup()
@@ -50,11 +77,7 @@ public static class GameFlowTestBootstrap
         // MissionSetupController는 자기 GameObject의 RectTransform(캔버스 직속,
         // 화면 전체를 덮음)을 직접 기준으로 UI를 짓는다 — 별도 참조 주입이 없다.
         var missionSetup = canvasGo.AddComponent<MissionSetupController>();
-        missionSetup.StartGameRequested += () =>
-        {
-            Object.Destroy(canvasGo);
-            BuildGameBoard();
-        };
+        missionSetup.StartGameRequested += () => SceneManager.LoadScene(GameBoardSceneName);
     }
 
     private static void BuildGameBoard()
