@@ -10,6 +10,50 @@ namespace TmgBoard
     {
         // ── 유닛 이동 워크플로우 ────────────────────────────────────────
 
+        /// <summary>유닛 이동(리딩 모델)/팔로워 배치 중, draggedPiece(지금
+        /// 드래그하고 있는 그 모델)의 인게이지 거리(1") 안에 있는 적 모델을
+        /// 붉게 반짝이도록 표시한다(사용자 요청 — 룰북상 적 인게이지 거리
+        /// 안으로 그냥 이동해 들어갈 수 없다는 걸 드래그하는 동안 바로
+        /// 보여준다). draggedPiece가 null이면(드래그 중이 아니면) 그냥
+        /// 전부 끈다. 매 프레임 다시 계산한다 — 드래그하는 동안 다른 적
+        /// 모델은 안 움직이지만, draggedPiece 자신은 계속 움직이므로.</summary>
+        private void UpdateEngageWarning(Base draggedPiece)
+        {
+            foreach (var model in _engageWarningHighlighted)
+            {
+                if (model)
+                {
+                    model.EngageWarning = false;
+                }
+            }
+            _engageWarningHighlighted.Clear();
+
+            if (draggedPiece == null || draggedPiece.Unit == null)
+            {
+                return;
+            }
+
+            foreach (var piece in _pieces)
+            {
+                if (piece == null || piece == draggedPiece || piece.Unit == null)
+                {
+                    continue;
+                }
+                if (piece.Unit.Team == draggedPiece.Unit.Team || piece.Unit.IsToken)
+                {
+                    continue;
+                }
+                float dist = EllipseMath.EllipseToEllipseDistance(
+                        draggedPiece.Center, draggedPiece.SizeMm, draggedPiece.RotationRadians,
+                        piece.Center, piece.SizeMm, piece.RotationRadians);
+                if (dist <= EngageDistanceMm)
+                {
+                    piece.EngageWarning = true;
+                    _engageWarningHighlighted.Add(piece);
+                }
+            }
+        }
+
         public void StartUnitMove(Base leading)
         {
             if (leading == null || leading.Unit == null || _unitMoveActive)

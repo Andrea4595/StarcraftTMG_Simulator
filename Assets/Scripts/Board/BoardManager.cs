@@ -44,10 +44,12 @@ namespace TmgBoard
         private const float FollowerSnapThresholdMm = 6f;
         private const float RayOriginOffsetMm = 1f; // 배치 밴드 경계 위 점에서 반직선을 쏠 때, 자기 자신이 속한 변과의 자기교차(t≈0) 방지
 
-        // ── 전열/지원열 하이라이팅 ───────────────────────────────────────
+        // ── 전열/지원열 하이라이팅 + 인게이지 경고 ───────────────────────
+        // EngageDistanceMm은 둘 다 공유한다(같은 룰북 개념 — 인게이지 거리 1").
         private const float EngageDistanceMm = GameConstants.MmPerInch; // 인게이지 거리(1")
         private const float BaseContactThresholdMm = 2f; // "베이스 접촉" 판정 여유(완전히 0이 아니라 살짝 여유를 둠)
         private readonly HashSet<Base> _combatRowHighlighted = new HashSet<Base>();
+        private readonly HashSet<Base> _engageWarningHighlighted = new HashSet<Base>();
 
         // ── 화면 이동/확대축소(패닝/줌) ─────────────────────────────────
         // mapArea가 baseLayer/guideline/memoOverlay를 감싸고, 이 하나의
@@ -336,6 +338,20 @@ namespace TmgBoard
             HandleMeasureInput();
             HandleUndoRedoInput();
             UpdateHoveredUnit();
+
+            // 유닛 이동(리딩 모델)/팔로워 배치 중에만 적 인게이지 경고를
+            // 켠다 — 일반 모델 드래그(유닛 이동 워크플로 밖)에는 적용하지
+            // 않는다(사용자 요청 범위 그대로).
+            Base engageCheckPiece = null;
+            if (_unitMoveActive && _unitMovePhase == "leading" && _draggingPiece == _unitMoveLeading)
+            {
+                engageCheckPiece = _draggingPiece;
+            }
+            else if (_draggingFollower != null)
+            {
+                engageCheckPiece = _draggingFollower;
+            }
+            UpdateEngageWarning(engageCheckPiece);
 
             if (_unitMoveActive && Input.GetMouseButtonDown(1))
             {

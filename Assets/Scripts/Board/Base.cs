@@ -29,6 +29,7 @@ namespace TmgBoard
         private static readonly Color CombatRowOutlineColor = new Color(1f, 0.45f, 0.05f, 1f);
         private const float CombatRowFrontOutlineWidth = 5f;
         private const float CombatRowSupportOutlineWidth = 3f;
+        private static readonly Color EngageWarningColor = new Color(0.95f, 0.1f, 0.1f, 1f);
 
         public Unit Unit;
         public string Memo = "";
@@ -41,6 +42,7 @@ namespace TmgBoard
         [SerializeField] private bool isDisplacement;
         private bool _coherencyWarning;
         private bool _highlighted;
+        private bool _engageWarning;
 
         private RectTransform _rectTransform;
         private TextMeshProUGUI _nameLabel;
@@ -88,6 +90,28 @@ namespace TmgBoard
                     return;
                 }
                 _coherencyWarning = value;
+                SetVerticesDirty();
+            }
+        }
+
+        /// <summary>true면 테두리가 붉게 반짝인다 — 유닛 이동/팔로워 배치 중
+        /// 이 모델(적)이 지금 드래그 중인 모델의 인게이지 거리(1") 안에
+        /// 있다는 경고(사용자 요청 — 룰북상 상대 인게이지 거리 안으로 그냥
+        /// 이동해 들어갈 수 없다). CoherencyWarning과 같은 펄스 메커니즘을
+        /// 재사용하되 색만 빨강 — 둘은 서로 다른 모델에 켜진다(하나는 이동
+        /// 중인 모델 자신의 코헤런시 이탈, 다른 하나는 그 모델 근처의 적)라
+        /// 실제로 겹칠 일은 없다. BoardManager.UpdateEngageWarning이 드래그
+        /// 중 매 프레임 갱신한다.</summary>
+        public bool EngageWarning
+        {
+            get => _engageWarning;
+            set
+            {
+                if (_engageWarning == value)
+                {
+                    return;
+                }
+                _engageWarning = value;
                 SetVerticesDirty();
             }
         }
@@ -247,7 +271,7 @@ namespace TmgBoard
         /// 그리게 한다(꺼져 있으면 아무 비용도 없다).</summary>
         private void Update()
         {
-            if (_coherencyWarning)
+            if (_coherencyWarning || _engageWarning)
             {
                 SetVerticesDirty();
             }
@@ -273,6 +297,17 @@ namespace TmgBoard
             {
                 outlineColor = CombatRowOutlineColor;
                 outlineWidth = _combatRow == CombatRow.Front ? CombatRowFrontOutlineWidth : CombatRowSupportOutlineWidth;
+            }
+
+            if (_engageWarning)
+            {
+                // 유닛 이동/팔로워 배치 중 이 모델(적)이 지금 드래그 중인
+                // 모델의 인게이지 거리 안에 들어왔다는 경고 — 테두리만
+                // 붉게 반짝인다(채우기는 안 건드린다, "붉은 테두리"라는
+                // 요청 그대로).
+                float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * CoherencyFlashSpeed);
+                outlineColor = Color.Lerp(outlineColor, EngageWarningColor, pulse);
+                outlineWidth = Mathf.Max(outlineWidth, 3f);
             }
 
             if (_coherencyWarning)
