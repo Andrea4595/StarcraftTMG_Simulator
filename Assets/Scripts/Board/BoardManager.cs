@@ -150,6 +150,22 @@ namespace TmgBoard
             ("debuff", "디버프 마커"),
         };
 
+        /// <summary>마커바 아이콘에 마우스를 올렸을 때 보여줄 조작법 —
+        /// 마커 종류마다 우클릭 동작이 다르다(활성화/점령은 순환+Shift로 삭제,
+        /// 아이콘류는 그냥 삭제)는 걸 그때그때 알려달라는 사용자 요청.</summary>
+        private static readonly Dictionary<string, string> MarkerControlHints = new Dictionary<string, string>
+        {
+            { "activation", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 상태 순환(이동→돌격→완료) · Shift+우클릭: 삭제" },
+            { "capture", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 색 순환(중립 / 플레이어 A / B) · Shift+우클릭: 삭제" },
+            { "movement", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 삭제" },
+            { "assault", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 삭제" },
+            { "combat", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 삭제" },
+            { "buff", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 삭제" },
+            { "debuff", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 삭제" },
+        };
+
+        private TextMeshProUGUI _markerHintLabel;
+
         private Texture2D _activationTextureMovement;
         private Texture2D _activationTextureAssault;
         private Texture2D _activationTextureDone;

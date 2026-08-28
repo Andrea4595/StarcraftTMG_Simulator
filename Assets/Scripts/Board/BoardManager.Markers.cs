@@ -66,8 +66,39 @@ namespace TmgBoard
                 CreateMarkerBarButton(iconsRect, entry.Kind, icon);
             }
 
+            CreateMarkerHintLabel(barRect);
             CreateScreenshotButton(barRect);
             CreateFitButton(barRect);
+        }
+
+        /// <summary>마커 아이콘 오른쪽에 조작법을 띄워주는 라벨(사용자 요청) —
+        /// iconsGo 자신의 ContentSizeFitter 안에 넣으면 라벨이 나타날 때마다
+        /// 그 그룹 전체가 재중앙정렬되며 아이콘들이 화면에서 좌우로 밀리는
+        /// 문제가 있어서, 독립적으로 배치하고 아이콘 그룹의 폭을 직접
+        /// 계산해서(HorizontalLayoutGroup과 같은 식) 그 오른쪽 끝에 맞춘다 —
+        /// 그래야 아이콘 위치는 항상 고정이다.</summary>
+        private void CreateMarkerHintLabel(Transform parent)
+        {
+            float iconSize = MarkerBarHeight - 8f;
+            int count = MarkerBarEntries.Length;
+            float iconsGroupWidth = 20f /* padding L+R */ + count * iconSize + Mathf.Max(count - 1, 0) * 6f /* spacing */;
+
+            var go = new GameObject("MarkerHintLabel", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0f, 0.5f);
+            rect.anchoredPosition = new Vector2(iconsGroupWidth / 2f + 12f, 0f);
+            rect.sizeDelta = new Vector2(420f, MarkerBarHeight - 12f);
+
+            _markerHintLabel = go.AddComponent<TextMeshProUGUI>();
+            _markerHintLabel.fontSize = 13f;
+            _markerHintLabel.color = new Color(0.85f, 0.85f, 0.85f, 1f);
+            _markerHintLabel.alignment = TextAlignmentOptions.MidlineLeft;
+            _markerHintLabel.enableWordWrapping = false;
+            _markerHintLabel.raycastTarget = false;
+            _markerHintLabel.text = "";
         }
 
         private void CreateScreenshotButton(Transform parent)
@@ -126,6 +157,43 @@ namespace TmgBoard
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(() => StartMarkerPlacement(kind));
+
+            var hover = go.AddComponent<MarkerButtonHoverHandler>();
+            string hint = MarkerControlHints.TryGetValue(kind, out var h) ? h : "";
+            hover.OnEnter = () =>
+            {
+                if (_markerHintLabel != null)
+                {
+                    _markerHintLabel.text = hint;
+                }
+            };
+            hover.OnExit = () =>
+            {
+                if (_markerHintLabel != null)
+                {
+                    _markerHintLabel.text = "";
+                }
+            };
+        }
+
+        /// <summary>마커바 버튼 하나에만 붙어서 마우스 진입/이탈을 알려준다 —
+        /// Button 자체는 클릭만 다루므로, 호버로 조작법을 보여주려면
+        /// IPointerEnterHandler/IPointerExitHandler를 직접 구현해야 한다
+        /// (TacticalCardClickHandler와 같은 패턴).</summary>
+        private class MarkerButtonHoverHandler : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
+        {
+            public System.Action OnEnter;
+            public System.Action OnExit;
+
+            public void OnPointerEnter(PointerEventData eventData)
+            {
+                OnEnter?.Invoke();
+            }
+
+            public void OnPointerExit(PointerEventData eventData)
+            {
+                OnExit?.Invoke();
+            }
         }
 
         private void StartMarkerPlacement(string kind)
