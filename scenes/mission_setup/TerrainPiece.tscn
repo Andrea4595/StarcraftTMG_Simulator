@@ -1,7 +1,0 @@
-[gd_scene load_steps=2 format=3]
-
-[ext_resource type="Script" path="res://scenes/mission_setup/TerrainPiece.gd" id="1"]
-
-[node name="TerrainPiece" type="TextureRect"]
-layout_mode = 0
-script = ExtResource("1")
