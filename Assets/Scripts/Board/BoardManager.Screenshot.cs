@@ -37,7 +37,7 @@ namespace TmgBoard
         /// 번호만 찍을 때마다 올라간다.</summary>
         private string BuildScreenshotPath()
         {
-            string dir = Path.Combine(ExeDirectory(), "Screenshots");
+            string dir = Path.Combine(AppPaths.ExeDirectory(), "Screenshots");
             Directory.CreateDirectory(dir);
 
             if (_screenshotSessionTimestamp == null)
@@ -49,13 +49,5 @@ namespace TmgBoard
             return path;
         }
 
-        /// <summary>빌드된 실행 파일과 같은 위치. Application.dataPath는 빌드에서
-        /// "<실행파일 옆>/<제품명>_Data"를 가리키므로, 그 한 단계 위 폴더가
-        /// 실행 파일이 있는 자리다(에디터에서는 프로젝트 폴더가 나온다 —
-        /// Assets 폴더의 한 단계 위).</summary>
-        private static string ExeDirectory()
-        {
-            return Directory.GetParent(Application.dataPath).FullName;
-        }
     }
 }

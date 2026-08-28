@@ -23,12 +23,23 @@ namespace TmgBoard
         public event Action<string> FileSelected;
         public event Action Cancelled;
 
+        /// <summary>파일 항목(폴더 제외) 위에 마우스가 올라가면 그 전체 경로와
+        /// 함께 올라간다 — 이 컴포넌트 자체는 "미리보기가 뭔지" 전혀 모르고,
+        /// 호출부(예: 미션 프리셋 불러오기)가 원하면 구독해서 자기가 원하는
+        /// 미리보기를 그리면 된다(사용자 요청 — 로스터 임포트 쪽은 그냥
+        /// 구독 안 하면 기존과 동일).</summary>
+        public event Action<string> FileHighlighted;
+        public event Action FileHighlightCleared;
+
         private static readonly Color FolderColor = new Color(0.32f, 0.32f, 0.38f, 1f);
         private static readonly Color FileColor = new Color(0.3f, 0.3f, 0.3f, 1f);
 
         private string _currentDir;
+        private string _startDirectoryOverride;
+        private TextMeshProUGUI _titleLabel;
         private TextMeshProUGUI _pathLabel;
         private RectTransform _listContent;
+        private string _fileExtensionFilter = "*.json";
 
         private void Awake()
         {
@@ -60,7 +71,7 @@ namespace TmgBoard
             layout.childControlHeight = true;
             layout.childForceExpandHeight = false;
 
-            CreateLabel(panelGo.transform, "로스터 JSON 선택", 18f, 24f);
+            _titleLabel = CreateLabel(panelGo.transform, "로스터 JSON 선택", 18f, 24f);
 
             var pathRow = new GameObject("PathRow", typeof(RectTransform));
             pathRow.transform.SetParent(panelGo.transform, false);
@@ -121,10 +132,30 @@ namespace TmgBoard
 
         public void Open()
         {
-            _currentDir = ResolveInitialDirectory();
+            _currentDir = _startDirectoryOverride ?? ResolveInitialDirectory();
             RefreshList();
             gameObject.SetActive(true);
             transform.SetAsLastSibling();
+        }
+
+        /// <summary>이 브라우저는 "폴더 오가며 *.json 하나 고르기"라는 동작
+        /// 자체는 로스터든 미션 프리셋이든 완전히 동일해서, 인스턴스를
+        /// 재사용할 수 있게 제목/확장자만 바꿔 여는 오버로드를 추가했다
+        /// (사용자 요청 — 미션 프리셋 불러오기도 같은 파일 브라우저 UX).</summary>
+        public void Open(string title, string fileExtensionFilter = "*.json")
+        {
+            _titleLabel.text = title;
+            _fileExtensionFilter = fileExtensionFilter;
+            Open();
+        }
+
+        /// <summary>기본 시작 폴더(Document/) 대신 여기서 열게 한다 — 미션
+        /// 프리셋은 로스터와 다른 폴더(Deployments/)를 쓰므로 필요할 때마다
+        /// (Open 직전에) 새로 계산해서 넣어준다. null로 되돌리면 기본값으로
+        /// 복귀한다.</summary>
+        public void SetStartDirectory(string directory)
+        {
+            _startDirectoryOverride = directory;
         }
 
         public void Close()
@@ -132,22 +163,43 @@ namespace TmgBoard
             gameObject.SetActive(false);
         }
 
-        private static string ResolveInitialDirectory()
+        /// <summary>저장소의 Document/ 폴더를 찾는다 — 로스터 JSON도, 미션
+        /// 프리셋(MissionSetupController)도 여기서 열고 저장한다. Unity
+        /// 프로젝트가 저장소 루트 자체로 승격되기 전에는 "Assets ->
+        /// StarcraftTMG Simulator -> UnityProject -> 저장소 루트"로 3단계
+        /// 위였는데(2026-08-28 리포 재구성으로 그 중첩이 사라졌다), 이 경로
+        /// 계산이 같이 갱신되지 않아서 계속 3단계 위(Assets 폴더 자신 근처
+        /// 엉뚱한 곳)를 가리키고 있었다 — Directory.Exists가 실패하니 매번
+        /// 조용히 Application.dataPath(Assets 폴더)로 폴백해왔던 것. 지금은
+        /// Assets 바로 한 단계 위가 저장소 루트이므로 그게 맞다. 혹시 모를
+        /// 예전 중첩 구조(리포를 되돌렸다거나) 대비로 3단계 위도 한 번 더
+        /// 확인해본다.
+        public static string ResolveDocumentDirectory()
         {
-            // Assets -> StarcraftTMG Simulator -> UnityProject -> 저장소 루트 -> Document
-            try
+            foreach (var upLevels in new[] { new[] { ".." }, new[] { "..", "..", ".." } })
             {
-                string candidate = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "..", "Document"));
-                if (Directory.Exists(candidate))
+                try
                 {
-                    return candidate;
+                    var parts = new List<string> { Application.dataPath };
+                    parts.AddRange(upLevels);
+                    parts.Add("Document");
+                    string candidate = Path.GetFullPath(Path.Combine(parts.ToArray()));
+                    if (Directory.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+                catch (Exception)
+                {
+                    // 다음 후보로 넘어간다.
                 }
             }
-            catch (Exception)
-            {
-                // 아래 대체 경로로 넘어간다.
-            }
             return Application.dataPath;
+        }
+
+        private static string ResolveInitialDirectory()
+        {
+            return ResolveDocumentDirectory();
         }
 
         private void GoUp()
@@ -170,6 +222,11 @@ namespace TmgBoard
         private void RefreshList()
         {
             _pathLabel.text = _currentDir;
+            // 폴더를 옮기면 지금 목록의 항목들이 통째로 파괴되는데, 마우스가
+            // 그 위에 있던 채로 파괴되면 OnPointerExit이 안 불릴 수 있다 —
+            // 미리보기가 존재하지 않는 파일을 계속 가리키는 걸 막기 위해
+            // 여기서 미리 확실히 지워둔다.
+            FileHighlightCleared?.Invoke();
 
             for (int i = _listContent.childCount - 1; i >= 0; i--)
             {
@@ -189,7 +246,7 @@ namespace TmgBoard
             }
             try
             {
-                files = Directory.GetFiles(_currentDir, "*.json");
+                files = Directory.GetFiles(_currentDir, _fileExtensionFilter);
                 Array.Sort(files, StringComparer.OrdinalIgnoreCase);
             }
             catch (Exception)
@@ -213,7 +270,7 @@ namespace TmgBoard
                 {
                     Close();
                     FileSelected?.Invoke(capturedFile);
-                });
+                }, capturedFile);
             }
 
             if (dirs.Length == 0 && files.Length == 0)
@@ -222,7 +279,7 @@ namespace TmgBoard
             }
         }
 
-        private void CreateEntry(string label, Color color, UnityEngine.Events.UnityAction onClick)
+        private void CreateEntry(string label, Color color, UnityEngine.Events.UnityAction onClick, string hoverFilePath = null)
         {
             var go = new GameObject($"Entry_{label}", typeof(RectTransform));
             go.transform.SetParent(_listContent, false);
@@ -232,6 +289,13 @@ namespace TmgBoard
             img.color = color;
             var btn = go.AddComponent<Button>();
             btn.onClick.AddListener(onClick);
+
+            if (hoverFilePath != null)
+            {
+                var hover = go.AddComponent<EntryHoverHandler>();
+                hover.OnEnter = () => FileHighlighted?.Invoke(hoverFilePath);
+                hover.OnExit = () => FileHighlightCleared?.Invoke();
+            }
 
             var labelGo = new GameObject("Label", typeof(RectTransform));
             labelGo.transform.SetParent(go.transform, false);
@@ -304,6 +368,22 @@ namespace TmgBoard
             public void OnPointerDown(PointerEventData eventData)
             {
                 eventData.Use();
+            }
+        }
+
+        private class EntryHoverHandler : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
+        {
+            public Action OnEnter;
+            public Action OnExit;
+
+            public void OnPointerEnter(PointerEventData eventData)
+            {
+                OnEnter?.Invoke();
+            }
+
+            public void OnPointerExit(PointerEventData eventData)
+            {
+                OnExit?.Invoke();
             }
         }
     }
