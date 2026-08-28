@@ -44,6 +44,11 @@ namespace TmgBoard
         private const float FollowerSnapThresholdMm = 6f;
         private const float RayOriginOffsetMm = 1f; // 배치 밴드 경계 위 점에서 반직선을 쏠 때, 자기 자신이 속한 변과의 자기교차(t≈0) 방지
 
+        // ── 전열/지원열 하이라이팅 ───────────────────────────────────────
+        private const float EngageDistanceMm = GameConstants.MmPerInch; // 인게이지 거리(1")
+        private const float BaseContactThresholdMm = 2f; // "베이스 접촉" 판정 여유(완전히 0이 아니라 살짝 여유를 둠)
+        private readonly HashSet<Base> _combatRowHighlighted = new HashSet<Base>();
+
         // ── 화면 이동/확대축소(패닝/줌) ─────────────────────────────────
         // mapArea가 baseLayer/guideline/memoOverlay를 감싸고, 이 하나의
         // 트랜스폼(localScale/anchoredPosition)만 조작해서 지도 전체를

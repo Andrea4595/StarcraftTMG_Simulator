@@ -26,6 +26,9 @@ namespace TmgBoard
         private static readonly Color OutlineColor = new Color(0.05f, 0.05f, 0.05f, 0.9f);
         private static readonly Color DisplacementOutlineColor = new Color(0.2f, 0.9f, 0.9f, 0.95f);
         private static readonly Color HighlightOutlineColor = new Color(1f, 0.92f, 0.25f, 1f);
+        private static readonly Color CombatRowOutlineColor = new Color(1f, 0.45f, 0.05f, 1f);
+        private const float CombatRowFrontOutlineWidth = 5f;
+        private const float CombatRowSupportOutlineWidth = 3f;
 
         public Unit Unit;
         public string Memo = "";
@@ -104,6 +107,31 @@ namespace TmgBoard
                     return;
                 }
                 _highlighted = value;
+                SetVerticesDirty();
+            }
+        }
+
+        /// <summary>전열(적 인게이지 거리 1" 이내)/지원열(같은 유닛의 전열
+        /// 모델과 베이스 접촉) 표시 — 마우스가 올라간 유닛과, 그 유닛과
+        /// 실제로 인게이지된 적 유닛들의 모델에만 붙는다(BoardManager.Memo.cs
+        /// UpdateCombatRowHighlight가 호버 중 매 프레임 갱신). 룰북 8.8절.
+        /// 전열/지원열 둘 다 같은 색(주황), 테두리 두께만 다르다(사용자
+        /// 요청) — Highlighted(노란색, 유닛 전체 호버 표시)와는 다른 색이라
+        /// 둘 다 켜져 있어도 구분된다.</summary>
+        public enum CombatRow { None, Front, Support }
+
+        private CombatRow _combatRow = CombatRow.None;
+
+        public CombatRow CombatRowState
+        {
+            get => _combatRow;
+            set
+            {
+                if (_combatRow == value)
+                {
+                    return;
+                }
+                _combatRow = value;
                 SetVerticesDirty();
             }
         }
@@ -239,6 +267,12 @@ namespace TmgBoard
             {
                 outlineColor = HighlightOutlineColor;
                 outlineWidth = Mathf.Max(outlineWidth, 3f);
+            }
+
+            if (_combatRow != CombatRow.None)
+            {
+                outlineColor = CombatRowOutlineColor;
+                outlineWidth = _combatRow == CombatRow.Front ? CombatRowFrontOutlineWidth : CombatRowSupportOutlineWidth;
             }
 
             if (_coherencyWarning)

@@ -526,6 +526,31 @@ namespace TmgBoard
             return center + Rotate(localPoint, rot);
         }
 
+        /// <summary>두 타원 테두리 사이의 최소 거리(음수면 겹침이 아니라 그냥
+        /// 0으로 취급 — 이 함수는 인게이지/베이스접촉 판정용이라 겹치는 경우
+        /// 자체는 이미 다른 충돌 로직이 막는다). 한쪽 타원의 64각형 근사
+        /// 정점마다 반대쪽 타원의 진짜(부드러운) 테두리까지 최근접점을 구해
+        /// 최솟값을 취하는 방식을 양쪽 다 해서 더 정확한 쪽을 쓴다 —
+        /// 인게이지 거리(1")나 베이스접촉(거의 0) 판정 정도의 정밀도면
+        /// 충분하고, 완전 해석적인 타원-타원 거리 계산보다 훨씬 단순하다.</summary>
+        public static float EllipseToEllipseDistance(Vector2 centerA, Vector2 sizeMmA, float rotA, Vector2 centerB, Vector2 sizeMmB, float rotB)
+        {
+            float best = float.MaxValue;
+            var polyA = EllipsePolygonAt(centerA, sizeMmA, rotA);
+            foreach (var p in polyA)
+            {
+                var closest = ClosestPointOnEllipseWorld(centerB, sizeMmB, rotB, p);
+                best = Mathf.Min(best, Vector2.Distance(p, closest));
+            }
+            var polyB = EllipsePolygonAt(centerB, sizeMmB, rotB);
+            foreach (var p in polyB)
+            {
+                var closest = ClosestPointOnEllipseWorld(centerA, sizeMmA, rotA, p);
+                best = Mathf.Min(best, Vector2.Distance(p, closest));
+            }
+            return Mathf.Max(best, 0f);
+        }
+
         /// <summary>point에서 가장 가까운, polylines(각각 이어진 점들의 배열 —
         /// 닫힌 폴리곤이면 마지막 점이 첫 점과 같은 값으로 이미 중복되어 있다고
         /// 가정) 위의 점과, 그 지점이 속한 변의 정확한 안쪽 법선(수직) 단위
