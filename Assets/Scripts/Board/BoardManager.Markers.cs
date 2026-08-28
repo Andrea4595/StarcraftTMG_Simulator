@@ -67,6 +67,7 @@ namespace TmgBoard
             }
 
             CreateScreenshotButton(barRect);
+            CreateFitButton(barRect);
         }
 
         private void CreateScreenshotButton(Transform parent)
@@ -86,6 +87,30 @@ namespace TmgBoard
             var btn = go.AddComponent<Button>();
             btn.targetGraphic = img;
             btn.onClick.AddListener(TakeScreenshot);
+        }
+
+        /// <summary>스크린샷 버튼 바로 왼쪽 — 조작(팬/줌 상태)에 그대로 남는
+        /// "지도 화면에 맞추기"(FitMapToView, BoardManager.PanZoom.cs). 예전
+        /// 스크린샷이 찍기 직전에만 잠깐 적용하고 되돌리던 뷰를, 사용자
+        /// 요청으로 일반 조작 버튼 하나로 분리한 것 — "고정"이 아니라 한 번
+        /// 위치를 잡아줄 뿐이라 그 뒤엔 평소처럼 팬/줌할 수 있다.</summary>
+        private void CreateFitButton(Transform parent)
+        {
+            var go = new GameObject("FitButton", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(1f, 0.5f);
+            rect.anchorMax = new Vector2(1f, 0.5f);
+            rect.pivot = new Vector2(1f, 0.5f);
+            rect.anchoredPosition = new Vector2(-10f - (MarkerBarHeight - 8f) - 6f, 0f);
+            rect.sizeDelta = new Vector2(MarkerBarHeight - 8f, MarkerBarHeight - 8f);
+
+            var img = go.AddComponent<RawImage>();
+            img.texture = Resources.Load<Texture2D>("UI/FitButton");
+
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(FitMapToView);
         }
 
         private void CreateMarkerBarButton(Transform parent, string kind, Texture2D icon)

@@ -73,6 +73,52 @@ namespace TmgBoard
             mapArea.anchoredPosition = mouseLocal - mapPoint * newScale;
         }
 
+        // "지도가 화면에 다 보이게 맞추기" 버튼(FitButton, 마커바)이 캡처
+        // 직전 스크린샷 전용 뷰로 잠깐 바꿨다가 되돌리던 걸 대체한다 — 사용자
+        // 요청으로 "고정"이 아니라 그냥 한 번 위치/배율을 잡아주는 일반
+        // 조작으로 바뀌었다(BoardManager.Screenshot.cs 참고, 이제 스크린샷은
+        // 현재 보이는 그대로만 찍는다). 위아래 공백을 이만큼 두고, 상단
+        // 바(스코어보드)/하단 바(마커바) 사이 구간의 중앙에 높이 기준으로
+        // 꽉 채운다.
+        private const float FitViewMarginPx = 60f;
+
+        /// <summary>지도 폭이 화면을 넘치든 말든 상관없이, 지도 높이가 상단
+        /// 바(스코어보드)와 하단 바(마커바) 사이 구간에 FitViewMarginPx만큼
+        /// 여백을 두고 그 구간 중앙을 채우도록 mapArea의 스케일/위치를 맞춘다.
+        /// 두 바는 지도 위에 그대로 겹쳐 그려지므로(공간을 밀어내지 않음)
+        /// 화면 전체 높이를 기준으로 중앙 정렬하면 안 되고, 이 둘을 뺀
+        /// "실제로 보이는" 구간을 기준으로 잡아야 한다. 36x36"(정사각형)과
+        /// 54x36"(가로가 긴) 둘 다 이 규칙 하나로 동일하게 처리된다. 평소의
+        /// 줌 범위(MinZoom~MaxZoom)와 무관하게 필요한 배율을 그대로 쓰되,
+        /// 이후 스크롤 줌이 여기서부터 자연스럽게 이어지도록 _zoomLevel도
+        /// 그 배율에 맞춰 갱신한다(ZoomAt이 _baseScaleFactor*_zoomLevel로
+        /// localScale을 다시 계산하므로, 안 맞추면 다음 스크롤 때 이 뷰가
+        /// 사라지고 예전 줌으로 순간이동해버린다).</summary>
+        private void FitMapToView()
+        {
+            if (mapArea == null)
+            {
+                return;
+            }
+            var parent = mapArea.parent as RectTransform;
+            Vector2 avail = parent != null ? parent.rect.size : new Vector2(Screen.width, Screen.height);
+
+            float usableHeight = avail.y - GameConstants.ScoreboardHeight - MarkerBarHeight;
+            float fitScale = Mathf.Max(usableHeight - FitViewMarginPx * 2f, 1f) / mapSizeMm.y;
+            mapArea.localScale = new Vector3(fitScale, fitScale, 1f);
+
+            // 화면 정중앙이 아니라 두 바 사이 구간의 중앙으로 피봇을 옮긴다 —
+            // 위 바가 아래 바보다 크면(지금은 84 vs 44) 그만큼 지도를 아래로
+            // 내려야 두 바 사이에서 시각적으로 가운데에 온다.
+            float pivotY = (MarkerBarHeight - GameConstants.ScoreboardHeight) / 2f;
+            mapArea.anchoredPosition = new Vector2(0f, pivotY);
+
+            if (_baseScaleFactor > 0.0001f)
+            {
+                _zoomLevel = fitScale / _baseScaleFactor;
+            }
+        }
+
         /// <summary>가운데 버튼 드래그로 화면 이동, 마우스 휠로 커서 위치 기준
         /// 확대/축소. UI 패널 위에서 시작한 경우는 무시한다.</summary>
         private void HandlePanAndZoom()
