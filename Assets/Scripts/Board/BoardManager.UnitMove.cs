@@ -34,11 +34,21 @@ namespace TmgBoard
                 _unitMoveOriginalPositions[model] = model.Center;
             }
 
-            // 원은 "베이스 테두리로부터 이동거리만큼"을 나타내야 하므로 리딩 모델
-            // 반지름만큼 더해서 그린다. 모델이 하나뿐인 유닛은 코헤런시만큼
-            // 이동력이 늘어난다(팔로워를 코헤런시 안에 배치할 필요가 없으므로).
-            guideline.CenterMm = _unitMoveStartPoint;
-            guideline.RadiusMm = leading.BoundingRadius + EffectiveMoveInch(_unitMoveUnit) * GameConstants.MmPerInch;
+            // "베이스 테두리로부터 이동거리만큼"을 나타내야 하므로, 리딩 모델의
+            // 시작 시점 타원 테두리를 실제 법선 방향으로 밀어낸 곡선을 그린다
+            // (EllipseOffsetPolygonAt — 코헤런시 링과 같은 기법). 원형 베이스일
+            // 때는 이 곡선이 그냥 원과 같아 보이지만, 타원형 베이스는 방향마다
+            // 진짜 테두리로부터의 거리가 달라야 정확하다(사용자 지적 — 예전엔
+            // 이걸 반지름 하나로만 근사한 원을 그렸었다). 모델이 하나뿐인
+            // 유닛은 코헤런시만큼 이동력이 늘어난다(팔로워를 코헤런시 안에
+            // 배치할 필요가 없으므로).
+            float moveMm = EffectiveMoveInch(_unitMoveUnit) * GameConstants.MmPerInch;
+            var boundary = EllipseMath.EllipseOffsetPolygonAt(_unitMoveStartPoint, leading.SizeMm, leading.RotationRadians, moveMm);
+            var closed = new Vector2[boundary.Length + 1];
+            boundary.CopyTo(closed, 0);
+            closed[boundary.Length] = boundary[0];
+            guideline.RadiusMm = 0f;
+            guideline.BandPolylines = new List<Vector2[]> { closed };
             _menuTarget = null;
             UpdateUnitMoveDistanceLabel();
         }
@@ -188,20 +198,24 @@ namespace TmgBoard
             return true;
         }
 
-        private Vector2 ResolveFollowerPosition(Base piece, Vector2 desiredCenter, Vector2 leadingCenter)
+        private Vector2 ResolveFollowerPosition(Base piece, Vector2 desiredCenter)
         {
-            // 코헤런시 경계 근처로 드래그하면 스냅되도록 돕는다 — 리딩·팔로워가
-            // 둘 다 원형일 때만(타원이 끼면 방향/회전에 따라 경계가 계속
-            // 달라져서 스냅이 오히려 어긋나 보인다).
-            bool useSnap = IsCircular(_unitMoveLeading.SizeMm) && IsCircular(piece.SizeMm);
+            // 코헤런시 경계 근처로 드래그하면 스냅되도록 돕는다 — 기본은
+            // 자유배치, Shift를 누르고 있을 때만 스냅된다(사용자 요청).
+            // 리딩 모델 위치를 고정 중심으로 삼는 ClampTowardCenter를 쓴다 —
+            // "가장 가까운 경계 위 점"을 매 프레임 다시 찾는 방식은 desired가
+            // 조금만 움직여도 그 최근접점이 완전히 다른 곳으로 튈 수 있어
+            // 불안정했다(사용자가 실제로 겪은 떨림/진동 버그 두 번, 자세한
+            // 경위는 ClampTowardCenter 및 EllipseMath.MaxRadialDistanceFullyInside
+            // 참고).
+            bool useSnap = SnapEnabled;
             var pos = desiredCenter;
             for (int i = 0; i < EllipseMath.CollisionIterations; i++)
             {
                 var before = pos;
                 if (useSnap)
                 {
-                    float maxCenterDistance = DirectionalMaxFollowerDistance(piece, leadingCenter, pos);
-                    pos = SnapToCoherencyBoundary(pos, leadingCenter, maxCenterDistance);
+                    pos = ClampTowardCenter(pos, _unitMoveLeading.Center, piece.SizeMm, piece.RotationRadians);
                 }
                 pos = ResolvePosition(piece, pos, false);
                 if (Vector2.Distance(pos, before) < 0.01f)
@@ -212,45 +226,130 @@ namespace TmgBoard
             return pos;
         }
 
-        private static bool IsCircular(Vector2 sizeMm)
-        {
-            return Mathf.Approximately(sizeMm.x, sizeMm.y);
-        }
+        /// <summary>Shift를 누르고 있는 동안만 스냅이 켜진다 — 배치/이동/
+        /// 코헤런시 배치 모두 이 값을 공유한다(사용자 요청).</summary>
+        private static bool SnapEnabled => Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
 
-        /// <summary>이 방향으로 팔로워를 얼마나 멀리 놓을 수 있는지 — "팔로워
-        /// 베이스 전체가 리딩 테두리로부터 코헤런시 이내"라는 규칙을 그대로
-        /// 따른다: 팔로워의 바깥쪽 끝(centerDistance + followerEdge)이 리딩의
-        /// 코헤런시 경계(leadingEdge + coherencyMm)를 넘지 않아야 하므로
-        /// centerDistance = leadingEdge + coherencyMm - followerEdge. (두 베이스의
-        /// 마주보는 면 사이 간격이 코헤런시가 되는 지점이 아니라, 노란 경계선
-        /// 자체에 팔로워의 먼 쪽 끝이 닿는 지점 — 더하면 항상 그 경계 바깥으로
-        /// 스냅된다.)</summary>
-        private float DirectionalMaxFollowerDistance(Base follower, Vector2 leadingCenter, Vector2 atPoint)
+        /// <summary>
+        /// 고정된 기준점 center를 두고, desired가 center로부터 너무 멀어지지
+        /// (guideline.BandPolylines 경계를 넘지) 않도록 제한한다 — 코헤런시
+        /// 팔로워(center=리딩 모델 위치)와 리딩 모델의 자유 이동(center=이동
+        /// 시작점) 둘 다 "고정된 한 점 기준으로 이 방향으로 얼마나 멀어질
+        /// 수 있는가"라는 같은 형태의 문제라서 이 함수 하나를 공유한다.
+        ///
+        /// 실제 한계 거리는 EllipseMath.MaxRadialDistanceFullyInside(타원
+        /// 테두리 전체가 경계 안에 완전히 들어가는지 직접 검증하는 이분
+        /// 탐색)가 계산한다 — 예전엔 지지함수로 dir 방향 한 점만 검증했는데,
+        /// 리딩과 팔로워(또는 리딩의 시작 회전과 지금 회전)가 서로 다르게
+        /// 회전돼 있으면 실제로 가장 많이 튀어나오는 방향이 dir이 아닐 수
+        /// 있어서, 그 경우 코헤런시 라인을 실제로 이탈하는 버그가 있었다
+        /// (사용자가 실제로 겪음 — Base.CoherencyWarning용 IsFollowerWithinCoherency
+        /// 는 애초에 테두리 전체를 검사하는 더 엄격한 방식이라 이 문제가
+        /// 없었다). 이분 탐색의 상한은 RayDistanceToPolylines(반직선이 경계에
+        /// 닿는 raw 거리 — 실제 한계는 타원 크기만큼 항상 이보다 작거나 같다)로
+        /// 잡는다. 여기서는 그 위에 Shift/문턱/하드클램프 같은 "이 프로젝트의
+        /// 정책"만 얹는다.
+        ///
+        /// 배치(SnapToGuidelineBoundary)는 이 함수를 못 쓴다 — 배치구역 밴드는
+        /// 뚜렷한 중심점이 없어서(지도 가장자리를 따라 늘어선 모양) "고정
+        /// 기준점에서의 방향"이라는 전제 자체가 성립하지 않는다.
+        ///
+        /// 왜 반직선 방식인가(vs. "가장 가까운 경계 위 점"): 처음엔 팔로워도
+        /// 배치와 같은 ClosestPointOnPolylines 기반으로 짰는데, 그 함수는
+        /// "desired에서 가장 가까운 경계 위 점"을 매번 새로 찾는다 — desired가
+        /// 가만히 있어도 이전 위치 기준 접선 이동으로 매 프레임 값이 바뀌는
+        /// 구조라 대각선 방향에서 두 좌표를 오가며 진동했다(사용자가 실측).
+        /// 이 함수는 그 반대다 — center가 고정이고 dir=Normalize(desired-center)도
+        /// desired만의 함수이므로, desired가 고정이면 결과도 항상 고정된다
+        /// (진동이 구조적으로 불가능).</summary>
+        private Vector2 ClampTowardCenter(Vector2 desired, Vector2 center, Vector2 sizeMm, float rotationRadians)
         {
-            var direction = atPoint - leadingCenter;
-            direction = direction.sqrMagnitude < 0.0001f ? Vector2.right : direction.normalized;
-            float coherencyMm = _unitMoveUnit.CoherencyInch * GameConstants.MmPerInch;
-            float leadingEdge = EllipseMath.EllipseRadiusInDirection(_unitMoveLeading.SizeMm, _unitMoveLeading.RotationRadians, direction);
-            float followerEdge = EllipseMath.EllipseRadiusInDirection(follower.SizeMm, follower.RotationRadians, direction);
-            return leadingEdge + coherencyMm - followerEdge;
-        }
-
-        private static Vector2 SnapToCoherencyBoundary(Vector2 pos, Vector2 leadingCenter, float maxCenterDistance)
-        {
-            var offset = pos - leadingCenter;
-            float dist = offset.magnitude;
-            if (dist > 0.01f)
+            if (guideline.BandPolylines == null || guideline.BandPolylines.Count == 0)
             {
-                if (dist >= maxCenterDistance && dist - maxCenterDistance <= FollowerOutwardSnapThresholdMm)
-                {
-                    pos = leadingCenter + offset.normalized * maxCenterDistance;
-                }
-                else if (dist < maxCenterDistance && maxCenterDistance - dist <= FollowerSnapThresholdMm)
-                {
-                    pos = leadingCenter + offset.normalized * maxCenterDistance;
-                }
+                return desired;
             }
-            return pos;
+            Vector2 offset = desired - center;
+            float dist = offset.magnitude;
+            if (dist < 0.01f)
+            {
+                return desired;
+            }
+            Vector2 dir = offset / dist;
+            float? rayHit = EllipseMath.RayDistanceToPolylines(center, dir, guideline.BandPolylines);
+            if (rayHit == null)
+            {
+                return desired;
+            }
+            float maxDist = EllipseMath.MaxRadialDistanceFullyInside(center, dir, guideline.BandPolylines[0], sizeMm, rotationRadians, rayHit.Value);
+            if (dist <= maxDist)
+            {
+                return maxDist - dist <= FollowerSnapThresholdMm ? center + dir * maxDist : desired;
+            }
+            return center + dir * maxDist;
+        }
+
+        /// <summary>리딩 모델을 드래그하는 동안(배치/이동 공통) Shift를 누르고
+        /// 있으면 가이드라인 경계에 스냅한다. 이동은 고정 중심(이동 시작점)이
+        /// 있으므로 ClampTowardCenter를, 배치는 뚜렷한 중심점이 없으므로
+        /// SnapToGuidelineBoundary(가장 가까운 변 기준)를 쓴다 — 서로 다른
+        /// 기하 구조라 억지로 하나로 합치지 않는다. 기본은(Shift 없이) 완전
+        /// 자유배치(사용자 요청) — 이 밴드/곡선은 참고용일 뿐 원래도
+        /// 강제되지 않았다.</summary>
+        private Vector2 ResolveLeadingDragCenter(Vector2 desired)
+        {
+            if (!SnapEnabled || !_unitMoveActive || _unitMovePhase != "leading")
+            {
+                return desired;
+            }
+            if (_unitMoveIsDeployment)
+            {
+                return SnapToGuidelineBoundary(desired, _unitMoveLeading.SizeMm, _unitMoveLeading.RotationRadians);
+            }
+            return ClampTowardCenter(desired, _unitMoveStartPoint, _unitMoveLeading.SizeMm, _unitMoveLeading.RotationRadians);
+        }
+
+        /// <summary>guideline.BandPolylines 경계 근처에서 (sizeMm/rotationRadians로
+        /// 주어진) 타원의 테두리를 선에 붙여주고, 경계 밖으로는 아예 못 나가게
+        /// 막는다 — 뚜렷한 고정 중심점이 없는 경우 전용(배치구역 밴드). 리딩
+        /// 모델을 실제로 드래그하는 중(위 ResolveLeadingDragCenter의 배치
+        /// 분기)과, 아직 클릭 전 고스트 미리보기가 마우스를 따라다니는 중
+        /// (HandlePendingDeploymentInput) 둘 다에서 공유해서 쓴다(사용자 요청
+        /// — 미리보기 단계에서도 가이드라인처럼 스냅/차단이 보여야 자연스럽다).
+        ///
+        /// EllipseMath.ClosestPointOnPolylines가 돌려주는 closest/inward(그
+        /// 변의 정확한 안쪽 법선)를 이용해, 그 법선이 나타내는 직선에 이
+        /// 타원이 닿으려면 중심이 최소 얼마나 떨어져야 하는지(EllipseSupportInDirection
+        /// — 지지함수. 회전된 타원이 대각선으로 다가올 땐 반직선 거리보다
+        /// 항상 크거나 같다)를 radius로 삼는다.
+        /// desired의 부호 있는 거리(signedDist = Dot(desired-closest, inward),
+        /// 안쪽이면 양수)가 radius 이상이면(테두리가 아직 선 안쪽) 충분히
+        /// 여유로울 땐 그대로 자유배치, 선에 문턱 이내로 가까워지면 착 붙도록
+        /// 스냅한다. signedDist가 radius 미만이면(테두리가 이미 선에 닿았거나
+        /// 넘어감) — 사용자 요청대로 스냅 문턱과 무관하게 무조건 딱 그
+        /// 경계(closest + inward*radius)로 눌러붙인다(하드 클램프). 배치는
+        /// 클릭 한 번짜리 짧은 상호작용이라 팔로워처럼 "desired가 가만히
+        /// 있어도 진동" 문제가 실제로 보고되진 않았다 — 문제가 생기면 이
+        /// 함수도 ClampTowardCenter 계열로 옮기는 걸 고려. SnapEnabled 자체도
+        /// 여기서 다시 확인한다 — 호출부(미리보기)는 Shift 여부를 미리 안
+        /// 걸러주므로.</summary>
+        private Vector2 SnapToGuidelineBoundary(Vector2 desired, Vector2 sizeMm, float rotationRadians)
+        {
+            if (!SnapEnabled || guideline.BandPolylines == null || guideline.BandPolylines.Count == 0)
+            {
+                return desired;
+            }
+            var closest = EllipseMath.ClosestPointOnPolylines(desired, guideline.BandPolylines, out Vector2 inward, out _);
+            if (inward == Vector2.zero)
+            {
+                return desired;
+            }
+            float radius = EllipseMath.EllipseSupportInDirection(sizeMm, rotationRadians, inward);
+            float signedDist = Vector2.Dot(desired - closest, inward);
+            if (signedDist >= radius)
+            {
+                return signedDist - radius <= FollowerSnapThresholdMm ? closest + inward * radius : desired;
+            }
+            return closest + inward * radius;
         }
 
         private void OnUnitMoveCompletePressed()

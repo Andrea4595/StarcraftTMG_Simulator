@@ -42,7 +42,6 @@ namespace TmgBoard
         private const float FollowerRingFraction = 0.7f;
         private const float CoherencyEpsilonMm = 0.5f; // 경계에 스냅됐을 때 부동소수점 오차로 오탐지되는 것 방지
         private const float FollowerSnapThresholdMm = 6f;
-        private const float FollowerOutwardSnapThresholdMm = 40f; // 경계 밖으로는 훨씬 강하게 붙잡아둔다
 
         // ── 화면 이동/확대축소(패닝/줌) ─────────────────────────────────
         // mapArea가 baseLayer/guideline/memoOverlay를 감싸고, 이 하나의
@@ -332,6 +331,10 @@ namespace TmgBoard
                 if (TryGetLocalMouse(out var local))
                 {
                     var desired = local + _dragOffset;
+                    if (_unitMoveActive && _unitMovePhase == "leading" && _draggingPiece == _unitMoveLeading)
+                    {
+                        desired = ResolveLeadingDragCenter(desired);
+                    }
                     // 모델 메뉴얼 이동/리딩 모델 이동: 변위 베이스는 통과할 수 있다.
                     _draggingPiece.Center = ResolvePosition(_draggingPiece, desired, true);
                     UpdateUnitMoveDistanceLabel();
@@ -349,7 +352,7 @@ namespace TmgBoard
                 if (TryGetLocalMouse(out var local))
                 {
                     var desired = local + _dragOffset;
-                    _draggingFollower.Center = ResolveFollowerPosition(_draggingFollower, desired, _unitMoveLeading.Center);
+                    _draggingFollower.Center = ResolveFollowerPosition(_draggingFollower, desired);
                     UpdateUnitMoveWarning();
                 }
                 return;

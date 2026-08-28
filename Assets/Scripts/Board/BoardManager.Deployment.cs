@@ -508,7 +508,15 @@ namespace TmgBoard
 
             if (TryGetLocalMouse(out var mouseLocal))
             {
-                UpdatePlacementPreviewPosition(mouseLocal);
+                // 클릭 전 고스트 미리보기 단계에서도 Shift를 누르면 밴드
+                // 경계에 스냅되어야 한다 — 가이드라인을 보여주며 마우스를
+                // 따라다니는 고스트가 실제 배치 결과를 미리 보여주는 것이므로,
+                // 실제 클릭(BeginDeploymentDrag)에서만 스냅되면 미리보기와
+                // 실제 배치 위치가 어긋나 보인다(사용자 지적). 고스트의 현재
+                // 회전(휠로 돌렸을 수 있다 — HandlePanAndZoom 참고)을 그대로
+                // 스냅 계산에 반영한다.
+                float previewRotation = _placementPreview != null ? _placementPreview.RotationRadians : 0f;
+                UpdatePlacementPreviewPosition(SnapToGuidelineBoundary(mouseLocal, _pendingDeploymentDef.SizeMm, previewRotation));
             }
         }
 

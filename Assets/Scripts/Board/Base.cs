@@ -106,6 +106,17 @@ namespace TmgBoard
 
         public float BoundingRadius => EllipseMath.BoundingRadius(sizeMm);
 
+        private const float RotateStepDeg = 22.5f;
+
+        /// <summary>드래그로 옮기는 동안 휠을 굴리면 호출된다 — MissionSetup의
+        /// TerrainPiece.RotateStep과 같은 22.5° 단위(원형 베이스는 시각적으로
+        /// 차이가 없지만, 타원형 베이스는 방향이 실제 판정(코헤런시/이동거리/
+        /// 배치 밴드 스냅)에 영향을 준다).</summary>
+        public void RotateStep(int direction = 1)
+        {
+            RotationDegrees = Mathf.Repeat(RotationDegrees + RotateStepDeg * direction, 360f);
+        }
+
         protected override void Awake()
         {
             base.Awake();

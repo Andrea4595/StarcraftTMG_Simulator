@@ -146,8 +146,16 @@ namespace TmgBoard
         /// 처리한다(변위 베이스 밀어내기 포함).</summary>
         private void BeginDeploymentDrag(Vector2 clickPoint)
         {
+            // 고스트 미리보기 단계에서 휠로 돌려놨을 수 있는 회전을 실제
+            // 리딩 모델로 이어받는다 — 지우기 전에 먼저 읽어둔다.
+            float previewRotation = _placementPreview != null ? _placementPreview.RotationDegrees : 0f;
             ClearPlacementPreview();
-            ClearDeploymentBand();
+            // 배치구역 밴드(guideline.BandPolylines)는 여기서 지우지 않는다 —
+            // Shift 스냅(ResolveLeadingDragCenter)이 리딩 모델을 드래그하는
+            // 동안 이 밴드 경계를 계속 참조해야 한다. 팔로워 단계로 넘어가면
+            // UpdateUnitMoveGuideline()이 코헤런시 링으로 자연히 덮어쓰고,
+            // 이동이 완전히 끝나면 EndUnitMove()의 guideline.ClearBand()가
+            // 정리한다.
 
             var def = _pendingDeploymentDef;
             _pendingDeploymentDef = null;
@@ -163,6 +171,7 @@ namespace TmgBoard
             unit.SupplyTiers.AddRange(def.SupplyTiers);
 
             var leading = CreatePieceObject(unit, def.SizeMm, def.FillColor, def.IsDisplacement);
+            leading.RotationDegrees = previewRotation;
             // "유닛 되돌리기"로 되돌아온 유닛은 데미지 기록을 유지한 채 재배치된다.
             if (def.Damages.Count > 0)
             {
@@ -193,7 +202,16 @@ namespace TmgBoard
             // 배치구역/이동거리 밴드는 참고용으로만 보여주고, 실제 배치 위치는
             // 자유롭게 아무 데나 놓을 수 있다 — 충돌 회피와 지도 경계만 지킨다.
             // 리딩 모델 이동이므로 변위 베이스는 통과할 수 있다.
-            leading.Center = ResolvePosition(leading, clickPoint, true);
+            //
+            // 배치는 "누른 채로 드래그"가 아니라 클릭 한 번으로 끝나는 경우가
+            // 많다 — 마우스를 바로 떼면 Update()의 _draggingPiece 드래그-갱신
+            // 블록(스냅 계산이 있는 곳)이 GetMouseButtonUp 체크에 걸려 한 번도
+            // 실행되지 못한 채 EndPieceDrag()로 바로 넘어간다. 그래서 Shift
+            // 스냅은 여기, 최초 배치 지점에도 똑같이 적용해야 한다 — 위의
+            // _unitMoveActive/_unitMoveIsDeployment/_unitMoveLeading/_unitMovePhase가
+            // 이미 다 설정된 뒤라 ResolveLeadingDragCenter가 정상 동작한다.
+            var initialCenter = ResolveLeadingDragCenter(clickPoint);
+            leading.Center = ResolvePosition(leading, initialCenter, true);
             leading.Refresh();
 
             _draggingPiece = leading;

@@ -109,10 +109,27 @@ namespace TmgBoard
             }
 
             float scroll = Input.mouseScrollDelta.y;
-            if (!Mathf.Approximately(scroll, 0f) && !IsPointerOverUi())
+            if (!Mathf.Approximately(scroll, 0f))
             {
-                float factor = scroll > 0f ? ZoomStep : 1f / ZoomStep;
-                ZoomAt(Input.mousePosition, factor);
+                // 베이스를 드래그하는 중(리딩 모델 이동/배치, 팔로워 재배치)
+                // 이거나 배치 고스트가 마우스를 따라다니는 중이면, 휠은 줌
+                // 대신 그 조각의 회전에 쓴다 — 타원형 베이스는 방향이 실제
+                // 판정에 영향을 주므로, 옮기는 동안 바로 돌려볼 수 있어야
+                // 한다(사용자 요청). 이 분기는 일부러 !IsPointerOverUi() 밖에
+                // 둔다 — 드래그 중인 베이스 자체가 레이캐스트 가능한 UI
+                // 요소라서, 마우스가 그 위에 있으면(드래그 중엔 거의 항상)
+                // IsPointerOverUi()가 true가 돼 회전 자체가 막혀버렸었다
+                // (실제로 한 번도 작동하지 않았던 버그).
+                var rotateTarget = _draggingPiece != null ? _draggingPiece : (_draggingFollower != null ? _draggingFollower : _placementPreview);
+                if (rotateTarget != null)
+                {
+                    rotateTarget.RotateStep(scroll > 0f ? 1 : -1);
+                }
+                else if (!IsPointerOverUi())
+                {
+                    float factor = scroll > 0f ? ZoomStep : 1f / ZoomStep;
+                    ZoomAt(Input.mousePosition, factor);
+                }
             }
 
             Vector2 avail = parent.rect.size;

@@ -86,6 +86,30 @@ namespace TmgBoard
             return 1f / denom;
         }
 
+        /// <summary>
+        /// (회전된) 타원의 중심에서, 법선이 worldDir인 직선에 접하는 지점까지의
+        /// 거리(지지함수/support function) — "이 타원이 worldDir 방향의 직선을
+        /// 넘지 않으려면 중심이 그 선에서 최소 얼마나 떨어져야 하는가"에 대한
+        /// 정확한 답. EllipseRadiusInDirection(중심에서 worldDir 방향으로 그은
+        /// 반직선이 타원 테두리와 만나는 점까지의 거리)과는 다른 값이다 — 두
+        /// 함수는 worldDir이 타원의 주축(장축/단축)과 정확히 일치할 때만 같고,
+        /// 그 사이 각도에서는 지지함수가 항상 더 크다(반직선 위의 점에서의
+        /// 접선은 일반적으로 worldDir에 수직이 아니기 때문). 직선 경계(배치
+        /// 밴드/이동거리 곡선)에 스냅/클램프할 땐 반드시 이 함수를 써야
+        /// 한다 — 반직선 거리를 쓰면 회전된 타원이 대각선 방향에서 실제보다
+        /// 짧게 잡혀 경계 밖으로 살짝 튀어나간다(첫 시도에서 확인된 버그).
+        /// 공식: 타원 로컬 좌표계에서 방향 (dx,dy)(단위벡터)의 지지함수는
+        /// sqrt((rx*dx)² + (ry*dy)²) — a·cosθ+b·sinθ의 최댓값이 sqrt(a²+b²)라는
+        /// 항등식에서 바로 나온다.
+        /// </summary>
+        public static float EllipseSupportInDirection(Vector2 sizeMm, float rot, Vector2 worldDir)
+        {
+            float rx = sizeMm.x / 2f;
+            float ry = sizeMm.y / 2f;
+            var localDir = Rotate(worldDir, -rot).normalized;
+            return Mathf.Sqrt(Mathf.Pow(rx * localDir.x, 2f) + Mathf.Pow(ry * localDir.y, 2f));
+        }
+
         public static bool PointInConvexPolygon(Vector2 point, Vector2[] polygon)
         {
             float signRef = 0f;
@@ -457,6 +481,147 @@ namespace TmgBoard
             Vector2 localTarget = Rotate(target - center, -rot);
             Vector2 localPoint = ClosestPointOnEllipseLocal(localTarget, sizeMm.x / 2f, sizeMm.y / 2f);
             return center + Rotate(localPoint, rot);
+        }
+
+        /// <summary>point에서 가장 가까운, polylines(각각 이어진 점들의 배열 —
+        /// 닫힌 폴리곤이면 마지막 점이 첫 점과 같은 값으로 이미 중복되어 있다고
+        /// 가정) 위의 점과, 그 지점이 속한 변의 정확한 안쪽 법선(수직) 단위
+        /// 벡터를 함께 찾는다. 감김 방향(CW/CCW)에 무관하게 동작한다 — 부호
+        /// 있는 넓이로 바깥쪽 법선을 구하는 TryClipSegmentToConvexPolygon과
+        /// 같은 기법(SignedArea)을 재사용하고, 안쪽은 그 반대 방향이다. (첫
+        /// 시도는 "폴리곤 중심 방향"으로 근사했는데, 직선 변에서도 위치에
+        /// 따라 그 방향이 진짜 법선에서 벗어나 스냅 결과가 선을 넘나드는
+        /// 문제가 있었다 — 변마다 정확한 법선을 써야 직선 구간 어디서든
+        /// 일관되게 정확히 radius만큼 떨어진 지점에 스냅된다.) 모든 폴리라인의
+        /// 모든 변을 순회해 최근접 세그먼트를 찾는 단순한 방식.</summary>
+        public static Vector2 ClosestPointOnPolylines(Vector2 point, List<Vector2[]> polylines, out Vector2 inwardDirection, out float distance)
+        {
+            Vector2 best = point;
+            Vector2 bestInward = Vector2.zero;
+            float bestDistSq = float.MaxValue;
+            foreach (var polyline in polylines)
+            {
+                float windingSign = SignedArea(polyline) >= 0f ? 1f : -1f;
+                for (int i = 0; i < polyline.Length - 1; i++)
+                {
+                    Vector2 a = polyline[i];
+                    Vector2 b = polyline[i + 1];
+                    Vector2 edge = b - a;
+                    float lenSq = edge.sqrMagnitude;
+                    float t = lenSq > 0.0001f ? Mathf.Clamp01(Vector2.Dot(point - a, edge) / lenSq) : 0f;
+                    Vector2 candidate = a + edge * t;
+                    float distSq = (candidate - point).sqrMagnitude;
+                    if (distSq < bestDistSq)
+                    {
+                        bestDistSq = distSq;
+                        best = candidate;
+                        Vector2 outwardNormal = new Vector2(edge.y, -edge.x) * windingSign;
+                        bestInward = outwardNormal.sqrMagnitude > 0.0001f ? -outwardNormal.normalized : Vector2.zero;
+                    }
+                }
+            }
+            distance = Mathf.Sqrt(bestDistSq);
+            inwardDirection = bestInward;
+            return best;
+        }
+
+        /// <summary>반직선(origin에서 dir 방향)이 세그먼트(a→b)와 만나는 지점의
+        /// t(≥0, origin으로부터의 거리)를 구한다. 표준 2D 반직선-선분 교차
+        /// (연립방정식 origin+t·dir = a+s·(b-a)를 크라메르 공식으로 풂, s는
+        /// [0,1] 안에 있어야 함).</summary>
+        public static bool TryRaySegmentIntersect(Vector2 origin, Vector2 dir, Vector2 a, Vector2 b, out float t)
+        {
+            t = 0f;
+            Vector2 e = b - a;
+            float det = -dir.x * e.y + e.x * dir.y;
+            if (Mathf.Abs(det) < 1e-8f)
+            {
+                return false;
+            }
+            Vector2 ap = a - origin;
+            float tt = (-ap.x * e.y + e.x * ap.y) / det;
+            float s = (dir.x * ap.y - ap.x * dir.y) / det;
+            if (tt < 0f || s < 0f || s > 1f)
+            {
+                return false;
+            }
+            t = tt;
+            return true;
+        }
+
+        /// <summary>origin에서 dir 방향 반직선이 polylines의 어느 변과든 처음
+        /// 만나는 지점까지의 거리 — 아무 것도 안 만나면 null.</summary>
+        public static float? RayDistanceToPolylines(Vector2 origin, Vector2 dir, List<Vector2[]> polylines)
+        {
+            float? best = null;
+            foreach (var polyline in polylines)
+            {
+                for (int i = 0; i < polyline.Length - 1; i++)
+                {
+                    if (TryRaySegmentIntersect(origin, dir, polyline[i], polyline[i + 1], out float t) && (best == null || t < best.Value))
+                    {
+                        best = t;
+                    }
+                }
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// center를 고정 기준점 삼아 "그 방향(dir)으로 (sizeMm/rot로 주어진)
+        /// 타원의 중심이 최대 얼마나 멀어질 수 있는가"(그 타원의 테두리가
+        /// boundaryPolygon을 넘지 않는 한도)를 구하되, 지지함수 한 방향만
+        /// 보는 대신 훨씬 엄격하게 검증한다 — 이 타원이 (기준이 된 다른
+        /// 타원, 예컨대 리딩 모델과) 다르게 회전돼 있으면 실제로 가장 많이
+        /// 튀어나오는 방향이 dir이 아닐 수 있어서, 지지함수만으로는 통과
+        /// 시켜도 실제로는 다른 방향의 테두리가 경계를 넘어가는 버그가
+        /// 있었다(사용자가 실제로 겪음). 대신 후보 위치마다 타원 테두리
+        /// 64점 전부가 boundaryPolygon 안에 있는지(PointInConvexPolygon,
+        /// IsFollowerWithinCoherency가 쓰는 것과 같은 검증)를 직접 확인하며
+        /// 이분 탐색으로 한계 지점을 찾는다 — "테두리 한 점"이 아니라 "타원
+        /// 전체가 완전히 안에 들어가는" 조건을 정확히 만족시킨다.
+        /// boundaryPolygon 하나만 받는다(이동/코헤런시는 리딩 모델 하나의
+        /// 오프셋 곡선뿐이라 폴리곤이 항상 하나 — 배치처럼 구역 여러 개인
+        /// 경우엔 이 함수를 쓰지 않는다).
+        /// </summary>
+        public static float MaxRadialDistanceFullyInside(Vector2 center, Vector2 dir, Vector2[] boundaryPolygon, Vector2 sizeMm, float rot, float upperBound, int iterations = 18)
+        {
+            bool FullyInside(float t)
+            {
+                var poly = EllipsePolygonAt(center + dir * t, sizeMm, rot);
+                foreach (var p in poly)
+                {
+                    if (!PointInConvexPolygon(p, boundaryPolygon))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            if (upperBound <= 0f || !FullyInside(0f))
+            {
+                return 0f;
+            }
+            if (FullyInside(upperBound))
+            {
+                return upperBound;
+            }
+            float lo = 0f;
+            float hi = upperBound;
+            for (int i = 0; i < iterations; i++)
+            {
+                float mid = (lo + hi) * 0.5f;
+                if (FullyInside(mid))
+                {
+                    lo = mid;
+                }
+                else
+                {
+                    hi = mid;
+                }
+            }
+            return lo;
         }
     }
 }
