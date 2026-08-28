@@ -28,9 +28,7 @@ namespace TmgBoard
                 go.transform.SetParent(baseLayer, false);
                 var piece = go.AddComponent<MissionObjectivePiece>();
                 piece.Number = objective.Number;
-                var baseColor = GameConstants.MissionObjectiveTokenColors.TryGetValue(objective.Number, out var c)
-                        ? c
-                        : new Color(0.85f, 0.85f, 0.8f);
+                var baseColor = GameConstants.GetMissionObjectiveBaseColor(objective.Number);
                 piece.TokenColor = GameConstants.Muted(baseColor, GameConstants.MissionObjectiveSaturationFactor, GameConstants.MissionObjectiveValueFactor);
                 piece.RectTransform.anchorMin = new Vector2(0.5f, 0.5f);
                 piece.RectTransform.anchorMax = new Vector2(0.5f, 0.5f);

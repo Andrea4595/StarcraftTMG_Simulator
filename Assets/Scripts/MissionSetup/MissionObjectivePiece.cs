@@ -46,6 +46,14 @@ namespace TmgBoard
 
         public Color TokenColor = new Color(0.85f, 0.85f, 0.8f);
 
+        /// <summary>TokenColor를 밖에서 바꾼 뒤(예: 플레이어 색상 변경) 다시
+        /// 그리게 한다 — 정점 색은 OnPopulateMesh에서만 매겨지므로 필드 값을
+        /// 바꾸는 것만으로는 자동으로 다시 그려지지 않는다.</summary>
+        public void Refresh()
+        {
+            SetVerticesDirty();
+        }
+
         private const int VisualSides = 48;
 
         private TextMeshProUGUI _numberLabel;

@@ -25,6 +25,9 @@ namespace TmgBoard
         private readonly Dictionary<string, TextMeshProUGUI> _totalVpLabels = new Dictionary<string, TextMeshProUGUI>();
         private readonly Dictionary<string, RectTransform> _supplyRowContainers = new Dictionary<string, RectTransform>();
         private readonly Dictionary<string, List<RawImage>> _supplyPips = new Dictionary<string, List<RawImage>>();
+        private readonly Dictionary<string, TextMeshProUGUI> _teamNameLabels = new Dictionary<string, TextMeshProUGUI>();
+        private readonly Dictionary<string, GameObject> _colorPopups = new Dictionary<string, GameObject>();
+        private readonly Dictionary<string, bool> _colorPopupLeft = new Dictionary<string, bool>();
 
         // BoardManager는 부트스트랩이 두 객체를 다 만든 뒤 SetBoardManager()로
         // 나중에 넣어준다(Awake() 시점엔 아직 BoardManager가 없을 수 있음) —
@@ -95,8 +98,9 @@ namespace TmgBoard
             statLayout.childForceExpandWidth = false;
             statLayout.childForceExpandHeight = false;
 
-            var teamColor = GameConstants.TeamColors.TryGetValue(team, out var c) ? c : Color.white;
-            CreateLabel(statRowGo.transform, $"플레이어 {team}", 18f, 96f, teamColor, FontStyles.Bold);
+            var nameLabel = CreateTeamNameButton(statRowGo.transform, team);
+            _teamNameLabels[team] = nameLabel;
+            BuildColorPopup(team, left);
 
             CreateStatInputField(statRowGo.transform, "미션VP", MatchState.MissionVp[team], 0, 999, v =>
             {
@@ -233,6 +237,139 @@ namespace TmgBoard
             label.enableWordWrapping = false; // 좁은 스코어보드 바 안이라 줄바꿈되면 보기 나쁘다 — 폭이 좁으면 넘치더라도 한 줄로.
             label.raycastTarget = false;
             return label;
+        }
+
+        /// <summary>"플레이어 A"/"플레이어 B" 라벨 — 다른 라벨과 달리 클릭하면
+        /// 색상 팔레트 팝업이 뜬다(사용자 요청). raycastTarget을 켜고 Button을
+        /// 붙인다는 점만 CreateLabel과 다르다.</summary>
+        private TextMeshProUGUI CreateTeamNameButton(Transform parent, string team)
+        {
+            var teamColor = GameConstants.TeamColors.TryGetValue(team, out var c) ? c : Color.white;
+
+            var go = new GameObject("Label", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var le = go.AddComponent<LayoutElement>();
+            le.preferredWidth = 96f;
+            le.preferredHeight = 26f;
+            var label = go.AddComponent<TextMeshProUGUI>();
+            label.text = $"플레이어 {team}";
+            label.fontSize = 18f;
+            label.color = teamColor;
+            label.fontStyle = FontStyles.Bold;
+            label.alignment = TextAlignmentOptions.MidlineLeft;
+            label.enableWordWrapping = false;
+            label.raycastTarget = true;
+
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = label;
+            btn.onClick.AddListener(() => ToggleColorPopup(team));
+
+            return label;
+        }
+
+        /// <summary>team 쪽 색상 팔레트 팝업을 만든다(숨긴 채로) — 위치는 짓는
+        /// 시점이 아니라 열 때마다(ToggleColorPopup) 그 팀 이름 라벨의 실제
+        /// 화면 위치를 기준으로 다시 계산한다(라벨이 VerticalLayoutGroup/
+        /// HorizontalLayoutGroup 안에 있어 실제 화면 위치가 미리 알 수 있는
+        /// 고정값이 아니기 때문). 부모도 이 시점엔 아직 transform.parent가
+        /// null이라(부트스트랩이 Awake 다음에야 SetParent) 여기서는 일단
+        /// 자기 자신 아래 임시로 둔다 — 실제로 열릴 때 캔버스 루트로 옮겨진다.
+        /// 스와치를 고르면 BoardManager.SetTeamColor로 보드 전체(배치된
+        /// 유닛/예비대/마커/미션 목표 마커)에 즉시 소급 적용되고, 이 라벨의
+        /// 표시 색도 같이 바뀐다.</summary>
+        private void BuildColorPopup(string team, bool left)
+        {
+            var popupGo = new GameObject($"ColorPopup_{team}", typeof(RectTransform));
+            popupGo.transform.SetParent(transform, false);
+
+            var bg = popupGo.AddComponent<Image>();
+            bg.color = new Color(0.05f, 0.05f, 0.05f, 0.97f);
+
+            var grid = popupGo.AddComponent<GridLayoutGroup>();
+            grid.cellSize = new Vector2(28f, 28f);
+            grid.spacing = new Vector2(6f, 6f);
+            grid.padding = new RectOffset(8, 8, 8, 8);
+            grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            grid.constraintCount = 6;
+
+            var fitter = popupGo.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            foreach (var swatchColor in GameConstants.TeamColorPalette)
+            {
+                var swatchGo = new GameObject("Swatch", typeof(RectTransform));
+                swatchGo.transform.SetParent(popupGo.transform, false);
+                var img = swatchGo.AddComponent<Image>();
+                img.color = swatchColor;
+
+                var swatchBtn = swatchGo.AddComponent<Button>();
+                swatchBtn.targetGraphic = img;
+                swatchBtn.onClick.AddListener(() =>
+                {
+                    _board?.SetTeamColor(team, swatchColor);
+                    if (_teamNameLabels.TryGetValue(team, out var lbl))
+                    {
+                        lbl.color = swatchColor;
+                    }
+                    popupGo.SetActive(false);
+                });
+            }
+
+            popupGo.SetActive(false);
+            _colorPopups[team] = popupGo;
+            _colorPopupLeft[team] = left;
+        }
+
+        /// <summary>클릭한 팀의 팝업을 열려 있으면 닫고, 닫혀 있으면 (다른 팀
+        /// 팝업은 닫으면서) 연다. 열 때마다 캔버스 루트로 옮기고 맨 위로
+        /// 올린다 — 그렇지 않으면 나중에 만들어지는 예비대 패널
+        /// (BoardManager.BuildPendingPanel)이 같은 캔버스 안에서 더 나중
+        /// 형제라 팝업을 가려버린다(사용자가 실제로 겪은 문제).</summary>
+        private void ToggleColorPopup(string team)
+        {
+            bool wasOpen = _colorPopups.TryGetValue(team, out var popup) && popup.activeSelf;
+            foreach (var other in _colorPopups.Values)
+            {
+                other.SetActive(false);
+            }
+            if (wasOpen || popup == null)
+            {
+                return;
+            }
+
+            var canvasRoot = transform.parent as RectTransform;
+            if (canvasRoot != null)
+            {
+                popup.transform.SetParent(canvasRoot, false);
+                PositionPopupUnderLabel(team, popup, canvasRoot);
+            }
+            popup.transform.SetAsLastSibling();
+            popup.SetActive(true);
+        }
+
+        /// <summary>팝업의 (왼쪽 팀이면 좌상단, 오른쪽 팀이면 우상단) 꼭짓점을
+        /// 그 팀 이름 라벨의 실제 화면상 아래쪽 모서리에 맞춘다 — 라벨이
+        /// 레이아웃 그룹 안에 있어 화면 위치가 고정값이 아니므로 매번
+        /// GetWorldCorners로 다시 읽어야 한다.</summary>
+        private void PositionPopupUnderLabel(string team, GameObject popup, RectTransform canvasRoot)
+        {
+            if (!_teamNameLabels.TryGetValue(team, out var label))
+            {
+                return;
+            }
+            bool left = _colorPopupLeft.TryGetValue(team, out var l) && l;
+
+            var corners = new Vector3[4]; // 0=좌하, 1=좌상, 2=우상, 3=우하 (월드 좌표)
+            ((RectTransform)label.transform).GetWorldCorners(corners);
+            Vector3 anchorWorldCorner = left ? corners[0] : corners[3];
+            Vector2 screenPoint = RectTransformUtility.WorldToScreenPoint(null, anchorWorldCorner);
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(canvasRoot, screenPoint, null, out var localPoint);
+
+            var popupRect = (RectTransform)popup.transform;
+            popupRect.anchorMin = popupRect.anchorMax = new Vector2(0.5f, 0.5f);
+            popupRect.pivot = new Vector2(left ? 0f : 1f, 1f);
+            popupRect.anchoredPosition = localPoint;
         }
 
         /// <summary>"라벨: [숫자 표시칸][위/아래 아이콘 스테퍼]" 한 묶음. 직접

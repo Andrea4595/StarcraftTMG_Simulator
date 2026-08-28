@@ -16,14 +16,30 @@ namespace TmgBoard
     {
         public const float MarkerHeightMm = 25.4f; // 1"
         public static readonly string[] ColorSequence = { "white", "red", "blue" };
-        private static readonly System.Collections.Generic.Dictionary<string, Color> ColorValues = new System.Collections.Generic.Dictionary<string, Color>
-        {
-            { "white", new Color(1f, 1f, 1f, 1f) },
-            { "red", new Color(0.9f, 0.15f, 0.15f, 1f) },
-            { "blue", new Color(0.15f, 0.4f, 0.9f, 1f) },
-        };
 
         public string ColorState { get; private set; } = "white";
+
+        /// <summary>"red"/"blue"는 고정 색이 아니라 A/B팀의 현재 색을 그대로
+        /// 따라간다(GameConstants.TeamColors, 플레이어가 스코어보드에서 바꿀 수
+        /// 있음) — 항상 완전 불투명해야 하므로 알파는 1로 강제한다.</summary>
+        private static Color ResolveColor(string state)
+        {
+            switch (state)
+            {
+                case "red":
+                    return WithFullAlpha(GameConstants.TeamColors.TryGetValue("A", out var a) ? a : new Color(0.9f, 0.15f, 0.15f));
+                case "blue":
+                    return WithFullAlpha(GameConstants.TeamColors.TryGetValue("B", out var b) ? b : new Color(0.15f, 0.4f, 0.9f));
+                default:
+                    return Color.white;
+            }
+        }
+
+        private static Color WithFullAlpha(Color c)
+        {
+            c.a = 1f;
+            return c;
+        }
 
         public void Configure(Texture2D flagTexture)
         {
@@ -41,9 +57,11 @@ namespace TmgBoard
             RefreshColor();
         }
 
-        private void RefreshColor()
+        /// <summary>팀 색이 바뀐 뒤 이미 배치된 마커의 색을 다시 계산시킨다
+        /// (BoardManager.SetTeamColor가 보드 위 모든 CaptureMarker에 대해 부른다).</summary>
+        public void RefreshColor()
         {
-            color = ColorValues[ColorState];
+            color = ResolveColor(ColorState);
         }
     }
 }
