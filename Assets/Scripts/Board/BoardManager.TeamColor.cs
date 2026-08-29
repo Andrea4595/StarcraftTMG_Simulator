@@ -68,9 +68,13 @@ namespace TmgBoard
         }
 
         /// <summary>1/3/2/4번은 이번에 바뀐 team의 색을 그대로 따르므로 그
-        /// 팀에 속한 것만 다시 칠하면 되지만, 5번(중립)은 "어느 팀이든 초록에
-        /// 가까운 색을 고르면 회색으로" 규칙이라 A/B 어느 쪽 색이 바뀌든 항상
-        /// 다시 계산해야 한다(GameConstants.GetMissionObjectiveBaseColor).</summary>
+        /// 팀에 속한 것만 TokenColor를 다시 계산하면 되지만, 5번(중립)은
+        /// "어느 팀이든 초록에 가까운 색을 고르면 회색으로" 규칙이라 A/B 어느
+        /// 쪽 색이 바뀌든 항상 다시 계산해야 한다(GameConstants.
+        /// GetMissionObjectiveBaseColor). 점령 링(RingColorState)은 아예 별개
+        /// 개념이라 — 우클릭으로 순환된 링 색이 "빨강"/"파랑"이면 그 목표
+        /// 번호가 어느 팀 소속이든 상관없이 A/B 어느 팀 색이 바뀌든 다시
+        /// 칠해야 하므로, Refresh()는 팀 소속과 무관하게 매번 호출한다.</summary>
         private void RepaintMissionObjectivesForTeam(string team)
         {
             if (baseLayer == null)
@@ -80,12 +84,11 @@ namespace TmgBoard
             foreach (var piece in baseLayer.GetComponentsInChildren<MissionObjectivePiece>(true))
             {
                 var pieceTeam = GameConstants.ObjectiveNumberToTeam(piece.Number);
-                if (pieceTeam != team && pieceTeam != null)
+                if (pieceTeam == team || pieceTeam == null)
                 {
-                    continue;
+                    var baseColor = GameConstants.GetMissionObjectiveBaseColor(piece.Number);
+                    piece.TokenColor = GameConstants.Muted(baseColor, GameConstants.MissionObjectiveSaturationFactor, GameConstants.MissionObjectiveValueFactor);
                 }
-                var baseColor = GameConstants.GetMissionObjectiveBaseColor(piece.Number);
-                piece.TokenColor = GameConstants.Muted(baseColor, GameConstants.MissionObjectiveSaturationFactor, GameConstants.MissionObjectiveValueFactor);
                 piece.Refresh();
             }
         }

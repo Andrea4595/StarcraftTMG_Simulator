@@ -9,15 +9,16 @@ namespace TmgBoard
     /// <summary>
     /// 미션 목표 마커 하나(1~5번). 32mm 토큰 + 그 바깥으로 3" 점령 범위 링을
     /// 그린다. Godot판 scenes/mission_setup/MissionObjectivePiece.gd 포팅.
-    /// 이동은 지원하지만 회전은 의미가 없다(원형). 우클릭하면 바로 삭제된다.
+    /// 이동은 지원하지만 회전은 의미가 없다(원형).
     ///
     /// 미션 설정 화면과 게임 보드 둘 다에서 쓴다 — 설정 화면에서는 코너
     /// 원점 레이어에 앵커(0,0)로, 게임 보드에서는 중심 원점 baseLayer에
     /// 앵커(0.5,0.5)로 붙는다(호출부가 정한다, 이 컴포넌트는 어느 쪽이든
     /// 상관없이 pivot=(0.5,0.5)만 고정해서 anchoredPosition이 곧 그 좌표계의
-    /// 중심점이 되게 한다). 게임 보드 쪽은 순수 시각 참고용이라 호출부가
-    /// raycastTarget=false로 꺼서 드래그/삭제를 막는다(Godot판 mouse_filter=
-    /// IGNORE와 동일한 효과).
+    /// 중심점이 되게 한다). 두 화면은 클릭 동작이 다르다(AllowDrag/
+    /// RightClickCyclesColor 참고) — 설정 화면: 좌클릭 드래그, 우클릭 즉시
+    /// 삭제. 게임 보드: 순수 참고용이라 드래그는 막고, 우클릭은 삭제 대신
+    /// 점령 링 색상 순환(RingColorState)만 한다.
     /// </summary>
     [RequireComponent(typeof(RectTransform))]
     [RequireComponent(typeof(CanvasRenderer))]
@@ -25,6 +26,44 @@ namespace TmgBoard
     {
         public event Action<MissionObjectivePiece> DragRequested;
         public event Action<MissionObjectivePiece> DeleteRequested;
+
+        /// <summary>미션 설정 화면(기본값)에서는 좌클릭 드래그 + 우클릭 즉시
+        /// 삭제. 게임 보드에서는 순수 참고용이라 드래그를 막고(false) 우클릭은
+        /// 삭제 대신 점령 링 색상 순환으로 대체한다(RightClickCyclesColor).
+        /// 호출부(BoardManager.MissionObjectives.cs)가 게임 보드 인스턴스에만
+        /// 이 두 값을 뒤집는다.</summary>
+        public bool AllowDrag = true;
+        public bool RightClickCyclesColor;
+
+        /// <summary>점령 범위 링의 색 상태 — CaptureMarker.ColorState와 같은
+        /// 개념이지만 별도 필드다: TokenColor는 이미 번호 토큰 자체의 색(팀
+        /// 배정)을 뜻하므로 링 색과 혼동하면 안 된다. 우클릭할 때마다 흰색 →
+        /// 빨간색 → 파란색 순으로 계속 순환한다(삭제 없이 영원히 반복).</summary>
+        public static readonly string[] RingColorSequence = { "white", "red", "blue" };
+
+        public string RingColorState { get; private set; } = "white";
+
+        public void CycleRingColor()
+        {
+            int idx = Array.IndexOf(RingColorSequence, RingColorState);
+            RingColorState = RingColorSequence[(idx + 1) % RingColorSequence.Length];
+            SetVerticesDirty();
+        }
+
+        /// <summary>CaptureMarker.ResolveColor와 같은 이유로 "red"/"blue"는
+        /// 고정 색이 아니라 A/B팀의 현재 색을 그대로 따라간다.</summary>
+        private static Color ResolveRingColor(string state)
+        {
+            switch (state)
+            {
+                case "red":
+                    return GameConstants.TeamColors.TryGetValue("A", out var a) ? a : new Color(0.9f, 0.15f, 0.15f);
+                case "blue":
+                    return GameConstants.TeamColors.TryGetValue("B", out var b) ? b : new Color(0.15f, 0.4f, 0.9f);
+                default:
+                    return Color.white;
+            }
+        }
 
         private int _number = 1;
 
@@ -97,8 +136,9 @@ namespace TmgBoard
             float tokenRadius = GameConstants.MissionObjectiveTokenDiameterMm / 2f;
             float captureRadius = tokenRadius + GameConstants.MissionObjectiveCaptureMarginInch * GameConstants.MmPerInch;
 
-            AddFilledCircle(vh, captureRadius, new Color(1f, 1f, 1f, 0.10f));
-            AddCircleOutline(vh, captureRadius, new Color(1f, 1f, 1f, 0.6f), 1.5f);
+            var ringColor = ResolveRingColor(RingColorState);
+            AddFilledCircle(vh, captureRadius, new Color(ringColor.r, ringColor.g, ringColor.b, 0.10f));
+            AddCircleOutline(vh, captureRadius, new Color(ringColor.r, ringColor.g, ringColor.b, 0.6f), 1.5f);
 
             AddFilledCircle(vh, tokenRadius, TokenColor);
             AddCircleOutline(vh, tokenRadius, new Color(0.1f, 0.1f, 0.1f, 0.8f), 1.5f);
@@ -151,12 +191,22 @@ namespace TmgBoard
         {
             if (eventData.button == PointerEventData.InputButton.Left)
             {
-                DragRequested?.Invoke(this);
+                if (AllowDrag)
+                {
+                    DragRequested?.Invoke(this);
+                }
                 eventData.Use();
             }
             else if (eventData.button == PointerEventData.InputButton.Right)
             {
-                DeleteRequested?.Invoke(this);
+                if (RightClickCyclesColor)
+                {
+                    CycleRingColor();
+                }
+                else
+                {
+                    DeleteRequested?.Invoke(this);
+                }
                 eventData.Use();
             }
         }
