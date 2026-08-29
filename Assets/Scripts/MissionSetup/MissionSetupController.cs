@@ -103,6 +103,7 @@ namespace TmgBoard
             BuildMapArea();
             BuildSizeRow();
             BuildPalette();
+            BuildMatchSettingsPanel();
             BuildPresetDialogs();
             ApplyPreset(_currentPreset);
         }
@@ -517,6 +518,46 @@ namespace TmgBoard
                 le.preferredHeight = 32f;
                 _objectiveButtons[number] = btn;
             }
+        }
+
+        /// <summary>화면 우상단 고정 패널 — 게임 화면의 라운드 표시기/서플라이
+        /// 자동 계산 공식이 쓸 값 3개(최대 라운드/기본 서플라이/라운드당 증가량)
+        /// 를 정수로 입력받는다(사용자 요청). 미션 프리셋 저장/불러오기에는
+        /// 아직 포함되지 않는다 — 프리셋은 배치구역/지형/목표까지만 다루는
+        /// 기존 스키마라, 이 값들을 넣으려면 스키마를 같이 넓혀야 해서 이번
+        /// 요청 범위 밖으로 남겨뒀다.</summary>
+        private void BuildMatchSettingsPanel()
+        {
+            var panelGo = new GameObject("MatchSettings", typeof(RectTransform));
+            panelGo.transform.SetParent(Root, false);
+            var panelRect = (RectTransform)panelGo.transform;
+            panelRect.anchorMin = new Vector2(1f, 1f);
+            panelRect.anchorMax = new Vector2(1f, 1f);
+            panelRect.pivot = new Vector2(1f, 1f);
+            panelRect.anchoredPosition = new Vector2(-MarginPx, -MarginPx);
+            panelRect.sizeDelta = new Vector2(210f, 40f);
+
+            var bg = panelGo.AddComponent<Image>();
+            bg.color = new Color(0.15f, 0.15f, 0.15f, 0.95f);
+
+            var layout = panelGo.AddComponent<VerticalLayoutGroup>();
+            layout.padding = new RectOffset(10, 10, 8, 8);
+            layout.spacing = 6f;
+            layout.childControlWidth = true;
+            layout.childForceExpandWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandHeight = false;
+
+            var fitter = panelGo.AddComponent<ContentSizeFitter>();
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            // stepperWidth를 안 넘기면 기본값(16f)을 써서 게임 화면
+            // (ScoreboardPanel)과 폭이 똑같아진다 — 예전엔 flexibleWidth 누수
+            // 버그를 몰라서 이 화면만 좁게 우회해뒀었는데(narrowStepperWidth=6f),
+            // 그 버그를 고친 지금은 더 이상 필요 없다.
+            IntStepperField.Create(panelRect, "최대 라운드", 90f, MissionData.MaxRounds, 1, 20, v => MissionData.MaxRounds = v);
+            IntStepperField.Create(panelRect, "기본 서플라이", 90f, MissionData.BaseSupply, 0, 999, v => MissionData.BaseSupply = v);
+            IntStepperField.Create(panelRect, "라운드당 증가", 90f, MissionData.SupplyPerRound, 0, 999, v => MissionData.SupplyPerRound = v);
         }
 
         private void BuildMapArea()
@@ -1178,9 +1219,19 @@ namespace TmgBoard
 
         private void OnStartGamePressed()
         {
+            // Clear()가 MaxRounds/BaseSupply/SupplyPerRound도 기본값으로
+            // 되돌리므로(MatchSettings 패널이 이미 채워둔 값을 지워버림),
+            // Clear() 전에 빼뒀다가 그 뒤에 다시 넣어준다.
+            int maxRounds = MissionData.MaxRounds;
+            int baseSupply = MissionData.BaseSupply;
+            int supplyPerRound = MissionData.SupplyPerRound;
+
             MissionData.Clear();
             MissionData.HasData = true;
             MissionData.MapPreset = _currentPreset;
+            MissionData.MaxRounds = maxRounds;
+            MissionData.BaseSupply = baseSupply;
+            MissionData.SupplyPerRound = supplyPerRound;
             CollectCurrentState(out var zones, out var objectives, out var terrain);
             MissionData.DeploymentZones.AddRange(zones);
             MissionData.MissionObjectives.AddRange(objectives);

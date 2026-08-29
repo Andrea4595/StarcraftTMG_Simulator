@@ -1,19 +1,22 @@
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace TmgBoard
 {
     /// <summary>화면 맨 위를 가로지르는 전광판 — 왼쪽에 A팀(빨강), 오른쪽에
-    /// B팀(파랑), 중앙에 라운드/서플라이. Godot판 GameBoard.gd의
+    /// B팀(파랑), 중앙에 라운드 표시. Godot판 GameBoard.gd의
     /// _build_scoreboard()/_add_stat_spinbox() 포팅이지만 배치는 새로 짰다
     /// (Godot판은 좌상단에 뜨는 작은 세로형 패널이었다). 값은 MatchState(정적
     /// 클래스)에 직접 읽고 쓴다. 미션VP/파괴VP는 직접 수정, 종합VP는 계산된
-    /// 값을 보여주기만 한다. 각 팀 줄 아래에는 서플라이 소비 현황을 네모로
-    /// 보여주는데, 이건 보드에 실제로 배치된 유닛을 봐야 해서(SetBoardManager)
-    /// BoardManager 참조가 필요하다 — 그 외 나머지는 여전히 독립적이다.</summary>
+    /// 값을 보여주기만 한다. 라운드는 스핀박스가 아니라 클릭식 네모 표시기이고
+    /// (BuildRoundIndicator), 서플라이 상한은 더 이상 여기서 직접 입력받지
+    /// 않는다 — 미션 설정(MissionData)에서 정한 공식으로 라운드가 바뀔 때마다
+    /// 자동 계산된다(SetRoundNumber). 각 팀 줄 아래에는 서플라이 소비 현황을
+    /// 네모로 보여주는데, 이건 보드에 실제로 배치된 유닛을 봐야 해서
+    /// (SetBoardManager) BoardManager 참조가 필요하다 — 그 외 나머지는 여전히
+    /// 독립적이다.</summary>
     [RequireComponent(typeof(RectTransform))]
     public class ScoreboardPanel : MonoBehaviour
     {
@@ -23,6 +26,13 @@ namespace TmgBoard
         private static readonly Color SupplyUsedColor = new Color(0.25f, 0.55f, 1f, 1f);
         private static readonly Color SupplyFreeColor = new Color(0.45f, 0.45f, 0.45f, 1f);
         private static readonly Color SupplyOverflowColor = new Color(0.9f, 0.15f, 0.15f, 1f);
+
+        private const float RoundPipSize = 16f;
+        private const float RoundPipSpacing = 3f;
+        private static readonly Color RoundActiveColor = new Color(1f, 0.85f, 0.1f, 1f);
+        private static readonly Color RoundInactiveColor = new Color(0.45f, 0.45f, 0.45f, 1f);
+
+        private readonly List<RawImage> _roundPips = new List<RawImage>();
 
         private readonly Dictionary<string, TextMeshProUGUI> _totalVpLabels = new Dictionary<string, TextMeshProUGUI>();
         private readonly Dictionary<string, RectTransform> _supplyRowContainers = new Dictionary<string, RectTransform>();
@@ -104,13 +114,13 @@ namespace TmgBoard
             _teamNameLabels[team] = nameLabel;
             BuildColorPopup(team, left);
 
-            CreateStatInputField(statRowGo.transform, "미션VP", MatchState.MissionVp[team], 0, 999, v =>
+            IntStepperField.Create(statRowGo.transform, "미션VP", 52f, MatchState.MissionVp[team], 0, 999, v =>
             {
                 MatchState.MissionVp[team] = v;
                 RefreshTotalLabel(team);
             });
 
-            CreateStatInputField(statRowGo.transform, "파괴VP", MatchState.KillVp[team], 0, 999, v =>
+            IntStepperField.Create(statRowGo.transform, "파괴VP", 52f, MatchState.KillVp[team], 0, 999, v =>
             {
                 MatchState.KillVp[team] = v;
                 RefreshTotalLabel(team);
@@ -151,7 +161,8 @@ namespace TmgBoard
         /// <summary>네모 개수는 기본적으로 MatchState.Supply(공유 상한)이지만,
         /// 실제 배치량이나(초과 배치) 배치 고스트 미리보기가 그 상한을 넘어서면
         /// 필요한 만큼 네모를 더 늘려서(뒤에 이어붙여) 넘치는 양도 그대로 보여준다
-        /// — 개수가 바뀔 때만 지우고 다시 만든다. 칠하는 규칙(왼쪽부터):
+        /// — 개수가 바뀔 때만 지우고 다시 만든다. 칠하는 규칙(논리적 인덱스
+        /// idx 기준, A팀은 화면 왼쪽=idx 0, B팀은 화면 오른쪽=idx 0으로 뒤집힘):
         /// (1) 상한 이내에서 실제로 이미 배치된 만큼 = 파란색(고정),
         /// (2) 상한 이내에서 배치 고스트가 추가로 먹을 부분 = 회색↔팀색 반짝임,
         /// (3) 상한 이내에서 남는 부분 = 회색(고정),
@@ -198,16 +209,23 @@ namespace TmgBoard
             teamColor.a = 1f;
             float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * SupplyPreviewFlashSpeed);
 
+            // B팀은 화면 오른쪽에 붙어 있으므로 "우측 정렬"로 보이려면 이미 쓴
+            // 만큼(파란색)이 패널 가장자리(오른쪽)에 붙어 안쪽(가운데)으로
+            // 자라나야 한다(사용자 요청) — 화면상 자리(i, 왼쪽부터)는 그대로
+            // 두고, 색 규칙을 판단할 "논리적 인덱스"만 좌우로 뒤집는다.
+            bool mirror = team == "B";
+
             for (int i = 0; i < pips.Count; i++)
             {
+                int idx = mirror ? pips.Count - 1 - i : i;
                 Color color;
-                if (i < total)
+                if (idx < total)
                 {
-                    if (i < used)
+                    if (idx < used)
                     {
                         color = SupplyUsedColor;
                     }
-                    else if (i < previewEnd)
+                    else if (idx < previewEnd)
                     {
                         color = Color.Lerp(SupplyFreeColor, teamColor, pulse);
                     }
@@ -218,7 +236,7 @@ namespace TmgBoard
                 }
                 else
                 {
-                    color = i < used
+                    color = idx < used
                         ? SupplyOverflowColor
                         : Color.Lerp(SupplyFreeColor, SupplyOverflowColor, pulse);
                 }
@@ -236,8 +254,8 @@ namespace TmgBoard
             centerRect.pivot = new Vector2(0.5f, 0.5f);
             centerRect.anchoredPosition = Vector2.zero;
 
-            var layout = centerGo.AddComponent<HorizontalLayoutGroup>();
-            layout.spacing = 18f;
+            var layout = centerGo.AddComponent<VerticalLayoutGroup>();
+            layout.spacing = 2f;
             layout.childAlignment = TextAnchor.MiddleCenter;
             layout.childControlWidth = true;
             layout.childControlHeight = true;
@@ -245,9 +263,65 @@ namespace TmgBoard
             layout.childForceExpandHeight = false;
             var fitter = centerGo.AddComponent<ContentSizeFitter>();
             fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            CreateStatInputField(centerRect, "라운드", MatchState.RoundNumber, 1, 20, v => MatchState.RoundNumber = v);
-            CreateStatInputField(centerRect, "서플라이", MatchState.Supply, 0, 999, v => MatchState.Supply = v);
+            var titleLabel = CreateLabel(centerRect, "라운드", 12f, 80f, new Color(0.7f, 0.7f, 0.7f, 1f), FontStyles.Normal);
+            titleLabel.alignment = TextAlignmentOptions.Center;
+
+            BuildRoundIndicator(centerRect);
+        }
+
+        /// <summary>'최대 라운드 수'(미션 설정에서 정한 값)만큼 네모를 늘어놓고,
+        /// 맨 왼쪽부터 지금 라운드까지 노란색, 나머지는 회색으로 칠한다 —
+        /// 스테퍼가 아니라 아무 네모나 클릭하면 그 네모까지가 "지금 라운드"가
+        /// 되는 방식(사용자 요청). 서플라이 입력칸은 여기서 완전히 빠졌다 —
+        /// 이제 라운드가 바뀔 때마다 MissionData의 기본값+라운드당 증가량으로
+        /// MatchState.Supply를 자동 계산한다(SetRoundNumber).</summary>
+        private void BuildRoundIndicator(Transform parent)
+        {
+            var rowGo = new GameObject("RoundRow", typeof(RectTransform));
+            rowGo.transform.SetParent(parent, false);
+            var layout = rowGo.AddComponent<HorizontalLayoutGroup>();
+            layout.spacing = RoundPipSpacing;
+            layout.childAlignment = TextAnchor.MiddleCenter;
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = false;
+            layout.childForceExpandHeight = false;
+
+            var squareTexture = Resources.Load<Texture2D>("UI/Square");
+            int maxRounds = Mathf.Max(MissionData.MaxRounds, 1);
+            for (int i = 0; i < maxRounds; i++)
+            {
+                int roundNumber = i + 1;
+                var go = new GameObject($"RoundPip_{roundNumber}", typeof(RectTransform));
+                go.transform.SetParent(rowGo.transform, false);
+                var le = go.AddComponent<LayoutElement>();
+                le.preferredWidth = RoundPipSize;
+                le.preferredHeight = RoundPipSize;
+                var img = go.AddComponent<RawImage>();
+                img.texture = squareTexture;
+                var btn = go.AddComponent<Button>();
+                btn.targetGraphic = img;
+                btn.onClick.AddListener(() => SetRoundNumber(roundNumber));
+                _roundPips.Add(img);
+            }
+
+            SetRoundNumber(Mathf.Clamp(MatchState.RoundNumber, 1, maxRounds));
+        }
+
+        /// <summary>라운드를 바꾸고 — 미션 설정에서 정한 "기본 서플라이 한도" +
+        /// "라운드당 추가 서플라이 제공량" × (지금 라운드 - 1) 공식으로 서플라이
+        /// 상한도 곧바로 다시 계산한다(1라운드는 증가분 없이 기본값 그대로,
+        /// 사용자 요청). 라운드 네모 색도 즉시 갱신한다.</summary>
+        private void SetRoundNumber(int roundNumber)
+        {
+            MatchState.RoundNumber = roundNumber;
+            MatchState.Supply = MissionData.BaseSupply + MissionData.SupplyPerRound * (roundNumber - 1);
+            for (int i = 0; i < _roundPips.Count; i++)
+            {
+                _roundPips[i].color = i < roundNumber ? RoundActiveColor : RoundInactiveColor;
+            }
         }
 
         private void RefreshTotalLabel(string team)
@@ -409,126 +483,5 @@ namespace TmgBoard
             popupRect.anchoredPosition = localPoint;
         }
 
-        /// <summary>"라벨: [숫자 표시칸][위/아래 아이콘 스테퍼]" 한 묶음. 직접
-        /// 타이핑은 막고(readOnly), 1씩 증감만 허용한다 — 스테퍼 버튼 클릭
-        /// 또는 칸 위에서 휠 스크롤. 값은 항상 [minValue, maxValue]로
-        /// 클램프된다.</summary>
-        private static void CreateStatInputField(Transform parent, string labelText, int initial, int minValue, int maxValue, System.Action<int> onChanged)
-        {
-            var rowGo = new GameObject($"Stat_{labelText}", typeof(RectTransform));
-            rowGo.transform.SetParent(parent, false);
-            var rowLayout = rowGo.AddComponent<HorizontalLayoutGroup>();
-            rowLayout.spacing = 6f;
-            rowLayout.childAlignment = TextAnchor.MiddleLeft;
-            rowLayout.childControlWidth = true;
-            rowLayout.childControlHeight = true;
-            rowLayout.childForceExpandWidth = false;
-            rowLayout.childForceExpandHeight = false;
-
-            CreateLabel(rowGo.transform, labelText, 14f, 52f, Color.white, FontStyles.Normal);
-
-            int currentValue = Mathf.Clamp(initial, minValue, maxValue);
-
-            var fieldGo = new GameObject("Input", typeof(RectTransform));
-            fieldGo.transform.SetParent(rowGo.transform, false);
-            var le = fieldGo.AddComponent<LayoutElement>();
-            le.preferredWidth = 44f;
-            le.preferredHeight = 30f;
-            var bg = fieldGo.AddComponent<Image>();
-            bg.color = new Color(0.22f, 0.22f, 0.22f, 1f);
-            var inputField = fieldGo.AddComponent<TMP_InputField>();
-            inputField.contentType = TMP_InputField.ContentType.IntegerNumber;
-            inputField.readOnly = true; // 직접 타이핑 금지 — 스테퍼/휠로만 값을 바꾼다.
-
-            var textAreaGo = new GameObject("TextArea", typeof(RectTransform));
-            textAreaGo.transform.SetParent(fieldGo.transform, false);
-            var textAreaRect = (RectTransform)textAreaGo.transform;
-            textAreaRect.anchorMin = Vector2.zero;
-            textAreaRect.anchorMax = Vector2.one;
-            textAreaRect.offsetMin = new Vector2(6f, 2f);
-            textAreaRect.offsetMax = new Vector2(-6f, -2f);
-            textAreaGo.AddComponent<RectMask2D>();
-
-            var textGo = new GameObject("Text", typeof(RectTransform));
-            textGo.transform.SetParent(textAreaGo.transform, false);
-            var textRect = (RectTransform)textGo.transform;
-            textRect.anchorMin = Vector2.zero;
-            textRect.anchorMax = Vector2.one;
-            textRect.offsetMin = Vector2.zero;
-            textRect.offsetMax = Vector2.zero;
-            var text = textGo.AddComponent<TextMeshProUGUI>();
-            text.fontSize = 16f;
-            text.color = Color.white;
-            text.alignment = TextAlignmentOptions.MidlineLeft;
-
-            inputField.textViewport = textAreaRect;
-            inputField.textComponent = text;
-            inputField.text = currentValue.ToString();
-
-            void ApplyValue(int newValue)
-            {
-                currentValue = Mathf.Clamp(newValue, minValue, maxValue);
-                inputField.SetTextWithoutNotify(currentValue.ToString());
-                onChanged(currentValue);
-            }
-
-            var scrollHandler = fieldGo.AddComponent<ScrollStepHandler>();
-            scrollHandler.OnStep = delta => ApplyValue(currentValue + delta);
-
-            var stepperGo = new GameObject("Stepper", typeof(RectTransform));
-            stepperGo.transform.SetParent(rowGo.transform, false);
-            var stepperLe = stepperGo.AddComponent<LayoutElement>();
-            stepperLe.preferredWidth = 16f;
-            stepperLe.preferredHeight = 28f;
-            var stepperLayout = stepperGo.AddComponent<VerticalLayoutGroup>();
-            stepperLayout.spacing = 2f;
-            stepperLayout.childControlWidth = true;
-            stepperLayout.childControlHeight = true;
-            stepperLayout.childForceExpandWidth = true;
-            stepperLayout.childForceExpandHeight = false;
-
-            // 마커바(CreateMarkerBarButton)와 같은 방식 — RawImage+Texture2D로
-            // Sprite 임포트 타입을 신경 안 써도 된다. 버튼 자체의 세로 크기는
-            // (스테퍼 컨테이너의 자동 분배에 맡기지 않고) 각 버튼에 직접
-            // LayoutElement.preferredHeight를 줘서 명시적으로 작게 고정한다.
-            CreateStepperButton(stepperGo.transform, Resources.Load<Texture2D>("UI/Up"), () => ApplyValue(currentValue + 1));
-            CreateStepperButton(stepperGo.transform, Resources.Load<Texture2D>("UI/Down"), () => ApplyValue(currentValue - 1));
-        }
-
-        private static void CreateStepperButton(Transform parent, Texture2D icon, UnityEngine.Events.UnityAction onClick)
-        {
-            var go = new GameObject("StepBtn", typeof(RectTransform));
-            go.transform.SetParent(parent, false);
-            var le = go.AddComponent<LayoutElement>();
-            le.preferredWidth = 16f;
-            le.preferredHeight = 13f;
-
-            var img = go.AddComponent<RawImage>();
-            img.texture = icon;
-
-            var btn = go.AddComponent<Button>();
-            btn.targetGraphic = img;
-            btn.onClick.AddListener(onClick);
-        }
-
-        /// <summary>입력칸 위에서 휠을 굴리면 1씩 증감 — 위로 굴리면 +1, 아래로
-        /// 굴리면 -1. TMP_InputField는 IScrollHandler를 구현하지 않으므로
-        /// 같은 GameObject에 별도로 붙여도 충돌하지 않는다.</summary>
-        private class ScrollStepHandler : MonoBehaviour, IScrollHandler
-        {
-            public System.Action<int> OnStep;
-
-            public void OnScroll(PointerEventData eventData)
-            {
-                if (eventData.scrollDelta.y > 0f)
-                {
-                    OnStep?.Invoke(1);
-                }
-                else if (eventData.scrollDelta.y < 0f)
-                {
-                    OnStep?.Invoke(-1);
-                }
-            }
-        }
     }
 }

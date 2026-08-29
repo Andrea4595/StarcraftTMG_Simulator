@@ -15,6 +15,15 @@ namespace TmgBoard
         public static readonly List<MissionObjectiveData> MissionObjectives = new List<MissionObjectiveData>();
         public static readonly List<TerrainPieceData> TerrainPieces = new List<TerrainPieceData>();
 
+        /// <summary>게임 화면의 라운드 표시기가 그릴 네모 개수(BuildRoundIndicator).</summary>
+        public static int MaxRounds = 5;
+
+        /// <summary>서플라이 상한 공식의 기준값 — MatchState.Supply는 라운드가
+        /// 바뀔 때마다 BaseSupply + SupplyPerRound * 현재 라운드로 자동 계산된다
+        /// (ScoreboardPanel.SetRoundNumber).</summary>
+        public static int BaseSupply = 0;
+        public static int SupplyPerRound = 0;
+
         public static void Clear()
         {
             HasData = false;
@@ -22,6 +31,9 @@ namespace TmgBoard
             DeploymentZones.Clear();
             MissionObjectives.Clear();
             TerrainPieces.Clear();
+            MaxRounds = 5;
+            BaseSupply = 0;
+            SupplyPerRound = 0;
         }
     }
 }
