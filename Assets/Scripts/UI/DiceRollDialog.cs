@@ -149,13 +149,13 @@ namespace TmgBoard
             var panelGo = new GameObject("Panel", typeof(RectTransform));
             panelGo.transform.SetParent(transform, false);
             var panelRect = (RectTransform)panelGo.transform;
-            // 화면 위쪽 가운데(스코어보드 바로 아래)에 고정 — 무기 프로필이
-            // 이제 지도 하단에 딱 붙으므로 겹치지 않게 반대쪽(위)에 자리를
-            // 잡았다(둘 다 동시에 열어두고 봐야 한다는 사용자 요청).
+            // 화면 위쪽 가운데(스코어보드+페이즈바 바로 아래)에 고정 — 무기
+            // 프로필이 이제 지도 하단에 딱 붙으므로 겹치지 않게 반대쪽(위)에
+            // 자리를 잡았다(둘 다 동시에 열어두고 봐야 한다는 사용자 요청).
             panelRect.anchorMin = new Vector2(0.5f, 1f);
             panelRect.anchorMax = new Vector2(0.5f, 1f);
             panelRect.pivot = new Vector2(0.5f, 1f);
-            panelRect.anchoredPosition = new Vector2(0f, -(GameConstants.ScoreboardHeight + 20f));
+            panelRect.anchoredPosition = new Vector2(0f, -(GameConstants.TopBarHeight + 20f));
             panelRect.sizeDelta = new Vector2(PanelWidth, 0f);
             var panelImage = panelGo.AddComponent<Image>();
             panelImage.color = new Color(0.13f, 0.13f, 0.13f, 0.98f);

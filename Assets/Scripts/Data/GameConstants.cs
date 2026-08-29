@@ -11,9 +11,15 @@ namespace TmgBoard
 
         public const string DefaultMapSizePreset = "36x36";
 
-        public const float ScoreboardHeight = 84f;
+        public const float ScoreboardHeight = 56f;
+        public const float PhaseBarHeight = 32f;
         public const float MarkerBarHeight = 44f;
         public const float PendingPanelWidth = 280f;
+
+        // 스코어보드와 페이즈 바를 합친, 화면 위쪽에서 실제로 고정 UI가 차지하는
+        // 총 높이 — 맵 뷰포트/팀 패널 등이 "화면 맨 위 고정 바 아래"를 계산할 때
+        // ScoreboardHeight 대신 이걸 써야 페이즈 바 추가분만큼 자동으로 반영된다.
+        public const float TopBarHeight = ScoreboardHeight + PhaseBarHeight;
 
         public static readonly Dictionary<string, Vector2> MapSizePresets = new Dictionary<string, Vector2>
         {

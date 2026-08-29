@@ -56,8 +56,9 @@ namespace TmgBoard
             panelGo.transform.SetParent(canvasParent, false);
             var panel = (RectTransform)panelGo.transform;
             float xAnchor = left ? 0f : 1f;
-            // 화면 좌/우 가장자리에 딱 붙이고, 세로는 상단 바(스코어보드)와
-            // 하단 바(마커바) 사이 구간에 꽉 채운다 — X는 점 앵커(고정 폭은
+            // 화면 좌/우 가장자리에 딱 붙이고, 세로는 상단 바(스코어보드+페이즈바,
+            // GameConstants.TopBarHeight)와 하단 바(마커바) 사이 구간에 꽉
+            // 채운다 — X는 점 앵커(고정 폭은
             // sizeDelta.x), Y는 스트레치 앵커(0~1)로 두고 그 구간 높이만큼
             // sizeDelta.y를 음수로 줄여서 정확히 그 사이만 차지하게 한다.
             // anchoredPosition.y는 스크린샷 뷰 피봇과 같은 이유로 두 바
@@ -65,8 +66,8 @@ namespace TmgBoard
             panel.anchorMin = new Vector2(xAnchor, 0f);
             panel.anchorMax = new Vector2(xAnchor, 1f);
             panel.pivot = new Vector2(xAnchor, 0.5f);
-            panel.anchoredPosition = new Vector2(0f, (GameConstants.MarkerBarHeight - GameConstants.ScoreboardHeight) / 2f);
-            panel.sizeDelta = new Vector2(GameConstants.PendingPanelWidth, -(GameConstants.ScoreboardHeight + GameConstants.MarkerBarHeight));
+            panel.anchoredPosition = new Vector2(0f, (GameConstants.MarkerBarHeight - GameConstants.TopBarHeight) / 2f);
+            panel.sizeDelta = new Vector2(GameConstants.PendingPanelWidth, -(GameConstants.TopBarHeight + GameConstants.MarkerBarHeight));
 
             var bg = panelGo.AddComponent<Image>();
             bg.color = new Color(0.15f, 0.15f, 0.15f, 0.95f);

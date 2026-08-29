@@ -11,6 +11,9 @@ namespace TmgBoard
         public static int RoundNumber = 1;
         public static int Supply = 0;
 
+        public static readonly string[] PhaseNames = { "Movement Phase", "Assault Phase", "Combat Phase", "Cleanup Phase" };
+        public static int PhaseIndex = 0;
+
         public static readonly Dictionary<string, int> MissionVp = new Dictionary<string, int> { { "A", 0 }, { "B", 0 } };
         public static readonly Dictionary<string, int> KillVp = new Dictionary<string, int> { { "A", 0 }, { "B", 0 } };
 

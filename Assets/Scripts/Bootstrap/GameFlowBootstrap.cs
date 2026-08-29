@@ -167,6 +167,9 @@ public static class GameFlowBootstrap
         var scoreboard = new GameObject("Scoreboard").AddComponent<ScoreboardPanel>();
         scoreboard.transform.SetParent(canvasGo.transform, false);
 
+        var phaseBar = new GameObject("PhaseBar").AddComponent<PhaseBar>();
+        phaseBar.transform.SetParent(canvasGo.transform, false);
+
         var radialMenu = new GameObject("RadialMenu").AddComponent<RadialMenu>();
         radialMenu.transform.SetParent(canvasGo.transform, false);
 
