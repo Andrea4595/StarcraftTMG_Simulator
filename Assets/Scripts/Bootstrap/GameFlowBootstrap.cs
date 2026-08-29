@@ -19,8 +19,8 @@ using UnityEngine.UI;
 /// </summary>
 public static class GameFlowBootstrap
 {
-    private const string MissionSetupSceneName = "MissionSetup";
-    private const string GameBoardSceneName = "GameBoard";
+    private const string MissionSetupSceneName = GameConstants.MissionSetupSceneName;
+    private const string GameBoardSceneName = GameConstants.GameBoardSceneName;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Init()
@@ -185,6 +185,8 @@ public static class GameFlowBootstrap
         diceRollDialog.transform.SetParent(canvasGo.transform, false);
         var weaponProfileDialog = new GameObject("WeaponProfileDialog").AddComponent<WeaponProfileDialog>();
         weaponProfileDialog.transform.SetParent(canvasGo.transform, false);
+        var exitConfirmDialog = new GameObject("ExitConfirmDialog").AddComponent<ConfirmDialog>();
+        exitConfirmDialog.transform.SetParent(canvasGo.transform, false);
 
         var guideline = new GameObject("Guideline").AddComponent<GuidelineOverlay>();
         guideline.transform.SetParent(mapAreaRect, false);
@@ -238,6 +240,7 @@ public static class GameFlowBootstrap
         board.ConfigureTerrain(terrainLayerRect);
         board.ConfigureDiceRoll(diceRollDialog);
         board.ConfigureWeaponProfile(weaponProfileDialog);
+        board.ConfigureExit(exitConfirmDialog);
         scoreboard.SetBoardManager(board);
 
         if (MissionData.HasData && GameConstants.MapSizePresets.TryGetValue(MissionData.MapPreset, out var mapSize))

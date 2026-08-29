@@ -41,36 +41,16 @@ namespace TmgBoard
         }
 
         /// <summary>마우스가 가리키는 지도 위 지점이 화면상 같은 자리에 그대로
-        /// 있도록 확대/축소하면서 위치를 함께 보정한다. Godot판 _zoom_at() 포팅.</summary>
+        /// 있도록 확대/축소하면서 위치를 함께 보정한다. Godot판 _zoom_at() 포팅
+        /// — 실제 계산은 MissionSetupController도 함께 쓰는 공용 유틸리티
+        /// (Board/MapZoomUtil.cs)로 뽑아냈다.</summary>
         private void ZoomAt(Vector2 screenPos, float factor)
         {
             if (mapArea == null)
             {
                 return;
             }
-            var parent = mapArea.parent as RectTransform;
-            if (parent == null)
-            {
-                return;
-            }
-
-            float newZoom = Mathf.Clamp(_zoomLevel * factor, MinZoom, MaxZoom);
-            if (Mathf.Approximately(newZoom, _zoomLevel))
-            {
-                return;
-            }
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, screenPos, null, out var mouseLocal))
-            {
-                return;
-            }
-
-            float oldScale = mapArea.localScale.x;
-            Vector2 mapPoint = (mouseLocal - mapArea.anchoredPosition) / oldScale;
-
-            _zoomLevel = newZoom;
-            float newScale = _baseScaleFactor * _zoomLevel;
-            mapArea.localScale = new Vector3(newScale, newScale, 1f);
-            mapArea.anchoredPosition = mouseLocal - mapPoint * newScale;
+            _zoomLevel = MapZoomUtil.ApplyZoomAtScreenPoint(mapArea, screenPos, _zoomLevel, _baseScaleFactor, factor, MinZoom, MaxZoom);
         }
 
         // "지도가 화면에 다 보이게 맞추기" 버튼(FitButton, 마커바)이 캡처

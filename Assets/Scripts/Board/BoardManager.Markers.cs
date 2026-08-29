@@ -70,6 +70,36 @@ namespace TmgBoard
             CreateScreenshotButton(barRect);
             CreateFitButton(barRect);
             CreateDiceButton(barRect);
+            CreateExitButton(barRect);
+        }
+
+        /// <summary>바 맨 왼쪽 — 미션 셋업으로 돌아가기(사용자 요청). 클릭하면
+        /// 바로 나가지 않고 확인 창을 먼저 띄운다(exitConfirmDialog,
+        /// ConfigureExit로 주입됨) — 확인하면 진행 중이던 판을 버리고
+        /// 미션 셋업 씬으로 돌아간다(BoardManager.cs의 OnExitConfirmed).</summary>
+        private void CreateExitButton(Transform parent)
+        {
+            var go = new GameObject("ExitButton", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(0f, 0.5f);
+            rect.anchorMax = new Vector2(0f, 0.5f);
+            rect.pivot = new Vector2(0f, 0.5f);
+            rect.anchoredPosition = new Vector2(10f, 0f);
+            rect.sizeDelta = new Vector2(GameConstants.MarkerBarHeight - 8f, GameConstants.MarkerBarHeight - 8f);
+
+            var img = go.AddComponent<RawImage>();
+            img.texture = Resources.Load<Texture2D>("UI/ExitButton");
+
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() =>
+            {
+                if (exitConfirmDialog != null)
+                {
+                    exitConfirmDialog.Open("진행 중인 게임을 종료하고\n미션 셋업 화면으로 돌아갈까요?\n(현재 진행 상황은 저장되지 않습니다)");
+                }
+            });
         }
 
         /// <summary>마커 아이콘 오른쪽에 조작법을 띄워주는 라벨(사용자 요청) —

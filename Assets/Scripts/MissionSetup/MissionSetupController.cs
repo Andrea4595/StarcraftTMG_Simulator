@@ -31,6 +31,11 @@ namespace TmgBoard
         private const float ZoneHitThicknessMm = 24f;
         private const float MarginPx = 8f;
 
+        // 게임 보드(BoardManager.PanZoom.cs)와 같은 줌 범위/배율.
+        private const float ZoomStep = 1.1f;
+        private const float MinZoom = 0.3f;
+        private const float MaxZoom = 4f;
+
         private static readonly Dictionary<string, Color> ZoneColors = new Dictionary<string, Color>
         {
             { "A", new Color(1f, 0.15f, 0.15f, 0.9f) },
@@ -81,6 +86,14 @@ namespace TmgBoard
         private int _lastScreenWidth;
         private int _lastScreenHeight;
 
+        // ── 지도 이동/확대축소(패닝/줌) ─────────────────────────────────
+        // 게임 보드(BoardManager.PanZoom.cs)의 가운데 버튼 드래그 패닝 +
+        // 마우스 휠 줌과 같은 방식.
+        private bool _panning;
+        private Vector2 _lastPanScreenPos;
+        private float _zoomLevel = 1f;
+        private float _baseScaleFactor = 1f;
+
         private DeploymentZonePiece _drawingZone;
         private float _zoneCurrentLength;
         private Vector2 _zoneDownLocal;
@@ -90,7 +103,7 @@ namespace TmgBoard
 
         // ── 미션 프리셋 저장/불러오기 ──────────────────────────────────
         private InputDialog _presetNameDialog;
-        private RosterFileDialog _presetLoadDialog;
+        private RectTransform _presetListContent;
 
         private Vector2 MapSize => GameConstants.MapSizePresets[_currentPreset];
 
@@ -103,8 +116,15 @@ namespace TmgBoard
             BuildMapArea();
             BuildSizeRow();
             BuildPalette();
-            BuildMatchSettingsPanel();
+            var matchSettingsRect = BuildMatchSettingsPanel();
+            // 프리셋 목록 패널이 이 패널 바로 아래부터 시작해야 하므로, 그
+            // 실제 높이(ContentSizeFitter가 계산한 값)를 지금 강제로
+            // 확정시켜서 읽는다 — 안 그러면 이번 프레임엔 아직 기본 크기라
+            // 잘못된 값을 읽게 된다.
+            LayoutRebuilder.ForceRebuildLayoutImmediate(matchSettingsRect);
+            float presetListTopOffset = MarginPx + matchSettingsRect.rect.height + MarginPx;
             BuildPresetDialogs();
+            BuildPresetListPanel(presetListTopOffset);
             ApplyPreset(_currentPreset);
         }
 
@@ -117,9 +137,11 @@ namespace TmgBoard
                 UpdateMapLayout();
             }
 
-            // 이 화면엔 아직 팬/줌이 없어서(게임 보드와 다름), 지형 조각 위에서
-            // 휠을 굴리면 그냥 무조건 회전한다 — Godot판처럼 "지형 위면 회전,
-            // 아니면 줌"으로 분기할 필요가 없다.
+            HandlePanInput();
+
+            // 휠은 지형 조각 위면 회전, 아니면(그리고 다른 UI 위가 아니면)
+            // 커서 위치 기준 줌 — 게임 보드(BoardManager.PanZoom.cs)와 같은
+            // 분기 규칙.
             float scroll = Input.mouseScrollDelta.y;
             if (!Mathf.Approximately(scroll, 0f) && TryGetLocalMouse(out var wheelLocal))
             {
@@ -127,6 +149,10 @@ namespace TmgBoard
                 if (hovered != null)
                 {
                     hovered.RotateStep(scroll > 0f ? 1 : -1);
+                }
+                else if (!IsPointerOverUi())
+                {
+                    ZoomAt(Input.mousePosition, scroll > 0f ? ZoomStep : 1f / ZoomStep);
                 }
             }
 
@@ -186,6 +212,63 @@ namespace TmgBoard
             return RectTransformUtility.ScreenPointToLocalPointInRectangle(_mapArea, Input.mousePosition, null, out local);
         }
 
+        /// <summary>가운데 버튼 드래그로 지도를 움직인다(사용자 요청) —
+        /// BoardManager.PanZoom.cs의 HandlePanAndZoom과 같은 방식. _mapArea의
+        /// 부모(Root, 화면 전체)를 기준으로 스크린 좌표 차이를 로컬 좌표
+        /// 차이로 바꿔 anchoredPosition에 누적한다 — 코너 원점(pivot=0,0)이든
+        /// 중심 원점이든 상관없이 항상 성립하는 계산이라 _mapArea의 앵커
+        /// 방식(BuildMapArea 참고)을 안 가린다.</summary>
+        private void HandlePanInput()
+        {
+            if (_mapArea == null)
+            {
+                return;
+            }
+            var parent = _mapArea.parent as RectTransform;
+            if (parent == null)
+            {
+                return;
+            }
+
+            if (Input.GetMouseButtonDown(2) && !IsPointerOverUi())
+            {
+                _panning = true;
+                _lastPanScreenPos = Input.mousePosition;
+            }
+            if (Input.GetMouseButtonUp(2))
+            {
+                _panning = false;
+            }
+
+            if (_panning)
+            {
+                Vector2 currentScreenPos = Input.mousePosition;
+                if (RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, currentScreenPos, null, out var curLocal)
+                        && RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, _lastPanScreenPos, null, out var prevLocal))
+                {
+                    _mapArea.anchoredPosition += curLocal - prevLocal;
+                }
+                _lastPanScreenPos = currentScreenPos;
+            }
+        }
+
+        /// <summary>마우스가 가리키는 지도 위 지점이 화면상 같은 자리에 그대로
+        /// 있도록 확대/축소하면서 위치를 함께 보정한다 — 실제 계산은
+        /// 게임 보드(BoardManager.PanZoom.cs)도 함께 쓰는 공용 유틸리티
+        /// (Board/MapZoomUtil.cs)로 뽑아냈다. 예전엔 여기 따로(부모 기준
+        /// 로컬 좌표로) 구현했었는데, 그 방식은 부모(캔버스)의 pivot과
+        /// _mapArea의 anchor가 우연히 일치해야만 맞는 결과가 나오는 취약한
+        /// 수식이라 이 화면(코너 anchor)에서 줌 중심이 화면 좌하단으로
+        /// 쏠리는 버그가 났다 — 공용 유틸리티는 그 문제 자체가 없다.</summary>
+        private void ZoomAt(Vector2 screenPos, float factor)
+        {
+            if (_mapArea == null)
+            {
+                return;
+            }
+            _zoomLevel = MapZoomUtil.ApplyZoomAtScreenPoint(_mapArea, screenPos, _zoomLevel, _baseScaleFactor, factor, MinZoom, MaxZoom);
+        }
+
         // ── UI 빌드 ──────────────────────────────────────────────────
 
         private void BuildSizeRow()
@@ -214,148 +297,152 @@ namespace TmgBoard
             }
 
             CreateButton(rowRect, "게임 시작 ▶", OnStartGamePressed);
-            CreateButton(rowRect, "프리셋 저장", OnSavePresetPressed);
-            CreateButton(rowRect, "프리셋 불러오기", OnLoadPresetPressed);
+            CreateIconButton(rowRect, Resources.Load<Texture2D>("UI/SaveButton"), 32f, OnSavePresetPressed);
         }
 
-        /// <summary>미션 프리셋 저장/불러오기용 다이얼로그 두 개 — 이름 입력은
-        /// 기존 InputDialog를, 파일 선택은 로스터 임포트가 쓰던
-        /// RosterFileDialog를(제목만 바꿔) 그대로 재사용한다. 둘 다 이
-        /// 화면(MissionSetupController) 전용 인스턴스라 로스터 쪽 파일
-        /// 다이얼로그(게임 화면에만 있음)와는 완전히 별개다.</summary>
+        /// <summary>미션 프리셋 저장용 다이얼로그 — 이름 입력은 기존
+        /// InputDialog를 그대로 재사용한다(이 화면 전용 인스턴스).</summary>
         private void BuildPresetDialogs()
         {
             _presetNameDialog = new GameObject("PresetNameDialog").AddComponent<InputDialog>();
             _presetNameDialog.transform.SetParent(Root, false);
             _presetNameDialog.Confirmed += OnPresetNameConfirmed;
-
-            _presetLoadDialog = new GameObject("PresetLoadDialog").AddComponent<RosterFileDialog>();
-            _presetLoadDialog.transform.SetParent(Root, false);
-            _presetLoadDialog.FileSelected += OnPresetFileSelected;
-            _presetLoadDialog.Cancelled += () => _presetPreviewGo.SetActive(false);
-            _presetLoadDialog.FileHighlighted += OnPresetFileHighlighted;
-            _presetLoadDialog.FileHighlightCleared += ClearPresetPreviewContent;
-
-            BuildPresetPreviewPanel();
         }
 
-        // ── 미션 프리셋 미리보기 ─────────────────────────────────────────
-        // "프리셋 불러오기" 목록에서 파일 위에 마우스를 올리면 그 배치구역/
-        // 지형/미션 목표를 작은 지도로 그려 보여준다(사용자 요청). 실제로
-        // 화면에 배치하기 전에 미리 볼 수 있게 — RosterFileDialog 패널
-        // (560 폭, 화면 중앙 앵커) 오른쪽에 별도 패널로 붙인다.
+        // ── 미션 프리셋 목록(우측 패널) ───────────────────────────────────
+        // 예전엔 "프리셋 불러오기" 버튼 → 파일 탐색 다이얼로그 → 마우스
+        // 올리면 미리보기 순서였는데, 사용자 요청으로 화면 우측에 모든
+        // 프리셋의 미리보기를 항상 목록으로 띄워두고 클릭하면 바로
+        // 불러오는 방식으로 바꿨다(다이얼로그/미리보기 패널 자체가 없어짐).
 
-        private const float PresetPreviewBoxSize = 220f;
-        private const float PresetPreviewPanelWidth = 260f;
+        private const float PresetThumbnailSize = 96f;
+        private const float PresetListPanelWidth = 220f;
 
-        private GameObject _presetPreviewGo;
-        private RectTransform _presetPreviewMapArea;
-        private TextMeshProUGUI _presetPreviewHintLabel;
-        private readonly List<GameObject> _presetPreviewSpawned = new List<GameObject>();
-
-        private void BuildPresetPreviewPanel()
+        /// <summary>화면 우측, MatchSettings 패널 바로 아래부터 화면 하단까지
+        /// 채우는 스크롤 목록 — Deployments/ 폴더의 모든 *.json을 미리보기
+        /// 썸네일+파일명으로 나열하고, 클릭하면 그 자리에서 바로
+        /// 불러온다(LoadPresetFromFile).</summary>
+        private void BuildPresetListPanel(float topOffset)
         {
-            _presetPreviewGo = new GameObject("PresetPreview", typeof(RectTransform));
-            _presetPreviewGo.transform.SetParent(Root, false);
-            var rect = (RectTransform)_presetPreviewGo.transform;
-            rect.anchorMin = new Vector2(0.5f, 0.5f);
-            rect.anchorMax = new Vector2(0.5f, 0.5f);
-            rect.pivot = new Vector2(0f, 0.5f);
-            // RosterFileDialog의 패널은 화면 중앙 앵커에 폭 560 고정이라, 그
-            // 오른쪽 절반 끝(중앙+280)에서 여백 12를 두고 이어붙인다.
-            rect.anchoredPosition = new Vector2(280f + 12f, 0f);
-            rect.sizeDelta = new Vector2(PresetPreviewPanelWidth, 480f);
+            var panelGo = new GameObject("PresetList", typeof(RectTransform));
+            panelGo.transform.SetParent(Root, false);
+            var panelRect = (RectTransform)panelGo.transform;
+            panelRect.anchorMin = new Vector2(1f, 0f);
+            panelRect.anchorMax = new Vector2(1f, 1f);
+            panelRect.pivot = new Vector2(1f, 0.5f);
+            float bottomInset = MarginPx;
+            panelRect.anchoredPosition = new Vector2(-MarginPx, (bottomInset - topOffset) / 2f);
+            panelRect.sizeDelta = new Vector2(PresetListPanelWidth, -(topOffset + bottomInset));
 
-            var bg = _presetPreviewGo.AddComponent<Image>();
-            bg.color = new Color(0.15f, 0.15f, 0.15f, 0.98f);
-            // 미리보기 패널이 RosterFileDialog의 전체화면 반투명 배경 위에
-            // 얹혀 있으므로(같은 화면 영역), raycastTarget을 켜서 이 패널
-            // 위에서의 클릭이 그 아래 배경까지 뚫고 내려가 "바깥 클릭 =
-            // 취소"로 잘못 처리되지 않게 막는다.
-            bg.raycastTarget = true;
+            var bg = panelGo.AddComponent<Image>();
+            bg.color = new Color(0.15f, 0.15f, 0.15f, 0.95f);
 
-            var layout = _presetPreviewGo.AddComponent<VerticalLayoutGroup>();
-            layout.padding = new RectOffset(12, 12, 12, 12);
-            layout.spacing = 8f;
-            layout.childAlignment = TextAnchor.UpperCenter;
+            var layout = panelGo.AddComponent<VerticalLayoutGroup>();
+            layout.padding = new RectOffset(8, 8, 8, 8);
+            layout.spacing = 6f;
             layout.childControlWidth = true;
+            layout.childForceExpandWidth = true;
             layout.childControlHeight = true;
-            layout.childForceExpandWidth = false;
             layout.childForceExpandHeight = false;
 
-            float contentWidth = PresetPreviewPanelWidth - 24f;
-
-            var title = CreateLabel((RectTransform)_presetPreviewGo.transform, "미리보기");
+            var title = CreateLabel(panelRect, "프리셋 (클릭하면 바로 불러오기)");
             var titleLe = title.gameObject.AddComponent<LayoutElement>();
-            titleLe.preferredWidth = contentWidth;
             titleLe.preferredHeight = 20f;
 
-            var mapAreaGo = new GameObject("PreviewMap", typeof(RectTransform));
-            mapAreaGo.transform.SetParent(_presetPreviewGo.transform, false);
-            var mapAreaLe = mapAreaGo.AddComponent<LayoutElement>();
-            mapAreaLe.preferredWidth = PresetPreviewBoxSize;
-            mapAreaLe.preferredHeight = PresetPreviewBoxSize;
-            _presetPreviewMapArea = (RectTransform)mapAreaGo.transform;
-            _presetPreviewMapArea.sizeDelta = new Vector2(PresetPreviewBoxSize, PresetPreviewBoxSize);
-            var mapAreaBg = mapAreaGo.AddComponent<Image>();
-            mapAreaBg.color = new Color(0.05f, 0.05f, 0.05f, 1f);
-            mapAreaBg.raycastTarget = false;
+            _presetListContent = ScrollListUtil.Create(panelRect, 100f, new Color(0f, 0f, 0f, 0.15f), out _, out var scrollLe);
+            scrollLe.flexibleHeight = 1f; // 남는 세로 공간을 전부 목록이 차지한다.
 
-            _presetPreviewHintLabel = CreateLabel((RectTransform)_presetPreviewGo.transform, "파일에 마우스를 올리면\n미리보기가 나타납니다");
-            _presetPreviewHintLabel.fontSize = 11f;
-            _presetPreviewHintLabel.color = new Color(0.7f, 0.7f, 0.7f, 1f);
-            var hintLe = _presetPreviewHintLabel.gameObject.AddComponent<LayoutElement>();
-            hintLe.preferredWidth = contentWidth;
-            hintLe.preferredHeight = 40f;
-
-            _presetPreviewGo.SetActive(false);
+            RefreshPresetList();
         }
 
-        private void OnPresetFileHighlighted(string path)
+        /// <summary>Deployments/ 폴더를 다시 스캔해서 목록을 처음부터 다시
+        /// 그린다 — 프리셋 저장 직후에도 새로 저장된 파일이 바로 보이도록
+        /// 다시 부른다(OnPresetNameConfirmed).</summary>
+        private void RefreshPresetList()
         {
-            string jsonText;
+            for (int i = _presetListContent.childCount - 1; i >= 0; i--)
+            {
+                Destroy(_presetListContent.GetChild(i).gameObject);
+            }
+
+            string[] files;
             try
             {
-                jsonText = File.ReadAllText(path);
+                files = Directory.GetFiles(ResolvePresetDirectory(), "*.json");
             }
             catch (Exception)
             {
-                ClearPresetPreviewContent();
                 return;
             }
+            Array.Sort(files, StringComparer.OrdinalIgnoreCase);
 
-            if (!MissionPresetIO.TryLoad(jsonText, out var mapPreset, out var zones, out var objectives, out var terrain, out _))
+            foreach (var path in files)
             {
-                ClearPresetPreviewContent();
-                return;
-            }
-
-            RenderPresetPreview(mapPreset, zones, objectives, terrain);
-        }
-
-        private void ClearPresetPreviewContent()
-        {
-            foreach (var go in _presetPreviewSpawned)
-            {
-                if (go != null)
+                string jsonText;
+                try
                 {
-                    Destroy(go);
+                    jsonText = File.ReadAllText(path);
                 }
+                catch (Exception)
+                {
+                    continue;
+                }
+                if (!MissionPresetIO.TryLoad(jsonText, out var mapPreset, out var zones, out var objectives, out var terrain, out _))
+                {
+                    continue;
+                }
+                CreatePresetListItem(path, mapPreset, zones, objectives, terrain);
             }
-            _presetPreviewSpawned.Clear();
-            _presetPreviewHintLabel.gameObject.SetActive(true);
         }
 
-        private void RenderPresetPreview(string mapPreset, List<DeploymentZoneData> zones,
+        private void CreatePresetListItem(string path, string mapPreset, List<DeploymentZoneData> zones,
                 List<MissionObjectiveData> objectives, List<TerrainPieceData> terrain)
         {
-            ClearPresetPreviewContent();
-            _presetPreviewHintLabel.gameObject.SetActive(false);
+            var itemGo = new GameObject("PresetItem", typeof(RectTransform));
+            itemGo.transform.SetParent(_presetListContent, false);
+            var itemLayout = itemGo.AddComponent<VerticalLayoutGroup>();
+            itemLayout.padding = new RectOffset(6, 6, 6, 6);
+            itemLayout.spacing = 4f;
+            itemLayout.childAlignment = TextAnchor.UpperCenter;
+            itemLayout.childControlWidth = true;
+            itemLayout.childForceExpandWidth = true;
+            itemLayout.childControlHeight = true;
+            itemLayout.childForceExpandHeight = false;
 
+            var itemBg = itemGo.AddComponent<Image>();
+            itemBg.color = new Color(0.22f, 0.22f, 0.22f, 1f);
+            var itemBtn = itemGo.AddComponent<Button>();
+            itemBtn.targetGraphic = itemBg;
+            itemBtn.onClick.AddListener(() => LoadPresetFromFile(path));
+
+            var thumbGo = new GameObject("Thumb", typeof(RectTransform));
+            thumbGo.transform.SetParent(itemGo.transform, false);
+            var thumbLe = thumbGo.AddComponent<LayoutElement>();
+            thumbLe.preferredWidth = PresetThumbnailSize;
+            thumbLe.preferredHeight = PresetThumbnailSize;
+            var thumbRect = (RectTransform)thumbGo.transform;
+            var thumbBg = thumbGo.AddComponent<Image>();
+            thumbBg.color = new Color(0.05f, 0.05f, 0.05f, 1f);
+            thumbBg.raycastTarget = false;
+            DrawPresetThumbnail(thumbRect, PresetThumbnailSize, mapPreset, zones, objectives, terrain);
+
+            var nameLabel = CreateLabel((RectTransform)itemGo.transform, Path.GetFileNameWithoutExtension(path));
+            nameLabel.fontSize = 11f;
+            var nameLe = nameLabel.gameObject.AddComponent<LayoutElement>();
+            nameLe.preferredHeight = 28f;
+        }
+
+        /// <summary>배치구역/지형/미션 목표를 boxSize 크기의 작은 지도로 그려서
+        /// previewMapArea 아래에 채운다 — 프리셋 목록 항목 하나하나가 이걸
+        /// 부른다(항목 자체가 통째로 파괴될 때 자식도 같이 없어지므로 별도
+        /// 정리 로직은 필요 없다).</summary>
+        private void DrawPresetThumbnail(RectTransform previewMapArea, float boxSize, string mapPreset,
+                List<DeploymentZoneData> zones, List<MissionObjectiveData> objectives, List<TerrainPieceData> terrain)
+        {
             Vector2 mapSize = GameConstants.MapSizePresets.TryGetValue(mapPreset, out var sz)
                     ? sz
                     : GameConstants.MapSizePresets[GameConstants.DefaultMapSizePreset];
-            float scale = Mathf.Min(PresetPreviewBoxSize / mapSize.x, PresetPreviewBoxSize / mapSize.y);
+            float scale = Mathf.Min(boxSize / mapSize.x, boxSize / mapSize.y);
             Vector2 drawSize = mapSize * scale;
 
             // 코너 원점([0,mapSize]) mm 좌표를 미리보기 박스의 중심 원점
@@ -367,7 +454,7 @@ namespace TmgBoard
             }
 
             var mapBgGo = new GameObject("MapBg", typeof(RectTransform));
-            mapBgGo.transform.SetParent(_presetPreviewMapArea, false);
+            mapBgGo.transform.SetParent(previewMapArea, false);
             var mapBgRect = (RectTransform)mapBgGo.transform;
             mapBgRect.anchorMin = new Vector2(0.5f, 0.5f);
             mapBgRect.anchorMax = new Vector2(0.5f, 0.5f);
@@ -377,7 +464,6 @@ namespace TmgBoard
             var mapBgImg = mapBgGo.AddComponent<Image>();
             mapBgImg.color = new Color(0.15f, 0.18f, 0.15f, 1f);
             mapBgImg.raycastTarget = false;
-            _presetPreviewSpawned.Add(mapBgGo);
 
             foreach (var z in zones)
             {
@@ -394,7 +480,7 @@ namespace TmgBoard
                 bool horizontal = z.Edge == "top" || z.Edge == "bottom";
 
                 var go = new GameObject("Zone", typeof(RectTransform));
-                go.transform.SetParent(_presetPreviewMapArea, false);
+                go.transform.SetParent(previewMapArea, false);
                 var rt = (RectTransform)go.transform;
                 rt.anchorMin = new Vector2(0.5f, 0.5f);
                 rt.anchorMax = new Vector2(0.5f, 0.5f);
@@ -404,13 +490,12 @@ namespace TmgBoard
                 var img = go.AddComponent<Image>();
                 img.color = ZoneColors.TryGetValue(z.Player, out var c) ? c : Color.white;
                 img.raycastTarget = false;
-                _presetPreviewSpawned.Add(go);
             }
 
             foreach (var t in terrain)
             {
                 var go = new GameObject("Terrain", typeof(RectTransform));
-                go.transform.SetParent(_presetPreviewMapArea, false);
+                go.transform.SetParent(previewMapArea, false);
                 var rt = (RectTransform)go.transform;
                 rt.anchorMin = new Vector2(0.5f, 0.5f);
                 rt.anchorMax = new Vector2(0.5f, 0.5f);
@@ -421,13 +506,12 @@ namespace TmgBoard
                 var img = go.AddComponent<Image>();
                 img.color = new Color(0.55f, 0.45f, 0.3f, 0.9f);
                 img.raycastTarget = false;
-                _presetPreviewSpawned.Add(go);
             }
 
             foreach (var o in objectives)
             {
                 var go = new GameObject($"Objective_{o.Number}", typeof(RectTransform));
-                go.transform.SetParent(_presetPreviewMapArea, false);
+                go.transform.SetParent(previewMapArea, false);
                 var rt = (RectTransform)go.transform;
                 rt.anchorMin = new Vector2(0.5f, 0.5f);
                 rt.anchorMax = new Vector2(0.5f, 0.5f);
@@ -452,7 +536,6 @@ namespace TmgBoard
                 label.alignment = TextAlignmentOptions.Center;
                 label.color = Color.white;
                 label.raycastTarget = false;
-                _presetPreviewSpawned.Add(go);
             }
         }
 
@@ -526,7 +609,7 @@ namespace TmgBoard
         /// 아직 포함되지 않는다 — 프리셋은 배치구역/지형/목표까지만 다루는
         /// 기존 스키마라, 이 값들을 넣으려면 스키마를 같이 넓혀야 해서 이번
         /// 요청 범위 밖으로 남겨뒀다.</summary>
-        private void BuildMatchSettingsPanel()
+        private RectTransform BuildMatchSettingsPanel()
         {
             var panelGo = new GameObject("MatchSettings", typeof(RectTransform));
             panelGo.transform.SetParent(Root, false);
@@ -558,6 +641,7 @@ namespace TmgBoard
             IntStepperField.Create(panelRect, "최대 라운드", 90f, MissionData.MaxRounds, 1, 20, v => MissionData.MaxRounds = v);
             IntStepperField.Create(panelRect, "기본 서플라이", 90f, MissionData.BaseSupply, 0, 999, v => MissionData.BaseSupply = v);
             IntStepperField.Create(panelRect, "라운드당 증가", 90f, MissionData.SupplyPerRound, 0, 999, v => MissionData.SupplyPerRound = v);
+            return panelRect;
         }
 
         private void BuildMapArea()
@@ -662,6 +746,27 @@ namespace TmgBoard
             return btn;
         }
 
+        /// <summary>텍스트 대신 아이콘 하나로 된 정사각형 버튼(사용자 요청 —
+        /// "프리셋 저장" 버튼을 SaveButton.png로) — CreateButton과 달리
+        /// 배경색 없이 아이콘 자체만 보여준다(마커바의 아이콘 버튼들과
+        /// 같은 스타일).</summary>
+        private static Button CreateIconButton(RectTransform parent, Texture2D icon, float size, UnityEngine.Events.UnityAction onClick)
+        {
+            var go = new GameObject("IconBtn", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.sizeDelta = new Vector2(size, size);
+
+            var img = go.AddComponent<RawImage>();
+            img.texture = icon;
+
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(onClick);
+
+            return btn;
+        }
+
         private Button CreateZoneToggleButton(RectTransform parent, string player)
         {
             var btn = CreateButton(parent, $"{player} 배치구역", () => OnZoneButtonClicked(player));
@@ -739,15 +844,20 @@ namespace TmgBoard
             _zoneLayer.sizeDelta = mapSize;
             _terrainLayer.sizeDelta = mapSize;
             _objectiveLayer.sizeDelta = mapSize;
+            _zoomLevel = 1f; // 지도 크기를 바꾸면 줌/팬도 깨끗한 상태로 되돌린다.
             UpdateMapLayout();
         }
 
-        /// <summary>지도가 팔레트/크기 행 아래 남는 뷰포트 안에 들어오도록
-        /// 축소해서 배치한다(원본 mm 크기가 뷰포트보다 작으면 1:1로 그대로).
-        /// Godot판 MissionSetup.gd의 _layout()에서 스케일 계산 부분만 대응 —
-        /// 패닝/줌 인터랙션은 아직 없다. RectTransformUtility의 화면→로컬
-        /// 좌표 변환은 이 스케일을 자동으로 고려하므로, 좌표 계산 코드는
-        /// 손댈 필요가 없다.</summary>
+        /// <summary>지도가 팔레트/크기 행/우측 프리셋 목록을 뺀 남는 뷰포트
+        /// 안에 들어오도록 축소해서 배치한다(원본 mm 크기가 뷰포트보다
+        /// 작으면 1:1로 그대로),
+        /// 그 뷰포트 안에서 정중앙에 오도록 놓는다(사용자 요청 — 예전엔
+        /// 뷰포트의 좌하단 구석에 딱 붙어서 화면 왼쪽 아래로 치우쳐 보였다).
+        /// 여기서 계산하는 scale은 "뷰포트에 꽉 맞추는" 기준 배율
+        /// (_baseScaleFactor)일 뿐이고, 실제 적용 배율은 여기에 사용자가
+        /// 휠로 조절한 _zoomLevel을 곱한 값이다 — 게임 보드(BoardManager.
+        /// PanZoom.cs)와 완전히 같은 구조. 창 크기가 바뀔 때마다(Update())
+        /// 다시 불려서 팬 오프셋도 이 정중앙 위치로 재설정된다.</summary>
         private void UpdateMapLayout()
         {
             if (_mapArea == null)
@@ -755,16 +865,21 @@ namespace TmgBoard
                 return;
             }
             float left = MarginPx + 180f + MarginPx; // 팔레트 폭 + 여백
+            float right = MarginPx + PresetListPanelWidth + MarginPx; // 프리셋 목록 폭 + 여백
             float top = MarginPx + 32f + MarginPx; // 크기 선택 행 높이 + 여백
-            float viewportW = Mathf.Max(Screen.width - left - MarginPx, 10f);
+            float viewportW = Mathf.Max(Screen.width - left - right, 10f);
             float viewportH = Mathf.Max(Screen.height - top - MarginPx, 10f);
 
             Vector2 mapSize = MapSize;
             float scale = Mathf.Min(viewportW / mapSize.x, viewportH / mapSize.y);
             scale = Mathf.Min(scale, 1f);
+            _baseScaleFactor = scale;
 
-            _mapArea.localScale = new Vector3(scale, scale, 1f);
-            _mapArea.anchoredPosition = new Vector2(left, MarginPx);
+            float totalScale = scale * _zoomLevel;
+            _mapArea.localScale = new Vector3(totalScale, totalScale, 1f);
+            float extraW = Mathf.Max(viewportW - mapSize.x * totalScale, 0f);
+            float extraH = Mathf.Max(viewportH - mapSize.y * totalScale, 0f);
+            _mapArea.anchoredPosition = new Vector2(left + extraW / 2f, MarginPx + extraH / 2f);
         }
 
         // ── 지형 배치 ────────────────────────────────────────────────────
@@ -1241,9 +1356,8 @@ namespace TmgBoard
 
         // ── 미션 프리셋 저장/불러오기 ──────────────────────────────────
         // 배치구역/지형/미션 목표 배치를 JSON 파일로 저장했다가 나중에 다시
-        // 불러온다(사용자 요청). 저장 위치는 로스터 JSON과 같은 Document/
-        // 폴더 — 불러오기 브라우저(RosterFileDialog 재사용)의 시작 폴더와
-        // 맞춰야 하므로.
+        // 불러온다(사용자 요청). 저장 위치(Deployments/)는 우측 프리셋 목록
+        // 패널(BuildPresetListPanel)이 스캔하는 폴더와 같아야 한다.
 
         private void OnSavePresetPressed()
         {
@@ -1273,6 +1387,7 @@ namespace TmgBoard
             try
             {
                 MissionPresetIO.Save(path, _currentPreset, zones, objectives, terrain);
+                RefreshPresetList(); // 방금 저장한 파일이 목록에 바로 보이도록.
             }
             catch (Exception e)
             {
@@ -1280,19 +1395,11 @@ namespace TmgBoard
             }
         }
 
-        private void OnLoadPresetPressed()
+        /// <summary>프리셋 목록 항목을 클릭하면 바로 불러온다(예전엔 파일
+        /// 탐색 다이얼로그의 FileSelected 이벤트가 이걸 불렀는데, 그
+        /// 다이얼로그 자체가 없어져서 목록 항목의 클릭이 직접 부른다).</summary>
+        private void LoadPresetFromFile(string path)
         {
-            _presetLoadDialog.SetStartDirectory(ResolvePresetDirectory());
-            _presetLoadDialog.Open("미션 프리셋 선택");
-            ClearPresetPreviewContent();
-            _presetPreviewGo.SetActive(true);
-            _presetPreviewGo.transform.SetAsLastSibling(); // 다이얼로그 자체의 반투명 배경보다 위에 그려져야 한다.
-        }
-
-        private void OnPresetFileSelected(string path)
-        {
-            _presetPreviewGo.SetActive(false);
-
             string jsonText;
             try
             {

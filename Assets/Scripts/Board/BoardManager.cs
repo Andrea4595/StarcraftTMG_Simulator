@@ -38,6 +38,7 @@ namespace TmgBoard
         [SerializeField] private RectTransform terrainLayer;
         [SerializeField] private DiceRollDialog diceRollDialog;
         [SerializeField] private WeaponProfileDialog weaponProfileDialog;
+        [SerializeField] private ConfirmDialog exitConfirmDialog;
         [SerializeField] private Vector2 mapSizeMm = new Vector2(36f * GameConstants.MmPerInch, 36f * GameConstants.MmPerInch);
 
         private const float DuplicateGapMm = 4f;
@@ -308,6 +309,21 @@ namespace TmgBoard
         public void ConfigureWeaponProfile(WeaponProfileDialog weaponProfileDialogRef)
         {
             weaponProfileDialog = weaponProfileDialogRef;
+        }
+
+        /// <summary>마커바 "나가기" 버튼(BoardManager.Markers.cs의
+        /// CreateExitButton)이 여는 확인 창을 주입한다 — 확인을 누르면
+        /// 진행 중이던 판을 버리고 미션 셋업 씬으로 돌아간다(OnExitConfirmed).</summary>
+        public void ConfigureExit(ConfirmDialog exitConfirmDialogRef)
+        {
+            exitConfirmDialog = exitConfirmDialogRef;
+            exitConfirmDialog.Confirmed += OnExitConfirmed;
+        }
+
+        private void OnExitConfirmed()
+        {
+            MatchState.Reset();
+            UnityEngine.SceneManagement.SceneManager.LoadScene(GameConstants.MissionSetupSceneName);
         }
 
         /// <summary>미션 설정 핸드오프 등, 인스펙터 대신 코드로 지도 크기를

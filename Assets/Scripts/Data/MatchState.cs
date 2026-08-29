@@ -23,5 +23,20 @@ namespace TmgBoard
             int kill = KillVp.TryGetValue(player, out var k) ? k : 0;
             return mission + kill;
         }
+
+        /// <summary>진행 중이던 판을 완전히 버릴 때(게임 화면의 "나가기" 버튼 —
+        /// 미션 셋업으로 돌아가기) 호출한다 — 이 클래스는 씬 전환과 무관하게
+        /// 계속 살아있는 정적 클래스라, 명시적으로 리셋해주지 않으면 다음
+        /// 판이 이전 판의 라운드/서플라이/VP를 그대로 이어받는다.</summary>
+        public static void Reset()
+        {
+            RoundNumber = 1;
+            Supply = 0;
+            PhaseIndex = 0;
+            MissionVp["A"] = 0;
+            MissionVp["B"] = 0;
+            KillVp["A"] = 0;
+            KillVp["B"] = 0;
+        }
     }
 }
