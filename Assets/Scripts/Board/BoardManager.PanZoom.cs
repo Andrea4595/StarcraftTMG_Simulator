@@ -103,14 +103,14 @@ namespace TmgBoard
             var parent = mapArea.parent as RectTransform;
             Vector2 avail = parent != null ? parent.rect.size : new Vector2(Screen.width, Screen.height);
 
-            float usableHeight = avail.y - GameConstants.ScoreboardHeight - MarkerBarHeight;
+            float usableHeight = avail.y - GameConstants.ScoreboardHeight - GameConstants.MarkerBarHeight;
             float fitScale = Mathf.Max(usableHeight - FitViewMarginPx * 2f, 1f) / mapSizeMm.y;
             mapArea.localScale = new Vector3(fitScale, fitScale, 1f);
 
             // 화면 정중앙이 아니라 두 바 사이 구간의 중앙으로 피봇을 옮긴다 —
             // 위 바가 아래 바보다 크면(지금은 84 vs 44) 그만큼 지도를 아래로
             // 내려야 두 바 사이에서 시각적으로 가운데에 온다.
-            float pivotY = (MarkerBarHeight - GameConstants.ScoreboardHeight) / 2f;
+            float pivotY = (GameConstants.MarkerBarHeight - GameConstants.ScoreboardHeight) / 2f;
             mapArea.anchoredPosition = new Vector2(0f, pivotY);
 
             if (_baseScaleFactor > 0.0001f)

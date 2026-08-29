@@ -39,5 +39,9 @@ namespace TmgBoard
         /// 하나씩 그 모델의 메모에 자동으로 채워 넣는다(BoardManager.Roster.cs의
         /// BeginDeploymentDrag / BoardManager.UnitMove.cs의 SpawnDeploymentFollowers).</summary>
         public List<string> Specialists = new List<string>();
+
+        /// <summary>유닛 상세 패널 표시용 — 로스터 JSON의 나머지 모든 필드(스탯표/
+        /// 태그/능력/무기 등). 로스터 임포트가 아닌 애드혹 유닛은 null.</summary>
+        public RosterUnitDetail Detail;
     }
 }

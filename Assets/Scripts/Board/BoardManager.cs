@@ -37,6 +37,7 @@ namespace TmgBoard
         [SerializeField] private RectTransform markerLayer;
         [SerializeField] private RectTransform terrainLayer;
         [SerializeField] private DiceRollDialog diceRollDialog;
+        [SerializeField] private WeaponProfileDialog weaponProfileDialog;
         [SerializeField] private Vector2 mapSizeMm = new Vector2(36f * GameConstants.MmPerInch, 36f * GameConstants.MmPerInch);
 
         private const float DuplicateGapMm = 4f;
@@ -124,6 +125,27 @@ namespace TmgBoard
         private readonly Dictionary<string, LayoutElement> _tacticalCardListLayoutElements = new Dictionary<string, LayoutElement>();
         private readonly Dictionary<string, GameObject> _tacticalCardSectionRoots = new Dictionary<string, GameObject>();
 
+        // ── 유닛 상세 패널 ────────────────────────────────────────────────
+        // 팀 패널 전체를(로스터 불러오기 버튼/예비대 목록/토큰/택티컬 카드를
+        // 전부 가리고) 대신 채운다 — BoardManager.UnitDetail.cs 참고.
+        private readonly Dictionary<string, RectTransform> _unitDetailContainers = new Dictionary<string, RectTransform>();
+        private readonly Dictionary<string, LayoutElement> _unitDetailLayoutElements = new Dictionary<string, LayoutElement>();
+        // team별로 독립된 "지금 이 패널에 무엇을 마지막으로 그렸나" 기록 —
+        // 두 팀 패널이 동시에, 서로 다른 유닛을 보여줄 수 있어야 한다(사용자
+        // 요청: 공격자 무기 프로필 + 수비자 방어/회피를 동시에 봐야 함).
+        private readonly Dictionary<string, object> _unitDetailLastSourceByTeam = new Dictionary<string, object>();
+        // 위 소스가 같은 참조를 유지하는 동안에도(같은 Unit) 모델 수가 바뀔
+        // 수 있어서(팔로워가 나중에 붙거나, 모델이 죽는 등) 참조 비교만으로는
+        // 다시 그려야 할 시점을 놓친다 — 마지막으로 그렸을 때의 모델 수도
+        // 같이 기록해둔다(UpdateUnitDetailPanelForTeam 참고).
+        private readonly Dictionary<string, int> _unitDetailLastModelCountByTeam = new Dictionary<string, int>();
+        // 지도 위 유닛을 좌클릭하면 그 유닛의 team 쪽 항목이 켜진다
+        // (OnDragRequested) — 빈 땅을 좌클릭하면 둘 다 꺼진다(Update() 맨 끝),
+        // 같은 team의 다른 유닛을 좌클릭하면 그 team 항목만 바뀐다. 다른 team
+        // 유닛을 좌클릭해도 이 team의 항목엔 영향 없음(서로 독립). 우클릭
+        // 다이얼 메뉴 쪽 트리거보다 낮은 우선순위 — UpdateUnitDetailPanel 참고.
+        private readonly Dictionary<string, Unit> _selectedUnitForDetailByTeam = new Dictionary<string, Unit>();
+
         // ── 변위 베이스 재배치 ──────────────────────────────────────────
         private Base _displacementAnchor;
         private readonly List<Base> _displacementQueue = new List<Base>();
@@ -146,7 +168,8 @@ namespace TmgBoard
         private Base _measureFromBase;
 
         // ── 마커(활성화/점령/아이콘) ───────────────────────────────────
-        private const float MarkerBarHeight = 44f;
+        // 값 자체는 GameConstants.MarkerBarHeight로 옮겼다(WeaponProfileDialog/
+        // DiceRollDialog 같은 독립 컴포넌트도 지도 뷰포트 경계를 알아야 해서).
         private static readonly (string Kind, string Label)[] MarkerBarEntries =
         {
             ("activation", "활성화 마커"),
@@ -280,6 +303,13 @@ namespace TmgBoard
             diceRollDialog = diceRollDialogRef;
         }
 
+        /// <summary>유닛 상세 패널의 무기 능력 항목 "무기 프로필 보기" 버튼이 여는
+        /// 팝업을 주입한다 — 다이스 롤 창과 같은 이유로 독립 컴포넌트다.</summary>
+        public void ConfigureWeaponProfile(WeaponProfileDialog weaponProfileDialogRef)
+        {
+            weaponProfileDialog = weaponProfileDialogRef;
+        }
+
         /// <summary>미션 설정 핸드오프 등, 인스펙터 대신 코드로 지도 크기를
         /// 지정할 때(예: MissionData.MapPreset에서 온 크기).</summary>
         public void SetMapSizeMm(Vector2 sizeMm)
@@ -347,6 +377,7 @@ namespace TmgBoard
             HandleMeasureInput();
             HandleUndoRedoInput();
             UpdateHoveredUnit();
+            UpdateUnitDetailPanel();
 
             // 유닛 이동(리딩 모델)/팔로워 배치 중에만 적 인게이지 경고를
             // 켠다 — 일반 모델 드래그(유닛 이동 워크플로 밖)에는 적용하지
@@ -434,6 +465,17 @@ namespace TmgBoard
                 HandleMarkerPlacementInput();
                 return;
             }
+
+            // 여기까지 내려왔다는 건 이번 프레임 좌클릭이 그 어떤 특수 처리도
+            // 안 탔다는 뜻 — 베이스를 클릭했다면 위의 _draggingPiece 분기가
+            // 이미 return했을 것이므로, 남은 가능성은 빈 땅(또는 마커/미션
+            // 목표물처럼 유닛이 아닌 다른 raycastable) 클릭이다. 사용자 지정:
+            // "빈 땅을 클릭하거나... 꺼주면 돼" — 어느 team인지 특정할 수
+            // 없는 제스처이므로 두 team의 좌클릭 선택을 한꺼번에 해제한다.
+            if (Input.GetMouseButtonDown(0) && !IsPointerOverUi())
+            {
+                _selectedUnitForDetailByTeam.Clear();
+            }
         }
 
         private static bool IsPointerOverUi()
@@ -448,6 +490,16 @@ namespace TmgBoard
 
         private void OnDragRequested(Base piece)
         {
+            // 좌클릭 = 유닛 상세 패널 선택(사용자 지정) — 어떤 분기로 이어지든
+            // (일반 드래그/리딩·팔로워 이동 드래그) 상관없이 좌클릭 자체가
+            // "이 유닛을 보여달라"는 뜻이므로 이 함수의 맨 앞에서 무조건 처리한다.
+            // 토큰은 대상 밖(우클릭 트리거와 동일한 정책). team별로 따로
+            // 저장하므로 다른 team의 기존 선택은 안 건드린다.
+            if (piece.Unit != null && !piece.Unit.IsToken)
+            {
+                _selectedUnitForDetailByTeam[piece.Unit.Team] = piece.Unit;
+            }
+
             if (_pendingDeploymentDef != null)
             {
                 // 배치할 유닛을 놓을 자리를 고르는 중엔 기존 베이스를 잡아 끌 수 없다.
@@ -533,6 +585,17 @@ namespace TmgBoard
                 return;
             }
             _menuTarget = piece;
+            // 우클릭으로 다이얼 메뉴가 실제로 열리는 순간, 이 유닛과 같은
+            // team에서 이전에 좌클릭으로 선택해뒀던 것은 완전히 꺼진다(사용자
+            // 지정: "A 보던 것은 끄고 B를 보고 있는 것" — A/B가 같은
+            // 유닛이든 다른 유닛이든 마찬가지). team별로 독립이므로 다른
+            // team의 좌클릭 선택은 안 건드린다 — 이렇게 해야 메뉴가 닫힌 뒤
+            // 좌클릭 선택으로 되돌아가는 일 없이, 우클릭 스펙 그대로("메뉴
+            // 선택하면 꺼짐") 완전히 사라진다.
+            if (piece.Unit != null)
+            {
+                _selectedUnitForDetailByTeam.Remove(piece.Unit.Team);
+            }
             // 마우스 우클릭 지점이 아니라, 우클릭한 모델 자체를 다이얼 중심으로
             // 삼는다 — 패닝/줌 중인 mapArea 아래에 있는 조각의 화면 좌표를
             // 직접 구한다(Screen Space Overlay라 카메라 인자는 null).
@@ -704,6 +767,7 @@ namespace TmgBoard
                 Damages = damages,
                 Ranges = ranges,
                 SupplyOverride = unit.SupplyOverride,
+                Detail = unit.Detail,
             };
 
             foreach (var model in unit.Models.ToArray())
@@ -724,6 +788,10 @@ namespace TmgBoard
             if (unit == _hoveredUnit)
             {
                 _hoveredUnit = null;
+            }
+            if (_selectedUnitForDetailByTeam.TryGetValue(unit.Team, out var selectedForTeam) && selectedForTeam == unit)
+            {
+                _selectedUnitForDetailByTeam.Remove(unit.Team);
             }
             RefreshRangeOverlays();
 

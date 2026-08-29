@@ -9,19 +9,22 @@ namespace TmgBoard
     /// Godot판 GameBoard.gd의 _on_roster_file_selected/_parse_roster_name/
     /// _parse_roster_speed/_parse_roster_ranges 포팅 — MiniJson으로 판 JSON
     /// 트리(Dictionary/List)를 그대로 순회한다. 팀은 파일에 없고 불러올 때
-    /// 고른 쪽으로 붙는다. tags/abilities 등 시뮬레이터가 안 쓰는 나머지
-    /// 텍스트 필드는 그냥 무시한다(Godot판과 동일). "squad_tiers"(남은 모델
-    /// 수 구간별 서플라이 단계표)는 읽는다(pts는 여전히 무시) — 스코어보드의
-    /// 팀별 서플라이 표시에 쓰인다. "squad_tier_index"(로스터 작성 시 고른
-    /// 단계)는 안 읽는다 — 인게임 현재 서플라이는 항상 남은 모델 수로
-    /// 그때그때 다시 찾으므로 필요 없다. "tactical_cards"는 name/count만
-    /// 읽는다(gas_cost/resource/slots/abilities는 무시) — 예비대 패널의
-    /// 택티컬 카드 목록에 쓰인다. "supply_override"(int|null, 메딕류 능력의
-    /// 서플라이 "대입"값 — 단계표에 더하는 게 아니라 통째로 대체)와
-    /// "specialists"({"en","ko"} 이름 객체 리스트)도 읽는다 — 어느 모델이
-    /// 어느 전문가인지는 여기서 정하지 않고 배치 시점에 순서대로 배정한다
-    /// (PendingUnitDef.Specialists 참고). "abilities"/"squad_tier_index"/
-    /// "unit_type"/"tags"/"resource_label" 등 나머지는 여전히 무시한다.
+    /// 고른 쪽으로 붙는다. "squad_tiers"(남은 모델 수 구간별 서플라이
+    /// 단계표, pts 포함)는 읽는다 — 스코어보드의 팀별 서플라이 표시와 유닛
+    /// 상세 패널에 쓰인다. "squad_tier_index"(로스터 작성 시 고른 단계)는
+    /// 게임 로직에는 안 쓴다(인게임 실제 서플라이는 항상 남은 모델 수로
+    /// 그때그때 다시 찾는다) — 상세 패널 표시용으로만 읽는다.
+    /// "tactical_cards"는 name/count만 읽는다(gas_cost/resource/slots/
+    /// abilities는 무시) — 예비대 패널의 택티컬 카드 목록에 쓰인다.
+    /// "supply_override"(int|null, 메딕류 능력의 서플라이 "대입"값 — 단계표에
+    /// 더하는 게 아니라 통째로 대체)와 "specialists"({"en","ko"} 이름 객체
+    /// 리스트)도 읽는다 — 어느 모델이 어느 전문가인지는 여기서 정하지 않고
+    /// 배치 시점에 순서대로 배정한다(PendingUnitDef.Specialists 참고).
+    /// 그 밖의 나머지 필드(unit_type/stat의 shld·eva·arm·hp·siz/tags/
+    /// abilities 전체/specialists의 이중언어 원본)는 게임 로직에는 안
+    /// 쓰지만 ParseUnitDetail()이 유닛 상세 패널 표시용으로 통째로
+    /// 구조화해서 읽는다(PendingUnitDef.Detail 참고). "resource_label"은
+    /// 여전히 완전히 무시한다.
     /// </summary>
     public static class RosterImporter
     {
@@ -86,6 +89,7 @@ namespace TmgBoard
                         Ranges = ParseRosterRanges(GetList(unitData, "ranges")),
                         SupplyOverride = GetNullableInt(unitData, "supply_override"),
                         Specialists = ParseSpecialists(GetList(unitData, "specialists")),
+                        Detail = ParseUnitDetail(unitData),
                     });
                 }
             }
@@ -245,6 +249,217 @@ namespace TmgBoard
             return result;
         }
 
+        /// <summary>유닛 상세 패널을 위해 이 유닛의 로스터 JSON에서 게임 로직이
+        /// 안 쓰는 나머지 필드를 전부 구조화해서 읽는다. 실패해도(필드가 아예
+        /// 없어도) 예외를 던지지 않고 빈 값으로 채운 RosterUnitDetail을
+        /// 돌려준다 — 이 정보는 순수 표시용이라 못 읽어도 임포트 자체를
+        /// 막을 이유가 없다.</summary>
+        private static RosterUnitDetail ParseUnitDetail(Dictionary<string, object> unitData)
+        {
+            var (nameEn, nameKo) = ParseBilingualPair(unitData.TryGetValue("name", out var nameRaw) ? nameRaw : null);
+            var stat = GetDict(unitData, "stat");
+            return new RosterUnitDetail
+            {
+                NameEn = nameEn,
+                NameKo = nameKo,
+                UnitType = GetString(unitData, "unit_type", ""),
+                Shield = GetDisplayString(stat, "shld"),
+                Evasion = GetString(stat, "eva", ""),
+                Armor = GetString(stat, "arm", ""),
+                Hp = GetDisplayString(stat, "hp"),
+                Size = GetDisplayString(stat, "siz"),
+                Tags = ParseTags(GetList(unitData, "tags")),
+                Abilities = ParseAbilities(GetList(unitData, "abilities")),
+                SquadTierIndex = GetNullableInt(unitData, "squad_tier_index"),
+                Specialists = ParseSpecialistEntries(GetList(unitData, "specialists")),
+            };
+        }
+
+        private static List<RosterTag> ParseTags(List<object> raw)
+        {
+            var result = new List<RosterTag>();
+            if (raw == null)
+            {
+                return result;
+            }
+            foreach (var item in raw)
+            {
+                if (!(item is Dictionary<string, object> t))
+                {
+                    continue;
+                }
+                var (en, ko) = ParseBilingualPair(t.TryGetValue("name", out var n) ? n : null);
+                if (!string.IsNullOrEmpty(en) || !string.IsNullOrEmpty(ko))
+                {
+                    result.Add(new RosterTag { NameEn = en, NameKo = ko });
+                }
+            }
+            return result;
+        }
+
+        private static List<RosterSpecialistEntry> ParseSpecialistEntries(List<object> raw)
+        {
+            var result = new List<RosterSpecialistEntry>();
+            if (raw == null)
+            {
+                return result;
+            }
+            foreach (var item in raw)
+            {
+                var (en, ko) = ParseBilingualPair(item);
+                if (!string.IsNullOrEmpty(en) || !string.IsNullOrEmpty(ko))
+                {
+                    result.Add(new RosterSpecialistEntry { NameEn = en, NameKo = ko });
+                }
+            }
+            return result;
+        }
+
+        /// <summary>"abilities" 배열 — kind가 "rule"이면 "rule"({"en","ko"}) +
+        /// type/cost를, "weapon"이면 "stat"(사거리/명중/데미지/키워드 등)을
+        /// 읽는다. 둘 다 없는 미확인 kind가 와도 이름/phase 정도는 남긴다.</summary>
+        private static List<RosterAbilityEntry> ParseAbilities(List<object> raw)
+        {
+            var result = new List<RosterAbilityEntry>();
+            if (raw == null)
+            {
+                return result;
+            }
+            foreach (var item in raw)
+            {
+                if (!(item is Dictionary<string, object> a))
+                {
+                    continue;
+                }
+                var (nameEn, nameKo) = ParseBilingualPair(a.TryGetValue("name", out var n) ? n : null);
+                var entry = new RosterAbilityEntry
+                {
+                    Kind = GetString(a, "kind", ""),
+                    Id = GetString(a, "id", ""),
+                    NameEn = nameEn,
+                    NameKo = nameKo,
+                    Phase = GetString(a, "phase", ""),
+                    IsUpgrade = GetBool(a, "is_upgrade", false),
+                    Type = GetString(a, "type", ""),
+                    Cost = (int)GetFloat(a, "cost", 0f),
+                };
+                if (a.TryGetValue("rule", out var ruleRaw))
+                {
+                    var (ruleEn, ruleKo) = ParseBilingualPair(ruleRaw);
+                    entry.RuleEn = ruleEn;
+                    entry.RuleKo = ruleKo;
+                }
+                if (a.TryGetValue("stat", out var statRaw) && statRaw is Dictionary<string, object> stat)
+                {
+                    entry.Weapon = ParseWeaponStat(stat);
+                }
+                result.Add(entry);
+            }
+            return result;
+        }
+
+        private static RosterWeaponStat ParseWeaponStat(Dictionary<string, object> stat)
+        {
+            var w = new RosterWeaponStat
+            {
+                Range = GetDisplayString(stat, "rng"),
+                Target = ParseTraitName(stat.TryGetValue("tgt", out var tgtRaw) ? tgtRaw : null),
+                Roa = GetDisplayString(stat, "roa"),
+                Hit = GetString(stat, "hit", ""),
+                SurgeDie = GetString(stat, "sDie", ""),
+                Damage = GetDisplayString(stat, "dmg"),
+            };
+            if (GetList(stat, "surge") is List<object> surgeList)
+            {
+                foreach (var s in surgeList)
+                {
+                    var trait = ParseTraitName(s);
+                    if (trait != null)
+                    {
+                        w.Surge.Add(trait);
+                    }
+                }
+            }
+            if (GetList(stat, "keyword") is List<object> kwList)
+            {
+                foreach (var kwRaw in kwList)
+                {
+                    if (!(kwRaw is Dictionary<string, object> kw))
+                    {
+                        continue;
+                    }
+                    var (nameEn, nameKo) = ParseBilingualPair(kw.TryGetValue("name", out var kn) ? kn : null);
+                    string suffixEn = "", suffixKo = "";
+                    if (kw.TryGetValue("suffix", out var sfx))
+                    {
+                        (suffixEn, suffixKo) = ParseBilingualPair(sfx);
+                    }
+                    w.Keywords.Add(new RosterKeyword { NameEn = nameEn, NameKo = nameKo, SuffixEn = suffixEn, SuffixKo = suffixKo });
+                }
+            }
+            return w;
+        }
+
+        /// <summary>무기 stat의 "tgt"/"surge" 항목 — tags/keyword와 같은
+        /// {"name":{"en","ko"}} 모양이라 그 "name" 값을 꺼내 RosterTag로
+        /// 만든다. 예전 평문자열 스키마(구형 로스터 대비)와 "name" 래퍼 없이
+        /// {"en","ko"}만 바로 온 경우도 관대하게 받아준다 — 정보가 아예 없으면
+        /// null(호출부가 걸러서 목록에 안 넣는다).</summary>
+        private static RosterTag ParseTraitName(object raw)
+        {
+            if (raw is string s)
+            {
+                return string.IsNullOrEmpty(s) ? null : new RosterTag { NameEn = s, NameKo = s };
+            }
+            if (raw is Dictionary<string, object> dict)
+            {
+                object nameRaw = dict.TryGetValue("name", out var n) ? n : raw;
+                var (en, ko) = ParseBilingualPair(nameRaw);
+                if (string.IsNullOrEmpty(en) && string.IsNullOrEmpty(ko))
+                {
+                    return null;
+                }
+                return new RosterTag { NameEn = en, NameKo = ko };
+            }
+            return null;
+        }
+
+        /// <summary>ParseRosterName처럼 하나만 고르지 않고 en/ko 둘 다 돌려준다 —
+        /// 유닛 상세 패널은 "모든 정보"를 보여줘야 하므로 둘 다 필요하다.</summary>
+        private static (string En, string Ko) ParseBilingualPair(object raw)
+        {
+            if (raw is Dictionary<string, object> dict)
+            {
+                return (GetString(dict, "en", ""), GetString(dict, "ko", ""));
+            }
+            if (raw is string s)
+            {
+                return (s, s);
+            }
+            return ("", "");
+        }
+
+        /// <summary>rng/roa/hp/siz/dmg처럼 로스터 JSON에서 숫자([12])와 문자열
+        /// (["E"])이 섞여 나오는 필드를 표시용 문자열 하나로 통일한다. 정수면
+        /// 소수점 없이, 아니면 소수 둘째 자리까지.</summary>
+        private static string GetDisplayString(Dictionary<string, object> dict, string key)
+        {
+            if (dict == null || !dict.TryGetValue(key, out var v) || v == null)
+            {
+                return "";
+            }
+            if (v is double d)
+            {
+                float f = (float)d;
+                return Mathf.Approximately(f, Mathf.Floor(f)) ? ((int)d).ToString() : d.ToString("0.##");
+            }
+            if (v is bool b)
+            {
+                return b ? "true" : "false";
+            }
+            return v is string s ? s : v.ToString();
+        }
+
         private static List<SupplyTier> ParseSupplyTiers(List<object> raw)
         {
             var result = new List<SupplyTier>();
@@ -263,6 +478,7 @@ namespace TmgBoard
                     ModelMin = (int)GetFloat(t, "model_min", 0f),
                     ModelMax = (int)GetFloat(t, "model_max", int.MaxValue),
                     Supply = (int)GetFloat(t, "supply", 0f),
+                    Pts = (int)GetFloat(t, "pts", 0f),
                 });
             }
             return result;

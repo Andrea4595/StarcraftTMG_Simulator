@@ -23,7 +23,10 @@ namespace TmgBoard
         // 예비대/토큰/택티컬 카드 목록만 보인다.
         private const float RosterImportButtonFillHeight = 400f;
 
-        private const float PendingPanelWidth = 280f;
+        // GameConstants.PendingPanelWidth/MarkerBarHeight로 옮겼다 — 지도
+        // 뷰포트(화면 중앙, 팀 패널 사이 남는 영역) 경계를 알아야 하는
+        // WeaponProfileDialog/DiceRollDialog 같은 독립 컴포넌트도 같은 값을
+        // 참조해야 해서, 이 파일만의 private const로는 부족해졌다.
 
         /// <summary>팀 A는 왼쪽, 팀 B는 오른쪽에 각자 로스터 불러오기 버튼 +
         /// 예비대 유닛 목록 + 토큰 목록을 담은 패널을 하나씩 짓는다.</summary>
@@ -56,8 +59,8 @@ namespace TmgBoard
             panel.anchorMin = new Vector2(xAnchor, 0f);
             panel.anchorMax = new Vector2(xAnchor, 1f);
             panel.pivot = new Vector2(xAnchor, 0.5f);
-            panel.anchoredPosition = new Vector2(0f, (MarkerBarHeight - GameConstants.ScoreboardHeight) / 2f);
-            panel.sizeDelta = new Vector2(PendingPanelWidth, -(GameConstants.ScoreboardHeight + MarkerBarHeight));
+            panel.anchoredPosition = new Vector2(0f, (GameConstants.MarkerBarHeight - GameConstants.ScoreboardHeight) / 2f);
+            panel.sizeDelta = new Vector2(GameConstants.PendingPanelWidth, -(GameConstants.ScoreboardHeight + GameConstants.MarkerBarHeight));
 
             var bg = panelGo.AddComponent<Image>();
             bg.color = new Color(0.15f, 0.15f, 0.15f, 0.95f);
@@ -133,6 +136,16 @@ namespace TmgBoard
 
             _tacticalCardSectionRoots[team] = tacticalSectionGo;
             tacticalSectionGo.SetActive(false); // RefreshTacticalCardList()가 카드가 생기면 켠다.
+
+            // 유닛 상세 패널 — 위 네 섹션을 전부 가리고 이 패널 하나가 남는
+            // 세로 공간을 전부 차지한다(택티컬 카드 섹션과 같은 flexibleHeight=1
+            // 트릭). 평소엔 비활성 — BoardManager.UnitDetail.cs의
+            // UpdateUnitDetailPanel()이 켜고 끈다.
+            var detailContent = ScrollListUtil.Create(panel, 200f, new Color(0.1f, 0.1f, 0.1f, 0.6f), out _, out var detailLayoutElement);
+            detailLayoutElement.flexibleHeight = 1f;
+            _unitDetailContainers[team] = detailContent;
+            _unitDetailLayoutElements[team] = detailLayoutElement;
+            detailLayoutElement.gameObject.SetActive(false);
         }
 
         private static void CreateSectionLabel(Transform parent, string text)

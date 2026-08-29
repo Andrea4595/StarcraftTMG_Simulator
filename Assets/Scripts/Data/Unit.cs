@@ -36,6 +36,11 @@ namespace TmgBoard
         /// 항상 적용된다.</summary>
         public int? SupplyOverride;
 
+        /// <summary>유닛 상세 패널 표시용 — 로스터 JSON의 나머지 모든 필드(스탯표/
+        /// 태그/능력/무기 등). BeginDeploymentDrag가 PendingUnitDef.Detail을 그대로
+        /// 옮겨온다. 로스터 임포트가 아닌 애드혹 유닛/토큰은 null.</summary>
+        public RosterUnitDetail Detail;
+
         /// <summary>SupplyOverride가 있으면 그 값을 그대로 돌려준다(단계표
         /// 무시). 없으면 지금 남은 모델 수(Models.Count)에 해당하는 단계의
         /// 서플라이 값 — 모델이 줄어 하위 단계로 내려가면 그 즉시(매번 다시

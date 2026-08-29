@@ -12,6 +12,8 @@ namespace TmgBoard
         public const string DefaultMapSizePreset = "36x36";
 
         public const float ScoreboardHeight = 84f;
+        public const float MarkerBarHeight = 44f;
+        public const float PendingPanelWidth = 280f;
 
         public static readonly Dictionary<string, Vector2> MapSizePresets = new Dictionary<string, Vector2>
         {

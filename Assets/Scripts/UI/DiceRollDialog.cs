@@ -16,9 +16,15 @@ namespace TmgBoard
     /// 풀로 넘길 뿐이다. 서지 주사위 지정(우클릭)도 마찬가지로 순수 표시 보조.
     /// 보드/BoardManager 상태와 완전히 무관한 독립 컴포넌트 — ScoreboardPanel과
     /// 같은 패턴으로 Awake()에서 자기 UI를 스스로 짓는다.
+    ///
+    /// 배경 전체를 덮어 클릭을 막는 모달이 아니다 — 이 창을 열어둔 채로 무기
+    /// 프로필/상대 유닛의 방어·회피 정보를 동시에 봐야 한다는 사용자 요청에
+    /// 따라 다른 창/보드 클릭을 막지 않는 "떠있는 비독점 참고창"으로 만들었다
+    /// — 화면 아래쪽 가운데(마커바 위)에 고정으로 떠 있고, 닫기는 오직 자신의
+    /// "닫기" 버튼으로만 한다.
     /// </summary>
     [RequireComponent(typeof(RectTransform))]
-    public class DiceRollDialog : MonoBehaviour, IPointerDownHandler
+    public class DiceRollDialog : MonoBehaviour
     {
         private const int Columns = 10;
         private const int Rows = 4;
@@ -127,13 +133,6 @@ namespace TmgBoard
             gameObject.SetActive(false);
         }
 
-        /// <summary>패널 바깥(반투명 배경) 클릭 시 취소 — 이 프로젝트의 다른
-        /// 모달들(InputDialog 등)과 같은 관례.</summary>
-        public void OnPointerDown(PointerEventData eventData)
-        {
-            Close();
-        }
-
         // ── UI 골격 생성(한 번만) ────────────────────────────────────────
 
         private void BuildUi()
@@ -143,20 +142,26 @@ namespace TmgBoard
             rect.anchorMax = Vector2.one;
             rect.offsetMin = Vector2.zero;
             rect.offsetMax = Vector2.zero;
-
-            var bg = gameObject.AddComponent<Image>();
-            bg.color = new Color(0f, 0f, 0f, 0.35f);
+            // 배경 Image가 없다 — 화면 전체를 덮는 좌표계로만 쓰고(Panel을
+            // 화면 위쪽 가운데에 앵커시키기 위해), raycast는 안 받아서 클릭이
+            // 그대로 지도/다른 창으로 통과한다.
 
             var panelGo = new GameObject("Panel", typeof(RectTransform));
             panelGo.transform.SetParent(transform, false);
             var panelRect = (RectTransform)panelGo.transform;
-            panelRect.anchorMin = new Vector2(0.5f, 0.5f);
-            panelRect.anchorMax = new Vector2(0.5f, 0.5f);
-            panelRect.pivot = new Vector2(0.5f, 0.5f);
+            // 화면 위쪽 가운데(스코어보드 바로 아래)에 고정 — 무기 프로필이
+            // 이제 지도 하단에 딱 붙으므로 겹치지 않게 반대쪽(위)에 자리를
+            // 잡았다(둘 다 동시에 열어두고 봐야 한다는 사용자 요청).
+            panelRect.anchorMin = new Vector2(0.5f, 1f);
+            panelRect.anchorMax = new Vector2(0.5f, 1f);
+            panelRect.pivot = new Vector2(0.5f, 1f);
+            panelRect.anchoredPosition = new Vector2(0f, -(GameConstants.ScoreboardHeight + 20f));
             panelRect.sizeDelta = new Vector2(PanelWidth, 0f);
             var panelImage = panelGo.AddComponent<Image>();
             panelImage.color = new Color(0.13f, 0.13f, 0.13f, 0.98f);
-            panelGo.AddComponent<ClickBlocker>();
+            // 배경이 없어졌으니 "바깥 클릭 취소"로 새어나갈 일도 없다 — 패널
+            // 자체는 이미 raycastTarget=true인 Image가 있어 그 아래(지도)로
+            // 클릭이 통과하지 않는 것으로 충분하다(ClickBlocker 불필요).
 
             var panelLayout = panelGo.AddComponent<VerticalLayoutGroup>();
             panelLayout.padding = new RectOffset(16, 16, 14, 14);
@@ -301,6 +306,9 @@ namespace TmgBoard
 
             (_undoButton, _) = CreateButton(rowGo.transform, "되돌리기", OnUndoClicked);
             (_actionButton, _actionButtonLabel) = CreateButton(rowGo.transform, "히트 굴림", OnActionButtonClicked);
+            // 배경 클릭으로 닫는 방법이 없어졌으니(비독점 창으로 전환) 닫는
+            // 수단이 이 버튼 하나뿐이다 — 빠뜨리면 창을 다시 못 닫는다.
+            CreateButton(rowGo.transform, "닫기", Close);
         }
 
         private static (Button, TextMeshProUGUI) CreateButton(Transform parent, string label, UnityEngine.Events.UnityAction onClick)
@@ -812,17 +820,6 @@ namespace TmgBoard
             _confirmedPoolSize = snap.ConfirmedPoolSize;
             _threshold = snap.Threshold;
             RebuildForStage();
-        }
-
-        /// <summary>패널 위 클릭이 바깥 클릭(취소)으로 새어나가지 않게 막는다 —
-        /// InputDialog의 PanelBlocker와 같은 역할, 이 클래스 전용으로 하나
-        /// 더 둔다(private 중첩 클래스라 재사용 불가).</summary>
-        private class ClickBlocker : MonoBehaviour, IPointerDownHandler
-        {
-            public void OnPointerDown(PointerEventData eventData)
-            {
-                eventData.Use();
-            }
         }
 
         /// <summary>주사위 칸 하나의 호버/좌클릭/우클릭을 알려준다 — Button은

@@ -170,6 +170,7 @@ namespace TmgBoard
             };
             unit.SupplyTiers.AddRange(def.SupplyTiers);
             unit.SupplyOverride = def.SupplyOverride;
+            unit.Detail = def.Detail;
 
             var leading = CreatePieceObject(unit, def.SizeMm, def.FillColor, def.IsDisplacement);
             leading.RotationDegrees = previewRotation;

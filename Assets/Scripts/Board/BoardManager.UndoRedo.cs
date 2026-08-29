@@ -145,6 +145,7 @@ namespace TmgBoard
                         IsToken = unit.IsToken,
                         CanMove = unit.CanMove,
                         SupplyOverride = unit.SupplyOverride,
+                        Detail = unit.Detail,
                     };
                     unitSnap.SupplyTiers.AddRange(unit.SupplyTiers);
                     snapshot.Units.Add(unitSnap);
@@ -234,6 +235,7 @@ namespace TmgBoard
             _hoveredBase = null;
             _hoveredUnit = null;
             _menuTarget = null;
+            _selectedUnitForDetailByTeam.Clear();
             _rangeTargetUnit = null;
             _rangeDeleteTargetUnit = null;
             _unitRanges.Clear();
@@ -254,6 +256,7 @@ namespace TmgBoard
                     IsToken = unitSnap.IsToken,
                     CanMove = unitSnap.CanMove,
                     SupplyOverride = unitSnap.SupplyOverride,
+                    Detail = unitSnap.Detail,
                 };
                 unit.SupplyTiers.AddRange(unitSnap.SupplyTiers);
                 restoredUnits.Add(unit);
@@ -339,6 +342,7 @@ namespace TmgBoard
                 Ranges = new List<RangeSpec>(def.Ranges),
                 SupplyOverride = def.SupplyOverride,
                 Specialists = new List<string>(def.Specialists),
+                Detail = def.Detail,
             };
         }
 
@@ -363,6 +367,7 @@ namespace TmgBoard
             public bool IsToken;
             public bool CanMove;
             public int? SupplyOverride;
+            public RosterUnitDetail Detail;
             public readonly List<SupplyTier> SupplyTiers = new List<SupplyTier>();
             public readonly List<ModelSnapshot> Models = new List<ModelSnapshot>();
         }

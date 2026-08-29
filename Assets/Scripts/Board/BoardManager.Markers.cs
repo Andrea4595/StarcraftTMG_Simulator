@@ -28,7 +28,7 @@ namespace TmgBoard
             barRect.anchorMax = new Vector2(1f, 0f);
             barRect.pivot = new Vector2(0.5f, 0f);
             barRect.anchoredPosition = Vector2.zero;
-            barRect.sizeDelta = new Vector2(0f, MarkerBarHeight);
+            barRect.sizeDelta = new Vector2(0f, GameConstants.MarkerBarHeight);
 
             var bg = barGo.AddComponent<Image>();
             bg.color = new Color(0.08f, 0.08f, 0.08f, 0.85f);
@@ -80,7 +80,7 @@ namespace TmgBoard
         /// 그래야 아이콘 위치는 항상 고정이다.</summary>
         private void CreateMarkerHintLabel(Transform parent)
         {
-            float iconSize = MarkerBarHeight - 8f;
+            float iconSize = GameConstants.MarkerBarHeight - 8f;
             int count = MarkerBarEntries.Length;
             float iconsGroupWidth = 20f /* padding L+R */ + count * iconSize + Mathf.Max(count - 1, 0) * 6f /* spacing */;
 
@@ -91,7 +91,7 @@ namespace TmgBoard
             rect.anchorMax = new Vector2(0.5f, 0.5f);
             rect.pivot = new Vector2(0f, 0.5f);
             rect.anchoredPosition = new Vector2(iconsGroupWidth / 2f + 12f, 0f);
-            rect.sizeDelta = new Vector2(420f, MarkerBarHeight - 12f);
+            rect.sizeDelta = new Vector2(420f, GameConstants.MarkerBarHeight - 12f);
 
             _markerHintLabel = go.AddComponent<TextMeshProUGUI>();
             _markerHintLabel.fontSize = 13f;
@@ -111,7 +111,7 @@ namespace TmgBoard
             rect.anchorMax = new Vector2(1f, 0.5f);
             rect.pivot = new Vector2(1f, 0.5f);
             rect.anchoredPosition = new Vector2(-10f, 0f);
-            rect.sizeDelta = new Vector2(MarkerBarHeight - 8f, MarkerBarHeight - 8f);
+            rect.sizeDelta = new Vector2(GameConstants.MarkerBarHeight - 8f, GameConstants.MarkerBarHeight - 8f);
 
             var img = go.AddComponent<RawImage>();
             img.texture = Resources.Load<Texture2D>("UI/ScreenshotButton");
@@ -134,8 +134,8 @@ namespace TmgBoard
             rect.anchorMin = new Vector2(1f, 0.5f);
             rect.anchorMax = new Vector2(1f, 0.5f);
             rect.pivot = new Vector2(1f, 0.5f);
-            rect.anchoredPosition = new Vector2(-10f - (MarkerBarHeight - 8f) - 6f, 0f);
-            rect.sizeDelta = new Vector2(MarkerBarHeight - 8f, MarkerBarHeight - 8f);
+            rect.anchoredPosition = new Vector2(-10f - (GameConstants.MarkerBarHeight - 8f) - 6f, 0f);
+            rect.sizeDelta = new Vector2(GameConstants.MarkerBarHeight - 8f, GameConstants.MarkerBarHeight - 8f);
 
             var img = go.AddComponent<RawImage>();
             img.texture = Resources.Load<Texture2D>("UI/FitButton");
@@ -155,8 +155,8 @@ namespace TmgBoard
             rect.anchorMin = new Vector2(1f, 0.5f);
             rect.anchorMax = new Vector2(1f, 0.5f);
             rect.pivot = new Vector2(1f, 0.5f);
-            rect.anchoredPosition = new Vector2(-10f - 2f * (MarkerBarHeight - 8f) - 12f, 0f);
-            rect.sizeDelta = new Vector2(MarkerBarHeight - 8f, MarkerBarHeight - 8f);
+            rect.anchoredPosition = new Vector2(-10f - 2f * (GameConstants.MarkerBarHeight - 8f) - 12f, 0f);
+            rect.sizeDelta = new Vector2(GameConstants.MarkerBarHeight - 8f, GameConstants.MarkerBarHeight - 8f);
 
             var img = go.AddComponent<RawImage>();
             img.texture = Resources.Load<Texture2D>("UI/DiceButton");
@@ -177,7 +177,7 @@ namespace TmgBoard
             var go = new GameObject($"MarkerBtn_{kind}", typeof(RectTransform));
             go.transform.SetParent(parent, false);
             var rect = (RectTransform)go.transform;
-            rect.sizeDelta = new Vector2(MarkerBarHeight - 8f, MarkerBarHeight - 8f);
+            rect.sizeDelta = new Vector2(GameConstants.MarkerBarHeight - 8f, GameConstants.MarkerBarHeight - 8f);
 
             var img = go.AddComponent<RawImage>();
             img.texture = icon;
