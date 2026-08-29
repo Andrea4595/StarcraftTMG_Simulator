@@ -16,7 +16,12 @@ namespace TmgBoard
     /// 단계)는 안 읽는다 — 인게임 현재 서플라이는 항상 남은 모델 수로
     /// 그때그때 다시 찾으므로 필요 없다. "tactical_cards"는 name/count만
     /// 읽는다(gas_cost/resource/slots/abilities는 무시) — 예비대 패널의
-    /// 택티컬 카드 목록에 쓰인다.
+    /// 택티컬 카드 목록에 쓰인다. "supply_override"(int|null, 메딕류 능력의
+    /// 서플라이 "대입"값 — 단계표에 더하는 게 아니라 통째로 대체)와
+    /// "specialists"({"en","ko"} 이름 객체 리스트)도 읽는다 — 어느 모델이
+    /// 어느 전문가인지는 여기서 정하지 않고 배치 시점에 순서대로 배정한다
+    /// (PendingUnitDef.Specialists 참고). "abilities"/"squad_tier_index"/
+    /// "unit_type"/"tags"/"resource_label" 등 나머지는 여전히 무시한다.
     /// </summary>
     public static class RosterImporter
     {
@@ -79,6 +84,8 @@ namespace TmgBoard
                         IsDisplacement = GetBool(unitData, "is_displacement", false),
                         SupplyTiers = ParseSupplyTiers(GetList(unitData, "squad_tiers")),
                         Ranges = ParseRosterRanges(GetList(unitData, "ranges")),
+                        SupplyOverride = GetNullableInt(unitData, "supply_override"),
+                        Specialists = ParseSpecialists(GetList(unitData, "specialists")),
                     });
                 }
             }
@@ -215,6 +222,29 @@ namespace TmgBoard
             return result;
         }
 
+        /// <summary>"specialists": [{"en":"AGG-12","ko":"AGG-12"}, ...] — 유닛
+        /// "name"과 같은 {"en","ko"}(또는 구형 평문자열) 스키마라 ParseRosterName을
+        /// 그대로 재사용한다(ko 우선, 없으면 en). 어느 모델이 어느 전문가인지는
+        /// 여기서 정하지 않는다 — 리스트 순서 그대로 PendingUnitDef.Specialists에
+        /// 담기고, 배치 시점에 시뮬레이터가 순서대로 배정한다.</summary>
+        private static List<string> ParseSpecialists(List<object> raw)
+        {
+            var result = new List<string>();
+            if (raw == null)
+            {
+                return result;
+            }
+            foreach (var item in raw)
+            {
+                string name = ParseRosterName(item);
+                if (!string.IsNullOrEmpty(name))
+                {
+                    result.Add(name);
+                }
+            }
+            return result;
+        }
+
         private static List<SupplyTier> ParseSupplyTiers(List<object> raw)
         {
             var result = new List<SupplyTier>();
@@ -261,6 +291,14 @@ namespace TmgBoard
         private static bool GetBool(Dictionary<string, object> dict, string key, bool fallback)
         {
             return dict != null && dict.TryGetValue(key, out var v) && v is bool b ? b : fallback;
+        }
+
+        /// <summary>"supply_override"처럼 "값이 있으면 그 숫자, 없거나 null이면
+        /// 그런 능력 자체가 없음"을 뜻하는 optional 정수 필드용 — GetFloat과
+        /// 달리 fallback 없이 존재/부재 자체를 구분해야 하는 필드에 쓴다.</summary>
+        private static int? GetNullableInt(Dictionary<string, object> dict, string key)
+        {
+            return dict != null && dict.TryGetValue(key, out var v) && v is double d ? (int)d : (int?)null;
         }
     }
 }

@@ -144,6 +144,7 @@ namespace TmgBoard
                         MoveInch = unit.MoveInch,
                         IsToken = unit.IsToken,
                         CanMove = unit.CanMove,
+                        SupplyOverride = unit.SupplyOverride,
                     };
                     unitSnap.SupplyTiers.AddRange(unit.SupplyTiers);
                     snapshot.Units.Add(unitSnap);
@@ -252,6 +253,7 @@ namespace TmgBoard
                     MoveInch = unitSnap.MoveInch,
                     IsToken = unitSnap.IsToken,
                     CanMove = unitSnap.CanMove,
+                    SupplyOverride = unitSnap.SupplyOverride,
                 };
                 unit.SupplyTiers.AddRange(unitSnap.SupplyTiers);
                 restoredUnits.Add(unit);
@@ -335,6 +337,8 @@ namespace TmgBoard
                 SupplyTiers = new List<SupplyTier>(def.SupplyTiers),
                 Damages = new List<int>(def.Damages),
                 Ranges = new List<RangeSpec>(def.Ranges),
+                SupplyOverride = def.SupplyOverride,
+                Specialists = new List<string>(def.Specialists),
             };
         }
 
@@ -358,6 +362,7 @@ namespace TmgBoard
             public float MoveInch;
             public bool IsToken;
             public bool CanMove;
+            public int? SupplyOverride;
             public readonly List<SupplyTier> SupplyTiers = new List<SupplyTier>();
             public readonly List<ModelSnapshot> Models = new List<ModelSnapshot>();
         }

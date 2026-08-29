@@ -703,6 +703,7 @@ namespace TmgBoard
                 SupplyTiers = new List<SupplyTier>(unit.SupplyTiers),
                 Damages = damages,
                 Ranges = ranges,
+                SupplyOverride = unit.SupplyOverride,
             };
 
             foreach (var model in unit.Models.ToArray())

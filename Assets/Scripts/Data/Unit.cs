@@ -28,12 +28,25 @@ namespace TmgBoard
         /// 참조한다.</summary>
         public readonly List<SupplyTier> SupplyTiers = new List<SupplyTier>();
 
-        /// <summary>지금 남은 모델 수(Models.Count)에 해당하는 단계의 서플라이
-        /// 값. 모델이 줄어 하위 단계로 내려가면 그 즉시(매번 다시 계산하므로
-        /// 별도 갱신 로직 없이) 반영된다. 해당하는 구간이 없으면(단계표가 없는
-        /// 유닛, 또는 모델이 전부 사라진 경우) 0.</summary>
+        /// <summary>로스터 "supply_override" — 전문가 모델과는 무관한 별개의
+        /// 능력(예: 메딕류 "이 유닛의 서플라이 값은... 0으로 취급한다")이 있으면
+        /// 룰 텍스트 그대로 서플라이 값을 이 값으로 "대입"한다(단계표 값에
+        /// 더하는 게 아니다) — null이면 그런 능력이 없는 것이므로 평소처럼
+        /// 단계표를 따른다. 모델 생사와 무관하게 유닛에 이 능력이 있으면
+        /// 항상 적용된다.</summary>
+        public int? SupplyOverride;
+
+        /// <summary>SupplyOverride가 있으면 그 값을 그대로 돌려준다(단계표
+        /// 무시). 없으면 지금 남은 모델 수(Models.Count)에 해당하는 단계의
+        /// 서플라이 값 — 모델이 줄어 하위 단계로 내려가면 그 즉시(매번 다시
+        /// 계산하므로 별도 갱신 로직 없이) 반영된다. 해당하는 구간이 없으면
+        /// (단계표가 없는 유닛, 또는 모델이 전부 사라진 경우) 0.</summary>
         public int CurrentSupplyCost()
         {
+            if (SupplyOverride.HasValue)
+            {
+                return SupplyOverride.Value;
+            }
             int count = Models.Count;
             foreach (var tier in SupplyTiers)
             {

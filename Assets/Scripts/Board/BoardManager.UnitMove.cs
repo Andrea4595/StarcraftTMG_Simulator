@@ -142,13 +142,18 @@ namespace TmgBoard
         private void SpawnDeploymentFollowers()
         {
             var damages = _deploymentDefSnapshot != null ? _deploymentDefSnapshot.Damages : null;
+            var specialists = _deploymentDefSnapshot != null ? _deploymentDefSnapshot.Specialists : null;
             for (int i = 0; i < _pendingFollowerCount; i++)
             {
                 var follower = CreatePieceObject(_unitMoveUnit, _unitMoveLeading.SizeMm, _unitMoveLeading.FillColor, _unitMoveLeading.IsDisplacement);
-                int damageIndex = i + 1;
-                if (damages != null && damageIndex < damages.Count)
+                int modelIndex = i + 1; // 0번은 리더가 이미 가져갔다(BeginDeploymentDrag).
+                if (damages != null && modelIndex < damages.Count)
                 {
-                    follower.Damage = damages[damageIndex];
+                    follower.Damage = damages[modelIndex];
+                }
+                if (specialists != null && modelIndex < specialists.Count)
+                {
+                    follower.Memo = specialists[modelIndex];
                 }
                 follower.Center = _unitMoveLeading.Center;
                 follower.Refresh();

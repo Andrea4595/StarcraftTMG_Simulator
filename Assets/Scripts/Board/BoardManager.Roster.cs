@@ -169,6 +169,7 @@ namespace TmgBoard
                 CanMove = def.CanMove,
             };
             unit.SupplyTiers.AddRange(def.SupplyTiers);
+            unit.SupplyOverride = def.SupplyOverride;
 
             var leading = CreatePieceObject(unit, def.SizeMm, def.FillColor, def.IsDisplacement);
             leading.RotationDegrees = previewRotation;
@@ -176,6 +177,12 @@ namespace TmgBoard
             if (def.Damages.Count > 0)
             {
                 leading.Damage = def.Damages[0];
+            }
+            // 로스터 "specialists"의 0번째는 리더 모델이 받는다(그 뒤 순서는
+            // SpawnDeploymentFollowers가 팔로워에게 이어서 배정).
+            if (def.Specialists.Count > 0)
+            {
+                leading.Memo = def.Specialists[0];
             }
             unit.Models.Add(leading);
 
