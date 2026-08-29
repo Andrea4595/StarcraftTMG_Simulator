@@ -23,6 +23,12 @@ namespace TmgBoard
         // 예비대/토큰/택티컬 카드 목록만 보인다.
         private const float RosterImportButtonFillHeight = 400f;
 
+        // 팀 패널을 위(예비대 유닛/토큰/유닛 상세) 60% : 아래(택티컬 카드)
+        // 40%로 고정 분할한다(사용자 지정 — "위 아래로 나눌거야... 딱
+        // 잡아줘"). 화면 크기에 따라 패널 자체 높이가 바뀌므로 픽셀이 아니라
+        // 앵커 비율로 나눈다 — BuildTeamPanel 참고.
+        private const float TacticalCardRegionFraction = 0.4f;
+
         // GameConstants.PendingPanelWidth/MarkerBarHeight로 옮겼다 — 지도
         // 뷰포트(화면 중앙, 팀 패널 사이 남는 영역) 경계를 알아야 하는
         // WeaponProfileDialog/DiceRollDialog 같은 독립 컴포넌트도 같은 값을
@@ -65,27 +71,51 @@ namespace TmgBoard
             var bg = panelGo.AddComponent<Image>();
             bg.color = new Color(0.15f, 0.15f, 0.15f, 0.95f);
 
-            var layout = panelGo.AddComponent<VerticalLayoutGroup>();
-            layout.padding = new RectOffset(12, 12, 12, 12);
-            layout.spacing = 8f;
-            layout.childControlWidth = true;
-            layout.childForceExpandWidth = true;
-            layout.childControlHeight = true;
-            layout.childForceExpandHeight = false;
-            // ContentSizeFitter를 일부러 안 붙인다 — 패널 세로 크기는 위
-            // sizeDelta.y로 이미 고정돼 있다(화면 크기에 따라 스트레치 앵커가
-            // 자동으로 다시 계산해준다). 아래 택티컬 카드 섹션이
-            // flexibleHeight=1로 남는 공간을 다 차지한다.
+            // panel 자신은 이제 순수 컨테이너다 — 위(예비대 유닛/토큰/유닛
+            // 상세) 60% / 아래(택티컬 카드) 40%로 고정 분할한다(사용자 지정).
+            // 화면 크기에 따라 panel 높이가 달라지므로 픽셀이 아니라 앵커
+            // 비율(TacticalCardRegionFraction~1.0 / 0~TacticalCardRegionFraction)로
+            // 나눈다 — 그래서 panel 자체엔 더 이상 VerticalLayoutGroup을
+            // 안 붙이고, 아래 두 영역이 각자 자기 안에서만 레이아웃을 갖는다.
+            var topRegionGo = new GameObject("TopRegion", typeof(RectTransform));
+            topRegionGo.transform.SetParent(panel, false);
+            var topRegion = (RectTransform)topRegionGo.transform;
+            topRegion.anchorMin = new Vector2(0f, TacticalCardRegionFraction);
+            topRegion.anchorMax = new Vector2(1f, 1f);
+            topRegion.offsetMin = Vector2.zero;
+            topRegion.offsetMax = Vector2.zero;
+            var topLayout = topRegionGo.AddComponent<VerticalLayoutGroup>();
+            topLayout.padding = new RectOffset(12, 12, 12, 6);
+            topLayout.spacing = 8f;
+            topLayout.childControlWidth = true;
+            topLayout.childForceExpandWidth = true;
+            topLayout.childControlHeight = true;
+            topLayout.childForceExpandHeight = false;
 
-            // 아직 로스터를 안 불러온 상태에선 이 버튼이 패널을 꽉 채운
-            // 큰 호출 유도 버튼으로 보인다. OnRosterFileSelected가 임포트에
-            // 성공하면 이 버튼 자체를 SetActive(false)로 완전히 숨긴다.
-            _rosterImportButtons[team] = CreateListButton(panel, $"{team} 로스터 불러오기", () => ImportRoster(team), RosterImportButtonFillHeight);
+            var bottomRegionGo = new GameObject("BottomRegion", typeof(RectTransform));
+            bottomRegionGo.transform.SetParent(panel, false);
+            var bottomRegion = (RectTransform)bottomRegionGo.transform;
+            bottomRegion.anchorMin = new Vector2(0f, 0f);
+            bottomRegion.anchorMax = new Vector2(1f, TacticalCardRegionFraction);
+            bottomRegion.offsetMin = Vector2.zero;
+            bottomRegion.offsetMax = Vector2.zero;
+            var bottomLayout = bottomRegionGo.AddComponent<VerticalLayoutGroup>();
+            bottomLayout.padding = new RectOffset(12, 12, 6, 12);
+            bottomLayout.spacing = 8f;
+            bottomLayout.childControlWidth = true;
+            bottomLayout.childForceExpandWidth = true;
+            bottomLayout.childControlHeight = true;
+            bottomLayout.childForceExpandHeight = false;
+
+            // 아직 로스터를 안 불러온 상태에선 이 버튼이 위쪽 60% 영역을 꽉
+            // 채운 큰 호출 유도 버튼으로 보인다. OnRosterFileSelected가
+            // 임포트에 성공하면 이 버튼 자체를 SetActive(false)로 완전히 숨긴다.
+            _rosterImportButtons[team] = CreateListButton(topRegion, $"{team} 로스터 불러오기", () => ImportRoster(team), RosterImportButtonFillHeight);
 
             // 예비대 유닛 목록 — 항목 수만큼 핏하게 커지다가 UnitListExpandedMaxHeight
             // 에서 스크롤로 전환된다(토큰 섹션 유무와 무관). 실제 높이는
             // RefreshPendingList()가 매번 다시 계산해서 적용한다.
-            _pendingUnitsListContainers[team] = ScrollListUtil.Create(panel, ListMaxHeight, new Color(0.1f, 0.1f, 0.1f, 0.6f), out _, out var unitListLayoutElement);
+            _pendingUnitsListContainers[team] = ScrollListUtil.Create(topRegion, ListMaxHeight, new Color(0.1f, 0.1f, 0.1f, 0.6f), out _, out var unitListLayoutElement);
             _pendingUnitsListLayoutElements[team] = unitListLayoutElement;
             unitListLayoutElement.gameObject.SetActive(false); // RefreshPanelLayout()이 로드 여부에 따라 켠다.
 
@@ -94,7 +124,7 @@ namespace TmgBoard
             // 이 팀에 로스터로 들어온 토큰이 하나도 없으면 RefreshRosterTokenList가
             // 이 래퍼 자체를 꺼서 빈 "토큰" 제목만 덩그러니 남는 걸 막는다.
             var tokenSectionGo = new GameObject("TokenSection", typeof(RectTransform));
-            tokenSectionGo.transform.SetParent(panel, false);
+            tokenSectionGo.transform.SetParent(topRegion, false);
             var tokenSectionLayout = tokenSectionGo.AddComponent<VerticalLayoutGroup>();
             tokenSectionLayout.spacing = 8f;
             tokenSectionLayout.childControlWidth = true;
@@ -113,39 +143,26 @@ namespace TmgBoard
             _tokenSectionRoots[team] = tokenSectionGo;
             tokenSectionGo.SetActive(false); // RefreshRosterTokenList()가 토큰이 생기면 켠다.
 
-            // 택티컬 카드 — 패널 하단의 남는 공간을 전부 차지한다(요청: "하단의
-            // 영역에 택티컬 카드 리스트를 보여주는거야"). 위 두 섹션과 달리
-            // ContentSizeFitter가 없다 — 목록 박스에 flexibleHeight=1을 직접
-            // 줘서, 이 섹션(그리고 그걸 감싼 이 래퍼)이 panel의
-            // VerticalLayoutGroup에 "남는 세로 공간을 나한테 달라"고 보고하게
-            // 한다(LayoutGroup은 자기 자식들의 flexibleHeight 합을 그대로
-            // 위로 전달한다).
-            var tacticalSectionGo = new GameObject("TacticalSection", typeof(RectTransform));
-            tacticalSectionGo.transform.SetParent(panel, false);
-            var tacticalSectionLayout = tacticalSectionGo.AddComponent<VerticalLayoutGroup>();
-            tacticalSectionLayout.spacing = 8f;
-            tacticalSectionLayout.childControlWidth = true;
-            tacticalSectionLayout.childForceExpandWidth = true;
-            tacticalSectionLayout.childControlHeight = true;
-            tacticalSectionLayout.childForceExpandHeight = false;
-
-            CreateSectionLabel(tacticalSectionGo.transform, "택티컬 카드");
-            _tacticalCardListContainers[team] = ScrollListUtil.Create(tacticalSectionGo.transform, ListMaxHeight, new Color(0.1f, 0.1f, 0.1f, 0.6f), out _, out var tacticalListLayoutElement);
-            tacticalListLayoutElement.flexibleHeight = 1f;
-            _tacticalCardListLayoutElements[team] = tacticalListLayoutElement;
-
-            _tacticalCardSectionRoots[team] = tacticalSectionGo;
-            tacticalSectionGo.SetActive(false); // RefreshTacticalCardList()가 카드가 생기면 켠다.
-
-            // 유닛 상세 패널 — 위 네 섹션을 전부 가리고 이 패널 하나가 남는
-            // 세로 공간을 전부 차지한다(택티컬 카드 섹션과 같은 flexibleHeight=1
-            // 트릭). 평소엔 비활성 — BoardManager.UnitDetail.cs의
+            // 유닛 상세 패널 — topRegion(위쪽 60%) 안에서만 예비대 목록 등을
+            // 가리고 나타난다(사용자 지정: "유닛 상세 정보는 유닛 리스트를
+            // 보여주는 칸만 할애해서 보여주도록 해") — 아래쪽 40%(택티컬
+            // 카드)는 그대로 둔다. 평소엔 비활성 — BoardManager.UnitDetail.cs의
             // UpdateUnitDetailPanel()이 켜고 끈다.
-            var detailContent = ScrollListUtil.Create(panel, 200f, new Color(0.1f, 0.1f, 0.1f, 0.6f), out _, out var detailLayoutElement);
+            var detailContent = ScrollListUtil.Create(topRegion, 200f, new Color(0.1f, 0.1f, 0.1f, 0.6f), out _, out var detailLayoutElement);
             detailLayoutElement.flexibleHeight = 1f;
             _unitDetailContainers[team] = detailContent;
             _unitDetailLayoutElements[team] = detailLayoutElement;
             detailLayoutElement.gameObject.SetActive(false);
+
+            // 택티컬 카드 — 이제 아래쪽 40% 영역(bottomRegion) 그 자체가 이
+            // 섹션이다(고정 분할 영역이라 예전처럼 "카드가 없으면 통째로
+            // 숨기기"는 하지 않는다 — 항상 그 자리를 차지하는 게 사용자
+            // 지정("딱 잡아줘")의 취지에 맞는다. 라벨은 항상 보이고, 목록은
+            // 카드가 없으면 그냥 빈 채로 보인다).
+            CreateSectionLabel(bottomRegion, "택티컬 카드");
+            _tacticalCardListContainers[team] = ScrollListUtil.Create(bottomRegion, ListMaxHeight, new Color(0.1f, 0.1f, 0.1f, 0.6f), out _, out var tacticalListLayoutElement);
+            tacticalListLayoutElement.flexibleHeight = 1f;
+            _tacticalCardListLayoutElements[team] = tacticalListLayoutElement;
         }
 
         private static void CreateSectionLabel(Transform parent, string text)
@@ -251,8 +268,10 @@ namespace TmgBoard
 
         /// <summary>택티컬 카드 목록을 다시 그린다 — 임포트 때만 불린다(카드
         /// 자체의 좌/우클릭 소진·복구는 버튼을 다시 그리지 않고 핍 색만
-        /// 바로 바꾼다, RefreshTacticalCardPips 참고). 카드가 하나도 없는
-        /// 팀은 "택티컬 카드" 섹션 자체를 접어둔다(토큰 섹션과 동일한 패턴).</summary>
+        /// 바로 바꾼다, RefreshTacticalCardPips 참고). 이 섹션은 이제 고정
+        /// 40% 영역(BottomRegion) 그 자체라 카드가 하나도 없어도 통째로
+        /// 숨기지 않는다(예전엔 토큰 섹션처럼 접었었다) — "딱 잡아준" 분할을
+        /// 유지하는 게 사용자 지정 취지.</summary>
         private void RefreshTacticalCardList()
         {
             foreach (var kv in _tacticalCardListContainers)
@@ -264,21 +283,49 @@ namespace TmgBoard
                     Destroy(container.GetChild(i).gameObject);
                 }
 
-                bool hasAny = false;
                 foreach (var def in _pendingTacticalCards)
                 {
                     if (def.Team != team)
                     {
                         continue;
                     }
-                    hasAny = true;
                     CreateTacticalCardButton(container, def);
+                    RenderTacticalCardAbilities(container, def);
                 }
+            }
+        }
 
-                if (_tacticalCardSectionRoots.TryGetValue(team, out var sectionRoot))
-                {
-                    sectionRoot.SetActive(hasAny);
-                }
+        /// <summary>카드 버튼 바로 아래에, 그 카드의 능력 이름을 들여쓰기해서
+        /// 나열한다(Document/택티컬 카드 리스트.png) — 이름을 클릭하면
+        /// 펼쳐지며 정보가 드러난다(사용자 지정). 유닛 능력과 완전히 같은
+        /// 모양(kind/name/phase/type/cost/rule)이라 BoardManager.UnitDetail.cs의
+        /// RenderAbility를 그대로 재사용한다(같은 파셜 클래스라 바로 호출
+        /// 가능) — 페이즈 아이콘/타입별 색상/클릭-펼치기까지 전부 동일하게
+        /// 동작한다. showCost: false만 다르게 넘긴다 — 택티컬 카드 능력은
+        /// 사용에 비용이 안 들어서(사용자 지정) 로스터에 "cost" 값이 있어도
+        /// 헤더에 (코스트)를 안 보여준다.</summary>
+        private void RenderTacticalCardAbilities(Transform parent, TacticalCardDef def)
+        {
+            if (def.Abilities.Count == 0)
+            {
+                return;
+            }
+
+            var wrapperGo = new GameObject($"Abilities_{def.Name}", typeof(RectTransform));
+            wrapperGo.transform.SetParent(parent, false);
+            var wrapperLayout = wrapperGo.AddComponent<VerticalLayoutGroup>();
+            wrapperLayout.padding = new RectOffset(24, 0, 4, 4);
+            wrapperLayout.spacing = 4f;
+            wrapperLayout.childControlWidth = true;
+            wrapperLayout.childForceExpandWidth = true;
+            wrapperLayout.childControlHeight = true;
+            wrapperLayout.childForceExpandHeight = false;
+            var wrapperFitter = wrapperGo.AddComponent<ContentSizeFitter>();
+            wrapperFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            foreach (var ability in def.Abilities)
+            {
+                RenderAbility(wrapperGo.transform, ability, showCost: false);
             }
         }
 

@@ -116,9 +116,12 @@ namespace TmgBoard
             detailLe.gameObject.SetActive(true);
         }
 
-        /// <summary>평소 예비대 목록/토큰/택티컬 카드 섹션을 가리고 상세 패널만
-        /// 보이게 한다 — ShowUnitDetail이 직접 부르고, HideUnitDetail도 다른
-        /// team의 상태를 지키기 위해 다시 부른다(아래 참고).</summary>
+        /// <summary>평소 예비대 목록/토큰 섹션(TopRegion, 위쪽 60%)을 가리고
+        /// 상세 패널만 보이게 한다 — 택티컬 카드(BottomRegion, 아래쪽 40%)는
+        /// 고정 분할 영역이라 손대지 않는다(사용자 지정: "유닛 상세 정보는
+        /// 유닛 리스트를 보여주는 칸만 할애해서 보여주도록 해"). ShowUnitDetail이
+        /// 직접 부르고, HideUnitDetail도 다른 team의 상태를 지키기 위해 다시
+        /// 부른다(아래 참고).</summary>
         private void SuppressNormalPanelSections(string team)
         {
             if (_rosterImportButtons.TryGetValue(team, out var importButton))
@@ -133,22 +136,20 @@ namespace TmgBoard
             {
                 tokenRoot.SetActive(false);
             }
-            if (_tacticalCardSectionRoots.TryGetValue(team, out var tacticalRoot))
-            {
-                tacticalRoot.SetActive(false);
-            }
         }
 
         /// <summary>평소 예비대 패널 상태를 되살린다 — "로드됨"/개수에 따른
         /// 표시 여부는 그 자체로 상태가 있는 로직이라(RefreshPanelLayout 등)
         /// 여기서 새로 베끼지 않고 기존 Refresh*() 파이프라인을 그냥 다시
-        /// 부른다. 다만 그 Refresh*() 셋은 전부 "두 팀 다" 훑으며 예비대/토큰/
-        /// 택티컬 섹션을 되살리므로(팀별로 분리돼 있지 않음) — 지금 끄는 건
-        /// 이 team뿐인데, 그 사이 다른 team이 여전히 자기 유닛 상세를 보여주는
-        /// 중이었다면 그 team의 목록 섹션까지 덩달아 되살아나 버려서 "목록 +
-        /// 상세가 같이 보이는" 실제 버그가 났었다. 그래서 Refresh 이후 다른
-        /// team 중 지금도 상세를 보여주고 있는 team이 있으면 그 섹션들을 다시
-        /// 눌러 끈다.</summary>
+        /// 부른다. RefreshPendingList/RefreshRosterTokenList는 "두 팀 다"
+        /// 훑으며 예비대/토큰 섹션을 되살리므로(팀별로 분리돼 있지 않음) —
+        /// 지금 끄는 건 이 team뿐인데, 그 사이 다른 team이 여전히 자기 유닛
+        /// 상세를 보여주는 중이었다면 그 team의 목록 섹션까지 덩달아 되살아나
+        /// 버려서 "목록 + 상세가 같이 보이는" 실제 버그가 났었다. 그래서
+        /// Refresh 이후 다른 team 중 지금도 상세를 보여주고 있는 team이 있으면
+        /// 그 섹션들을 다시 눌러 끈다. RefreshTacticalCardList는 더 이상 여기서
+        /// 부르지 않는다 — 택티컬 카드(BottomRegion)는 유닛 상세 표시와
+        /// 무관하게 항상 그대로이므로 건드릴 이유가 없다.</summary>
         private void HideUnitDetail(string team)
         {
             if (_unitDetailLayoutElements.TryGetValue(team, out var detailLe))
@@ -157,7 +158,6 @@ namespace TmgBoard
             }
             RefreshPendingList();
             RefreshRosterTokenList();
-            RefreshTacticalCardList();
 
             foreach (var kv in _unitDetailLastSourceByTeam)
             {
@@ -593,7 +593,11 @@ namespace TmgBoard
         /// 따로 적던 "페이즈:/타입:/코스트:" 줄은 전부 제거했다(중복). weapon-kind는
         /// 이제 여기 안 온다 — RenderAbilitiesSection이 미리 걸러서
         /// RenderWeaponProfileTrigger로 따로 보낸다.</summary>
-        private void RenderAbility(Transform content, RosterAbilityEntry ability)
+        /// <summary>showCost=false로 부르면(택티컬 카드 능력) 헤더 우측의
+        /// (코스트) 표시를 아예 뺀다 — 택티컬 카드 능력은 사용에 비용이
+        /// 들지 않아서(사용자 지정), 로스터 JSON의 "cost" 필드가 있어도
+        /// 의미가 없다. 유닛 능력 쪽 호출은 기본값(true)으로 기존과 동일.</summary>
+        private void RenderAbility(Transform content, RosterAbilityEntry ability, bool showCost = true)
         {
             var abilityGo = new GameObject("Ability", typeof(RectTransform));
             abilityGo.transform.SetParent(content, false);
@@ -611,7 +615,7 @@ namespace TmgBoard
             {
                 headerBase += " [업그레이드]";
             }
-            string costSuffix = ability.Kind == "rule" ? $"({ability.Cost})" : null;
+            string costSuffix = showCost && ability.Kind == "rule" ? $"({ability.Cost})" : null;
             Color color = AbilityTypeColor(ability);
 
             var headerRowGo = BuildAbilityHeaderRow(abilityGo.transform, ability.Phase, color, headerBase, costSuffix, out _, out var chevronLabel);

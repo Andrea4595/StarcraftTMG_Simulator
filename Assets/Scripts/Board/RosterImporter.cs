@@ -14,8 +14,10 @@ namespace TmgBoard
     /// 상세 패널에 쓰인다. "squad_tier_index"(로스터 작성 시 고른 단계)는
     /// 게임 로직에는 안 쓴다(인게임 실제 서플라이는 항상 남은 모델 수로
     /// 그때그때 다시 찾는다) — 상세 패널 표시용으로만 읽는다.
-    /// "tactical_cards"는 name/count만 읽는다(gas_cost/resource/slots/
-    /// abilities는 무시) — 예비대 패널의 택티컬 카드 목록에 쓰인다.
+    /// "tactical_cards"는 name/count/abilities를 읽는다(gas_cost/resource/
+    /// slots/is_faction_card는 여전히 무시) — 예비대 패널의 택티컬 카드
+    /// 목록에 쓰이고, abilities는 유닛 능력과 같은 ParseAbilities로 읽어서
+    /// 카드 버튼 아래에 펼치기 가능한 능력 목록으로 보여준다.
     /// "supply_override"(int|null, 메딕류 능력의 서플라이 "대입"값 — 단계표에
     /// 더하는 게 아니라 통째로 대체)와 "specialists"({"en","ko"} 이름 객체
     /// 리스트)도 읽는다 — 어느 모델이 어느 전문가인지는 여기서 정하지 않고
@@ -142,6 +144,7 @@ namespace TmgBoard
                         Team = team,
                         Count = count,
                         Remaining = count,
+                        Abilities = ParseAbilities(GetList(cardData, "abilities")),
                     });
                 }
             }

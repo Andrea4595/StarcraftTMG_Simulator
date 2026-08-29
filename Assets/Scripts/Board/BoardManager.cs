@@ -123,11 +123,11 @@ namespace TmgBoard
         private readonly List<TacticalCardDef> _pendingTacticalCards = new List<TacticalCardDef>();
         private readonly Dictionary<string, RectTransform> _tacticalCardListContainers = new Dictionary<string, RectTransform>();
         private readonly Dictionary<string, LayoutElement> _tacticalCardListLayoutElements = new Dictionary<string, LayoutElement>();
-        private readonly Dictionary<string, GameObject> _tacticalCardSectionRoots = new Dictionary<string, GameObject>();
 
         // ── 유닛 상세 패널 ────────────────────────────────────────────────
-        // 팀 패널 전체를(로스터 불러오기 버튼/예비대 목록/토큰/택티컬 카드를
-        // 전부 가리고) 대신 채운다 — BoardManager.UnitDetail.cs 참고.
+        // 팀 패널의 위쪽 60% 영역(TopRegion — 로스터 불러오기 버튼/예비대
+        // 목록/토큰을 전부 가림)만 대신 채운다 — 아래쪽 40%(택티컬 카드)는
+        // 그대로 둔다(사용자 지정). BoardManager.UnitDetail.cs 참고.
         private readonly Dictionary<string, RectTransform> _unitDetailContainers = new Dictionary<string, RectTransform>();
         private readonly Dictionary<string, LayoutElement> _unitDetailLayoutElements = new Dictionary<string, LayoutElement>();
         // team별로 독립된 "지금 이 패널에 무엇을 마지막으로 그렸나" 기록 —
