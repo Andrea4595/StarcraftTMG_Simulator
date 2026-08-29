@@ -378,6 +378,7 @@ namespace TmgBoard
             HandleUndoRedoInput();
             UpdateHoveredUnit();
             UpdateUnitDetailPanel();
+            UpdateScreenshotToast();
 
             // 유닛 이동(리딩 모델)/팔로워 배치 중에만 적 인게이지 경고를
             // 켠다 — 일반 모델 드래그(유닛 이동 워크플로 밖)에는 적용하지
