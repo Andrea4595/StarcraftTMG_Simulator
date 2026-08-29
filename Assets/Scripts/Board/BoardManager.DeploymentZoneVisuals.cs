@@ -20,11 +20,11 @@ namespace TmgBoard
 
         private void BuildDeploymentZoneVisuals()
         {
-            if (!MissionData.HasData)
+            if (!MapData.HasData)
             {
                 return;
             }
-            foreach (var zone in MissionData.DeploymentZones)
+            foreach (var zone in MapData.DeploymentZones)
             {
                 Vector2 a, b;
                 switch (zone.Edge)

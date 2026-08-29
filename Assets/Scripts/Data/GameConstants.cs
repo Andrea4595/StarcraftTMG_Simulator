@@ -12,8 +12,12 @@ namespace TmgBoard
         public const string DefaultMapSizePreset = "36x36";
 
         // 씬 이름 — GameFlowBootstrap의 씬 전환 스위치와 BoardManager의
-        // "미션 셋업으로 돌아가기"(나가기 버튼) 둘 다 같은 이름을 써야 하므로
-        // 여기 하나로 모아둔다.
+        // "나가기" 버튼(진행 중인 판을 버리고 처음으로 돌아가기) 둘 다 같은
+        // 이름을 써야 하므로 여기 하나로 모아둔다. 흐름: Entry(맵/미션 중
+        // 먼저 할 것을 고름) → 고른 순서대로 MapSetup/MissionSetup 둘 다
+        // 끝내면 → GameBoard.
+        public const string EntrySceneName = "Entry";
+        public const string MapSetupSceneName = "MapSetup";
         public const string MissionSetupSceneName = "MissionSetup";
         public const string GameBoardSceneName = "GameBoard";
 

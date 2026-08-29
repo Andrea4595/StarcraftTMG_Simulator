@@ -10,7 +10,7 @@ namespace TmgBoard
     /// 타이핑은 막고(readOnly), 스테퍼 버튼 클릭 또는 칸 위 휠 스크롤로만
     /// 1씩 증감한다. 값은 항상 [minValue, maxValue]로 클램프된다. 원래
     /// ScoreboardPanel 안에만 있던 위젯이었는데, MissionSetupController의
-    /// 미션 설정 값(최대 라운드/기본 서플라이/라운드당 서플라이)도 똑같은
+    /// 미션 설정 값(기본 서플라이/라운드당 서플라이/라운드 길이)도 똑같은
     /// 위젯이 필요해져서 공유 유틸리티로 뽑아냈다. 화살표 버튼 크기는
     /// `stepperButtonHeight`(선택 인자, 기본 13f) 하나만 정하면 되고, 너비는
     /// Resources/UI/SpinnerUp·Down.png의 실제 텍스처 가로세로 비율을 읽어서
@@ -18,10 +18,22 @@ namespace TmgBoard
     /// 정사각형 박스에 욱여넣어 찌그러뜨리지 않으려고 — 사용자 요청).</summary>
     public static class IntStepperField
     {
-        public static void Create(Transform parent, string labelText, float labelWidth, int initial, int minValue, int maxValue, Action<int> onChanged, float stepperButtonHeight = 13f)
+        /// <param name="labelLeftControlRight">true면 라벨은 왼쪽에 붙이고 입력칸+
+        /// 스테퍼는 이 묶음의 오른쪽 끝에 붙인다(그 사이는 빈 공간) — 흔한
+        /// "설정 화면" 행 관례. false(기본값, 기존 호출부 — ScoreboardPanel의
+        /// 좁은 스코어보드 행 — 는 그대로 라벨 바로 옆에 입력칸이 붙는
+        /// 기존 모양을 유지)면 라벨 바로 옆에 입력칸이 붙는다.</param>
+        public static void Create(Transform parent, string labelText, float labelWidth, int initial, int minValue, int maxValue, Action<int> onChanged, float stepperButtonHeight = 13f, bool labelLeftControlRight = false)
         {
             var rowGo = new GameObject($"Stat_{labelText}", typeof(RectTransform));
             rowGo.transform.SetParent(parent, false);
+            // flexibleWidth=1을 줘서, 이 묶음을 여러 개 한 줄에 나란히 놓고
+            // childForceExpandWidth=true인 부모 아래 두면 남는 폭을 똑같이
+            // 나눠 받아 줄 전체를 채울 수 있게 한다(MissionSetupController의
+            // BuildStatRow가 이 용도로 씀) — force-expand가 꺼진 부모(예:
+            // ScoreboardPanel)에서는 이 값이 그냥 무시되므로 기존 쓰임에는
+            // 영향이 없다.
+            rowGo.AddComponent<LayoutElement>().flexibleWidth = 1f;
             var rowLayout = rowGo.AddComponent<HorizontalLayoutGroup>();
             rowLayout.spacing = 6f;
             rowLayout.childAlignment = TextAnchor.MiddleLeft;
@@ -31,6 +43,13 @@ namespace TmgBoard
             rowLayout.childForceExpandHeight = false;
 
             CreateLabel(rowGo.transform, labelText, labelWidth);
+
+            if (labelLeftControlRight)
+            {
+                var spacerGo = new GameObject("Spacer", typeof(RectTransform));
+                spacerGo.transform.SetParent(rowGo.transform, false);
+                spacerGo.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            }
 
             int currentValue = Mathf.Clamp(initial, minValue, maxValue);
 

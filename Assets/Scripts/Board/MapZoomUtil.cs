@@ -4,7 +4,7 @@ namespace TmgBoard
 {
     /// <summary>지도 뷰(mapArea 등, 하나의 RectTransform)를 마우스 커서 위치
     /// 기준으로 확대/축소하는 공용 로직 — 게임 보드(BoardManager.PanZoom.cs)와
-    /// 미션 설정 화면(MissionSetupController) 둘 다 이 하나만 쓴다.
+    /// 맵 셋업 화면(MapSetupController) 둘 다 이 하나만 쓴다.
     ///
     /// target 자신의 ScreenPointToLocalPointInRectangle만 사용하고(부모
     /// 기준이 아니라) 완전히 자기참조적으로 계산하므로, target의 pivot/anchor가
@@ -12,7 +12,7 @@ namespace TmgBoard
     /// 기준 로컬 좌표 - anchoredPosition" 식으로 따로 구현했었는데, 그건
     /// 부모의 pivot과 target의 anchor가 우연히 일치해야만(게임 보드는 둘 다
     /// 중심이라 우연히 맞았다) 정확한 결과가 나오는 취약한 수식이었다 —
-    /// 미션 설정 화면(코너 anchor)에서 실제로 어긋나 줌 중심이 화면
+    /// 맵 셋업 화면(코너 anchor)에서 실제로 어긋나 줌 중심이 화면
     /// 좌하단으로 쏠리는 버그가 났다.</summary>
     public static class MapZoomUtil
     {

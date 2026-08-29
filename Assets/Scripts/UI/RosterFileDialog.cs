@@ -163,8 +163,9 @@ namespace TmgBoard
             gameObject.SetActive(false);
         }
 
-        /// <summary>저장소의 Document/ 폴더를 찾는다 — 로스터 JSON도, 미션
-        /// 프리셋(MissionSetupController)도 여기서 열고 저장한다. Unity
+        /// <summary>저장소의 Document/ 폴더를 찾는다 — 로스터 JSON을 여기서
+        /// 열고 저장한다(미션 프리셋 불러오기는 더 이상 이 다이얼로그를 쓰지
+        /// 않는다 — MapSetupController의 항상 보이는 우측 목록으로 대체됨). Unity
         /// 프로젝트가 저장소 루트 자체로 승격되기 전에는 "Assets ->
         /// StarcraftTMG Simulator -> UnityProject -> 저장소 루트"로 3단계
         /// 위였는데(2026-08-28 리포 재구성으로 그 중첩이 사라졌다), 이 경로

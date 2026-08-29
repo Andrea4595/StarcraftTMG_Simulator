@@ -7,13 +7,13 @@ using UnityEngine;
 
 namespace TmgBoard
 {
-    /// <summary>미션 설정 화면의 배치구역/지형/미션 목표 배치를 JSON 파일로
-    /// 저장·불러온다 — MissionData와 같은 스키마(코너 원점 mm)를 그대로 쓴다.
+    /// <summary>맵 셋업 화면의 배치구역/지형/미션 목표 배치를 JSON 파일로
+    /// 저장·불러온다 — MapData와 같은 스키마(코너 원점 mm)를 그대로 쓴다.
     /// 로스터 JSON은 외부(로스터 앱)가 만드는 포맷이라 읽기만 하면 됐지만,
     /// 이건 이 프로젝트가 직접 쓰고 읽는 포맷이라 쓰기도 필요하다 — 여기서도
     /// Newtonsoft 같은 패키지 의존성을 새로 만들지 않는다는 기존 방침(로스터
     /// 임포트의 MiniJson.cs 참고)을 그대로 따라 손으로 최소 JSON을 쓴다.</summary>
-    public static class MissionPresetIO
+    public static class MapPresetIO
     {
         public static void Save(string path, string mapPreset,
                 List<DeploymentZoneData> zones, List<MissionObjectiveData> objectives, List<TerrainPieceData> terrain)

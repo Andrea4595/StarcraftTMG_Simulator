@@ -310,11 +310,11 @@ namespace TmgBoard
         private static List<DeploymentZoneData> TeamZoneSegments(string team)
         {
             var result = new List<DeploymentZoneData>();
-            if (!MissionData.HasData)
+            if (!MapData.HasData)
             {
                 return result;
             }
-            foreach (var zone in MissionData.DeploymentZones)
+            foreach (var zone in MapData.DeploymentZones)
             {
                 if (zone.Player == team)
                 {

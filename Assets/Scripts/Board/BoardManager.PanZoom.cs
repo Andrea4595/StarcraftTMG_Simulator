@@ -42,7 +42,7 @@ namespace TmgBoard
 
         /// <summary>마우스가 가리키는 지도 위 지점이 화면상 같은 자리에 그대로
         /// 있도록 확대/축소하면서 위치를 함께 보정한다. Godot판 _zoom_at() 포팅
-        /// — 실제 계산은 MissionSetupController도 함께 쓰는 공용 유틸리티
+        /// — 실제 계산은 MapSetupController도 함께 쓰는 공용 유틸리티
         /// (Board/MapZoomUtil.cs)로 뽑아냈다.</summary>
         private void ZoomAt(Vector2 screenPos, float factor)
         {

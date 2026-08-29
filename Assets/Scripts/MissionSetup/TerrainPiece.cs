@@ -12,7 +12,7 @@ namespace TmgBoard
     /// scenes/mission_setup/TerrainPiece.gd 포팅. MarkerBase와 같은 패턴으로
     /// RawImage를 직접 상속해서 텍스처 하나짜리 사각형을 표현한다.
     ///
-    /// 실제 드래그 추적/회전은 MissionSetupController(부모)가 전역 입력으로
+    /// 실제 드래그 추적/회전은 MapSetupController(부모)가 전역 입력으로
     /// 처리한다 — 이 컴포넌트는 시작 신호만 올린다(Godot판과 동일한 역할
     /// 분담). 경계 클램프는 없다 — 지도 밖으로도 자유롭게 나갈 수 있다
     /// (사용자 요청).

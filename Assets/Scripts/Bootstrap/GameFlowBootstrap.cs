@@ -6,19 +6,25 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 /// <summary>
-/// 실제 Unity 씬 전환(MissionSetup 씬 ↔ GameBoard 씬)에 맞춰 각 씬의 UI를
-/// 코드로 짓는 부트스트랩 — 이전 GameFlowTestBootstrap이 같은 씬 안에서
-/// 캔버스만 바꿔치기하던 임시 방식을 대체한다. 씬 파일 자체는 카메라 하나만
-/// 있는 빈 씬이고(에디터에서 손으로 만든 게 아니라 기존 SampleScene을
-/// 복사한 최소 구성), 실제 UI 구성은 전부 여기서 한다 — 이 프로젝트의
-/// "UI는 코드로 짓는다" 기존 방침을 그대로 유지.
+/// 실제 Unity 씬 전환(Entry → MapSetup/MissionSetup(순서 무관) → GameBoard)에
+/// 맞춰 각 씬의 UI를 코드로 짓는 부트스트랩 — 이전 GameFlowTestBootstrap이
+/// 같은 씬 안에서 캔버스만 바꿔치기하던 임시 방식을 대체한다. 씬 파일 자체는
+/// 카메라 하나만 있는 빈 씬이고(에디터에서 손으로 만든 게 아니라 기존
+/// SampleScene을 복사한 최소 구성), 실제 UI 구성은 전부 여기서 한다 — 이
+/// 프로젝트의 "UI는 코드로 짓는다" 기존 방침을 그대로 유지.
+///
+/// 흐름: Entry 화면에서 "맵"/"미션" 중 하나를 고르면 그 셋업 화면으로 가고,
+/// 그 화면이 끝나면 아직 안 끝난 나머지 셋업 화면으로, 둘 다 끝났으면
+/// GameBoard로 넘어간다(GameFlowState가 "이미 끝낸 쪽"을 기억한다).
 ///
 /// EventSystem은 씬을 넘나들며 살아있어야 하므로 DontDestroyOnLoad로 한 번만
-/// 만든다. MissionData(Data/MissionData.cs)는 static 클래스라 씬 전환과
+/// 만든다. MapData/MissionSettingsData(Data/)는 static 클래스라 씬 전환과
 /// 무관하게 그대로 유지된다 — 별도 전달 장치가 필요 없다.
 /// </summary>
 public static class GameFlowBootstrap
 {
+    private const string EntrySceneName = GameConstants.EntrySceneName;
+    private const string MapSetupSceneName = GameConstants.MapSetupSceneName;
     private const string MissionSetupSceneName = GameConstants.MissionSetupSceneName;
     private const string GameBoardSceneName = GameConstants.GameBoardSceneName;
 
@@ -57,6 +63,12 @@ public static class GameFlowBootstrap
 
         switch (scene.name)
         {
+            case EntrySceneName:
+                BuildEntry();
+                break;
+            case MapSetupSceneName:
+                BuildMapSetup();
+                break;
             case MissionSetupSceneName:
                 BuildMissionSetup();
                 break;
@@ -66,6 +78,45 @@ public static class GameFlowBootstrap
         }
     }
 
+    /// <summary>화면 중앙에 "맵"/"미션" 큰 버튼 두 개 — 어느 쪽을 먼저
+    /// 고르든 그 셋업 화면으로 간다.</summary>
+    private static void BuildEntry()
+    {
+        var canvasGo = new GameObject("Entry_Canvas");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvasGo.AddComponent<CanvasScaler>();
+        canvasGo.AddComponent<GraphicRaycaster>();
+
+        var entry = canvasGo.AddComponent<EntryController>();
+        entry.MapPicked += () => SceneManager.LoadScene(MapSetupSceneName);
+        entry.MissionPicked += () => SceneManager.LoadScene(MissionSetupSceneName);
+    }
+
+    /// <summary>맵 셋업(예전 이름 "미션 셋업") 화면 — 지도 크기/배치구역/
+    /// 미션 목표/지형. 완료되면 아직 안 끝난 미션 셋업으로, 둘 다 끝났으면
+    /// 게임 화면으로.</summary>
+    private static void BuildMapSetup()
+    {
+        var canvasGo = new GameObject("MapSetup_Canvas");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvasGo.AddComponent<CanvasScaler>();
+        canvasGo.AddComponent<GraphicRaycaster>();
+
+        // MapSetupController는 자기 GameObject의 RectTransform(캔버스 직속,
+        // 화면 전체를 덮음)을 직접 기준으로 UI를 짓는다 — 별도 참조 주입이 없다.
+        var mapSetup = canvasGo.AddComponent<MapSetupController>();
+        mapSetup.SetupCompleted += () =>
+        {
+            GameFlowState.MapSetupDone = true;
+            SceneManager.LoadScene(GameFlowState.MissionSetupDone ? GameBoardSceneName : MissionSetupSceneName);
+        };
+    }
+
+    /// <summary>미션 셋업(새 화면) — 미션 파라미터/점수 획득 조건/추가 조건/
+    /// 서플라이·라운드 공식/전투 규모. 완료되면 아직 안 끝난 맵 셋업으로,
+    /// 둘 다 끝났으면 게임 화면으로.</summary>
     private static void BuildMissionSetup()
     {
         var canvasGo = new GameObject("MissionSetup_Canvas");
@@ -74,10 +125,12 @@ public static class GameFlowBootstrap
         canvasGo.AddComponent<CanvasScaler>();
         canvasGo.AddComponent<GraphicRaycaster>();
 
-        // MissionSetupController는 자기 GameObject의 RectTransform(캔버스 직속,
-        // 화면 전체를 덮음)을 직접 기준으로 UI를 짓는다 — 별도 참조 주입이 없다.
         var missionSetup = canvasGo.AddComponent<MissionSetupController>();
-        missionSetup.StartGameRequested += () => SceneManager.LoadScene(GameBoardSceneName);
+        missionSetup.SetupCompleted += () =>
+        {
+            GameFlowState.MissionSetupDone = true;
+            SceneManager.LoadScene(GameFlowState.MapSetupDone ? GameBoardSceneName : MapSetupSceneName);
+        };
     }
 
     private static void BuildGameBoard()
@@ -243,7 +296,7 @@ public static class GameFlowBootstrap
         board.ConfigureExit(exitConfirmDialog);
         scoreboard.SetBoardManager(board);
 
-        if (MissionData.HasData && GameConstants.MapSizePresets.TryGetValue(MissionData.MapPreset, out var mapSize))
+        if (MapData.HasData && GameConstants.MapSizePresets.TryGetValue(MapData.MapPreset, out var mapSize))
         {
             board.SetMapSizeMm(mapSize);
         }

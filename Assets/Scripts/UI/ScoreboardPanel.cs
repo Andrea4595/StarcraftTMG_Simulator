@@ -12,7 +12,7 @@ namespace TmgBoard
     /// 클래스)에 직접 읽고 쓴다. 미션VP/파괴VP는 직접 수정, 종합VP는 계산된
     /// 값을 보여주기만 한다. 라운드는 스핀박스가 아니라 클릭식 네모 표시기이고
     /// (BuildRoundIndicator), 서플라이 상한은 더 이상 여기서 직접 입력받지
-    /// 않는다 — 미션 설정(MissionData)에서 정한 공식으로 라운드가 바뀔 때마다
+    /// 않는다 — 미션 셋업(MissionSettingsData)에서 정한 공식으로 라운드가 바뀔 때마다
     /// 자동 계산된다(SetRoundNumber). 각 팀 줄 아래에는 서플라이 소비 현황을
     /// 네모로 보여주는데, 이건 보드에 실제로 배치된 유닛을 봐야 해서
     /// (SetBoardManager) BoardManager 참조가 필요하다 — 그 외 나머지는 여전히
@@ -290,7 +290,7 @@ namespace TmgBoard
             layout.childForceExpandHeight = false;
 
             var squareTexture = Resources.Load<Texture2D>("UI/Square");
-            int maxRounds = Mathf.Max(MissionData.MaxRounds, 1);
+            int maxRounds = Mathf.Max(MissionSettingsData.RoundLength, 1);
             for (int i = 0; i < maxRounds; i++)
             {
                 int roundNumber = i + 1;
@@ -317,7 +317,7 @@ namespace TmgBoard
         private void SetRoundNumber(int roundNumber)
         {
             MatchState.RoundNumber = roundNumber;
-            MatchState.Supply = MissionData.BaseSupply + MissionData.SupplyPerRound * (roundNumber - 1);
+            MatchState.Supply = MissionSettingsData.BaseSupply + MissionSettingsData.SupplyPerRound * (roundNumber - 1);
             for (int i = 0; i < _roundPips.Count; i++)
             {
                 _roundPips[i].color = i < roundNumber ? RoundActiveColor : RoundInactiveColor;

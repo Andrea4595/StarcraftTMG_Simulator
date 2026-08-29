@@ -14,12 +14,12 @@ namespace TmgBoard
 
         private void BuildTerrainVisuals()
         {
-            if (!MissionData.HasData || terrainLayer == null)
+            if (!MapData.HasData || terrainLayer == null)
             {
                 return;
             }
 
-            foreach (var piece in MissionData.TerrainPieces)
+            foreach (var piece in MapData.TerrainPieces)
             {
                 var module = TerrainCatalog.Get(piece.ModuleId);
                 if (module == null)

@@ -314,7 +314,8 @@ namespace TmgBoard
 
         /// <summary>마커바 "나가기" 버튼(BoardManager.Markers.cs의
         /// CreateExitButton)이 여는 확인 창을 주입한다 — 확인을 누르면
-        /// 진행 중이던 판을 버리고 미션 셋업 씬으로 돌아간다(OnExitConfirmed).</summary>
+        /// 진행 중이던 판을 버리고 맨 처음 화면(Entry)으로 돌아간다
+        /// (OnExitConfirmed).</summary>
         public void ConfigureExit(ConfirmDialog exitConfirmDialogRef)
         {
             exitConfirmDialog = exitConfirmDialogRef;
@@ -324,11 +325,12 @@ namespace TmgBoard
         private void OnExitConfirmed()
         {
             MatchState.Reset();
-            UnityEngine.SceneManagement.SceneManager.LoadScene(GameConstants.MissionSetupSceneName);
+            GameFlowState.Reset();
+            UnityEngine.SceneManagement.SceneManager.LoadScene(GameConstants.EntrySceneName);
         }
 
-        /// <summary>미션 설정 핸드오프 등, 인스펙터 대신 코드로 지도 크기를
-        /// 지정할 때(예: MissionData.MapPreset에서 온 크기).</summary>
+        /// <summary>맵 셋업 핸드오프 등, 인스펙터 대신 코드로 지도 크기를
+        /// 지정할 때(예: MapData.MapPreset에서 온 크기).</summary>
         public void SetMapSizeMm(Vector2 sizeMm)
         {
             mapSizeMm = sizeMm;

@@ -3,277 +3,63 @@ using System.Collections.Generic;
 using System.IO;
 using TMPro;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace TmgBoard
 {
     /// <summary>
-    /// 미션 생성 화면 — 지도 크기 선택 + 배치구역(팀별 지도 가장자리 구간)
-    /// 그리기 + 미션 목표(1~5번) 배치. Godot판
-    /// scenes/mission_setup/MissionSetup.gd 포팅 — 지형 배치는 아직 없다
-    /// (텍스처/마스크 이미지 에셋이 필요해서 다음 단계). "게임 시작"을 누르면
-    /// MissionData에 스냅샷을 채우고
-    /// StartGameRequested를 올린다 — 실제 화면 전환은 이 컴포넌트를 만든 쪽
-    /// (부트스트랩)이 그 이벤트를 구독해서 처리한다.
+    /// 미션 셋업 화면 — 미션 파라미터/점수 획득 조건/추가 조건(텍스트),
+    /// 서플라이·라운드 공식(기본 서플라이/라운드당 서플라이/라운드 길이),
+    /// 전투 규모(STANDARD ENGAGEMENT / SKIRMISH LEVEL)를 입력받는다. 지도를
+    /// 다루지 않으므로 MapSetupController보다 훨씬 단순하다 — 팬/줌/배치구역/
+    /// 지형 같은 것 없이 그냥 입력 폼 하나. "완료" 버튼을 누르면
+    /// MissionSettingsData에 스냅샷을 채우고 SetupCompleted를 올린다 — 실제
+    /// 화면 전환(남은 셋업 화면 또는 게임 화면)은 이 컴포넌트를 만든 쪽
+    /// (부트스트랩)이 GameFlowState를 보고 처리한다.
     ///
     /// 이 컴포넌트가 붙은 GameObject 자체가 화면 전체를 덮는 RectTransform
-    /// (Canvas의 직속 자식, anchors (0,0)-(1,1))이라고 가정한다 — BoardManager
-    /// 처럼 별도 baseLayer 참조를 안 받고 자기 자신의 transform을 기준으로
-    /// UI를 짓는다.
+    /// (Canvas의 직속 자식, anchors (0,0)-(1,1))이라고 가정한다 — MapSetupController
+    /// 와 같은 방식.
     /// </summary>
     [RequireComponent(typeof(RectTransform))]
     public class MissionSetupController : MonoBehaviour
     {
-        public event Action StartGameRequested;
+        public event Action SetupCompleted;
 
-        private const float EdgeSnapThresholdMm = 15f;
-        private const float ZoneHitThicknessMm = 24f;
         private const float MarginPx = 8f;
-
-        // 게임 보드(BoardManager.PanZoom.cs)와 같은 줌 범위/배율.
-        private const float ZoomStep = 1.1f;
-        private const float MinZoom = 0.3f;
-        private const float MaxZoom = 4f;
-
-        private static readonly Dictionary<string, Color> ZoneColors = new Dictionary<string, Color>
-        {
-            { "A", new Color(1f, 0.15f, 0.15f, 0.9f) },
-            { "B", new Color(0.15f, 0.35f, 1f, 0.9f) },
-        };
-
-        /// <summary>프리셋 미리보기 전용 — 게임 보드의 미션 목표 마커는 이제
-        /// 플레이어가 바꾼 팀 색(GameConstants.GetMissionObjectiveBaseColor)을
-        /// 따라가지만, 이 미리보기는 아직 어느 팀 색도 모르는 미션 설정
-        /// 화면에서 쓰이므로 항상 고정된 1/3=빨강, 2/4=파랑, 5=초록으로
-        /// 보여준다(사용자 요청) — ZoneColors와 같은 이유로 이 화면만의
-        /// 고정 팔레트다.</summary>
-        private static readonly Dictionary<int, Color> PreviewObjectiveColors = new Dictionary<int, Color>
-        {
-            { 1, new Color(0.85f, 0.15f, 0.15f) },
-            { 2, new Color(0.15f, 0.4f, 0.85f) },
-            { 3, new Color(0.85f, 0.15f, 0.15f) },
-            { 4, new Color(0.15f, 0.4f, 0.85f) },
-            { 5, new Color(0.2f, 0.7f, 0.25f) },
-        };
+        private const float PresetListPanelWidth = 220f;
+        private const float FieldWidth = 560f;
 
         private RectTransform Root => (RectTransform)transform;
 
-        private RectTransform _mapArea;
-        private RectTransform _mapBackgroundRect;
-        private RectTransform _gridRect;
-        private RectTransform _zoneLayer;
-        private RectTransform _terrainLayer;
-        private RectTransform _objectiveLayer;
+        private TMP_InputField _missionParametersField;
+        private TMP_InputField _scoringConditionsField;
+        private TMP_InputField _additionalConditionsField;
+        private RectTransform _statRowContainer;
 
-        private readonly Dictionary<string, Button> _sizeButtons = new Dictionary<string, Button>();
-        private readonly Dictionary<string, Button> _terrainButtons = new Dictionary<string, Button>();
-        private readonly Dictionary<string, Button> _zoneButtons = new Dictionary<string, Button>();
-        private readonly Dictionary<int, Button> _objectiveButtons = new Dictionary<int, Button>();
-        private readonly Dictionary<int, MissionObjectivePiece> _objectivePieces = new Dictionary<int, MissionObjectivePiece>();
+        private int _baseSupply;
+        private int _supplyPerRound;
+        private int _roundLength = 5;
+        private string _engagementScale = MissionSettingsData.EngagementScaleStandard;
+        private readonly Dictionary<string, Button> _engagementButtons = new Dictionary<string, Button>();
 
-        private string _currentPreset = GameConstants.DefaultMapSizePreset;
-        private string _placementModuleId = "";
-        private string _activeZonePlayer = "";
-        private int _activeObjectiveNumber;
-
-        private TerrainPiece _draggingPiece;
-        private Vector2 _dragPieceOffset;
-
-        private MissionObjectivePiece _draggingObjective;
-        private Vector2 _dragObjectiveOffset;
-
-        private int _lastScreenWidth;
-        private int _lastScreenHeight;
-
-        // ── 지도 이동/확대축소(패닝/줌) ─────────────────────────────────
-        // 게임 보드(BoardManager.PanZoom.cs)의 가운데 버튼 드래그 패닝 +
-        // 마우스 휠 줌과 같은 방식.
-        private bool _panning;
-        private Vector2 _lastPanScreenPos;
-        private float _zoomLevel = 1f;
-        private float _baseScaleFactor = 1f;
-
-        private DeploymentZonePiece _drawingZone;
-        private float _zoneCurrentLength;
-        private Vector2 _zoneDownLocal;
-        private string _zoneLockedEdge = "";
-        private string _zoneCandidateH = "";
-        private string _zoneCandidateV = "";
-
-        // ── 미션 프리셋 저장/불러오기 ──────────────────────────────────
         private InputDialog _presetNameDialog;
         private RectTransform _presetListContent;
 
-        private Vector2 MapSize => GameConstants.MapSizePresets[_currentPreset];
-
         private void Start()
         {
-            // 지도(_map_area)를 좌측/상단 메뉴들보다 먼저 추가해야 한다 —
-            // 나중에 추가된 형제 노드가 위에 그려지므로, 순서가 반대면 지도가
-            // 배경으로 버튼들을 덮어버린다(Godot판 MissionSetup.gd의 동일한
-            // 주석 참고).
-            BuildMapArea();
-            BuildSizeRow();
-            BuildPalette();
-            var matchSettingsRect = BuildMatchSettingsPanel();
-            // 프리셋 목록 패널이 이 패널 바로 아래부터 시작해야 하므로, 그
-            // 실제 높이(ContentSizeFitter가 계산한 값)를 지금 강제로
-            // 확정시켜서 읽는다 — 안 그러면 이번 프레임엔 아직 기본 크기라
-            // 잘못된 값을 읽게 된다.
-            LayoutRebuilder.ForceRebuildLayoutImmediate(matchSettingsRect);
-            float presetListTopOffset = MarginPx + matchSettingsRect.rect.height + MarginPx;
+            BuildTopRow();
+            BuildFormPanel();
             BuildPresetDialogs();
-            BuildPresetListPanel(presetListTopOffset);
-            ApplyPreset(_currentPreset);
+            BuildPresetListPanel();
+            RefreshEngagementHighlight();
         }
 
-        private void Update()
+        // ── 상단 바 ──────────────────────────────────────────────────
+
+        private void BuildTopRow()
         {
-            if (Screen.width != _lastScreenWidth || Screen.height != _lastScreenHeight)
-            {
-                _lastScreenWidth = Screen.width;
-                _lastScreenHeight = Screen.height;
-                UpdateMapLayout();
-            }
-
-            HandlePanInput();
-
-            // 휠은 지형 조각 위면 회전, 아니면(그리고 다른 UI 위가 아니면)
-            // 커서 위치 기준 줌 — 게임 보드(BoardManager.PanZoom.cs)와 같은
-            // 분기 규칙.
-            float scroll = Input.mouseScrollDelta.y;
-            if (!Mathf.Approximately(scroll, 0f) && TryGetLocalMouse(out var wheelLocal))
-            {
-                var hovered = FindTerrainPieceAt(wheelLocal);
-                if (hovered != null)
-                {
-                    hovered.RotateStep(scroll > 0f ? 1 : -1);
-                }
-                else if (!IsPointerOverUi())
-                {
-                    ZoomAt(Input.mousePosition, scroll > 0f ? ZoomStep : 1f / ZoomStep);
-                }
-            }
-
-            if (_draggingPiece != null)
-            {
-                HandleDragInput();
-                return;
-            }
-
-            if (_draggingObjective != null)
-            {
-                HandleObjectiveDragInput();
-                return;
-            }
-
-            if (_drawingZone != null)
-            {
-                if (TryGetLocalMouse(out var local))
-                {
-                    UpdateZoneDrawing(local);
-                }
-                if (Input.GetMouseButtonUp(0))
-                {
-                    FinishZoneDrawing();
-                }
-                return;
-            }
-
-            if (_activeZonePlayer != "" && Input.GetMouseButtonDown(0) && !IsPointerOverUi())
-            {
-                if (TryGetLocalMouse(out var local))
-                {
-                    HandleZoneStartClick(local);
-                }
-                return;
-            }
-
-            if (_activeObjectiveNumber != 0 && Input.GetMouseButtonDown(0) && !IsPointerOverUi())
-            {
-                HandleObjectivePlacementClick();
-                return;
-            }
-
-            if (_placementModuleId != "" && Input.GetMouseButtonDown(0) && !IsPointerOverUi())
-            {
-                HandlePlacementClick();
-            }
-        }
-
-        private static bool IsPointerOverUi()
-        {
-            return EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
-        }
-
-        private bool TryGetLocalMouse(out Vector2 local)
-        {
-            return RectTransformUtility.ScreenPointToLocalPointInRectangle(_mapArea, Input.mousePosition, null, out local);
-        }
-
-        /// <summary>가운데 버튼 드래그로 지도를 움직인다(사용자 요청) —
-        /// BoardManager.PanZoom.cs의 HandlePanAndZoom과 같은 방식. _mapArea의
-        /// 부모(Root, 화면 전체)를 기준으로 스크린 좌표 차이를 로컬 좌표
-        /// 차이로 바꿔 anchoredPosition에 누적한다 — 코너 원점(pivot=0,0)이든
-        /// 중심 원점이든 상관없이 항상 성립하는 계산이라 _mapArea의 앵커
-        /// 방식(BuildMapArea 참고)을 안 가린다.</summary>
-        private void HandlePanInput()
-        {
-            if (_mapArea == null)
-            {
-                return;
-            }
-            var parent = _mapArea.parent as RectTransform;
-            if (parent == null)
-            {
-                return;
-            }
-
-            if (Input.GetMouseButtonDown(2) && !IsPointerOverUi())
-            {
-                _panning = true;
-                _lastPanScreenPos = Input.mousePosition;
-            }
-            if (Input.GetMouseButtonUp(2))
-            {
-                _panning = false;
-            }
-
-            if (_panning)
-            {
-                Vector2 currentScreenPos = Input.mousePosition;
-                if (RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, currentScreenPos, null, out var curLocal)
-                        && RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, _lastPanScreenPos, null, out var prevLocal))
-                {
-                    _mapArea.anchoredPosition += curLocal - prevLocal;
-                }
-                _lastPanScreenPos = currentScreenPos;
-            }
-        }
-
-        /// <summary>마우스가 가리키는 지도 위 지점이 화면상 같은 자리에 그대로
-        /// 있도록 확대/축소하면서 위치를 함께 보정한다 — 실제 계산은
-        /// 게임 보드(BoardManager.PanZoom.cs)도 함께 쓰는 공용 유틸리티
-        /// (Board/MapZoomUtil.cs)로 뽑아냈다. 예전엔 여기 따로(부모 기준
-        /// 로컬 좌표로) 구현했었는데, 그 방식은 부모(캔버스)의 pivot과
-        /// _mapArea의 anchor가 우연히 일치해야만 맞는 결과가 나오는 취약한
-        /// 수식이라 이 화면(코너 anchor)에서 줌 중심이 화면 좌하단으로
-        /// 쏠리는 버그가 났다 — 공용 유틸리티는 그 문제 자체가 없다.</summary>
-        private void ZoomAt(Vector2 screenPos, float factor)
-        {
-            if (_mapArea == null)
-            {
-                return;
-            }
-            _zoomLevel = MapZoomUtil.ApplyZoomAtScreenPoint(_mapArea, screenPos, _zoomLevel, _baseScaleFactor, factor, MinZoom, MaxZoom);
-        }
-
-        // ── UI 빌드 ──────────────────────────────────────────────────
-
-        private void BuildSizeRow()
-        {
-            var rowGo = new GameObject("SizeRow", typeof(RectTransform));
+            var rowGo = new GameObject("TopRow", typeof(RectTransform));
             rowGo.transform.SetParent(Root, false);
             var rowRect = (RectTransform)rowGo.transform;
             rowRect.anchorMin = new Vector2(0f, 1f);
@@ -289,19 +75,346 @@ namespace TmgBoard
             layout.childControlHeight = false;
             layout.childForceExpandHeight = false;
 
-            foreach (var presetName in GameConstants.MapSizePresets.Keys)
-            {
-                string captured = presetName;
-                var btn = CreateButton(rowRect, PresetLabel(presetName), () => OnSizePresetPressed(captured));
-                _sizeButtons[presetName] = btn;
-            }
-
-            CreateButton(rowRect, "게임 시작 ▶", OnStartGamePressed);
+            CreateButton(rowRect, "완료 ▶", OnCompletePressed);
             CreateIconButton(rowRect, Resources.Load<Texture2D>("UI/SaveButton"), 32f, OnSavePresetPressed);
         }
 
-        /// <summary>미션 프리셋 저장용 다이얼로그 — 이름 입력은 기존
-        /// InputDialog를 그대로 재사용한다(이 화면 전용 인스턴스).</summary>
+        // ── 입력 폼 ──────────────────────────────────────────────────
+
+        private void BuildFormPanel()
+        {
+            var panelGo = new GameObject("FormPanel", typeof(RectTransform));
+            panelGo.transform.SetParent(Root, false);
+            var panelRect = (RectTransform)panelGo.transform;
+            // 화면 중앙에 정렬(사용자 요청) — 다만 우측 프리셋 목록 패널이
+            // 따로 공간을 차지하고 있으니, 화면 정중앙이 아니라 "그 패널을
+            // 뺀 나머지 영역"의 중앙에 오도록 우측 패널 폭의 절반만큼
+            // 왼쪽으로 보정한다.
+            panelRect.anchorMin = new Vector2(0.5f, 0f);
+            panelRect.anchorMax = new Vector2(0.5f, 1f);
+            panelRect.pivot = new Vector2(0.5f, 0.5f);
+            float topInset = MarginPx + 32f + MarginPx; // 상단 바 높이 + 여백.
+            float bottomInset = MarginPx;
+            float rightPanelFootprint = PresetListPanelWidth + MarginPx * 2f;
+            panelRect.anchoredPosition = new Vector2(-rightPanelFootprint / 2f, (bottomInset - topInset) / 2f);
+            panelRect.sizeDelta = new Vector2(FieldWidth, -(topInset + bottomInset));
+
+            var layout = panelGo.AddComponent<VerticalLayoutGroup>();
+            layout.spacing = 10f;
+            layout.childControlWidth = true;
+            layout.childForceExpandWidth = true;
+            // false로 두면(예전 버그) 레이아웃 그룹이 "다음 형제를 어디에
+            // 배치할지"는 LayoutElement.preferredHeight로 계산하면서도 정작
+            // 자식 자신의 RectTransform 실제 높이는 안 바꿔서, 전투 규모
+            // 버튼 줄과 그 아래 스피너들이 서로 겹쳐 클릭이 엉뚱한 곳으로
+            // 먹혔다(이 프로젝트에 이미 기록된 반복 함정 — ScrollListUtil.cs
+            // 참고).
+            layout.childControlHeight = true;
+            layout.childForceExpandHeight = false;
+
+            // 스탯 행 컨테이너는 여기서 한 번만 만든다 — 실제 채우기는
+            // RefreshStatRow()가 한다(IntStepperField가 값을 나중에 바꿀
+            // 방법을 안 줘서 프리셋을 불러올 때마다 자식만 다시 짓는다).
+            // 텍스트 입력칸 3개는 반대로 절대 다시 안 짓는다 — 한 번 만든
+            // TMP_InputField를 프리셋 로드 때도 계속 재사용해야, InputDialog
+            // (이름/메모 등)처럼 캐럿/선택 상태가 안전하게 유지된다(아래
+            // 참고 — 예전엔 프리셋 로드 때마다 통째로 부수고 새로 지었더니
+            // 캐럿이 아예 안 보이고 타이핑하면 기존 내용이 지워지는 버그가
+            // 났었다).
+            var statRowGo = new GameObject("StatRow", typeof(RectTransform));
+            statRowGo.transform.SetParent(panelRect, false);
+            var statRowLe = statRowGo.AddComponent<LayoutElement>();
+            statRowLe.preferredHeight = 30f;
+            var statRowLayout = statRowGo.AddComponent<VerticalLayoutGroup>();
+            statRowLayout.spacing = 4f;
+            statRowLayout.childControlWidth = true;
+            statRowLayout.childForceExpandWidth = true;
+            statRowLayout.childControlHeight = true;
+            statRowLayout.childForceExpandHeight = false;
+            _statRowContainer = (RectTransform)statRowGo.transform;
+            RefreshStatRow();
+
+            _missionParametersField = CreateMultilineField(panelRect, "미션 파라미터", 90f);
+            _scoringConditionsField = CreateMultilineField(panelRect, "점수 획득 조건", 90f);
+            _additionalConditionsField = CreateMultilineField(panelRect, "추가 조건", 90f);
+
+            BuildEngagementRow(panelRect);
+        }
+
+        /// <summary>라운드 길이/기본 서플라이/라운드 당 서플라이를 한 줄에
+        /// 나란히 보여준다 — labelLeftControlRight(IntStepperField.cs 참고)
+        /// 로 라벨을 왼쪽에, 입력칸+스테퍼를 각 묶음의 오른쪽 끝에 붙이게
+        /// 되면서 셋을 한 줄에 둬도 라벨이 잘리지 않게 됐다. 프리셋을
+        /// 불러올 때 새 값으로 다시 부른다.</summary>
+        private void RefreshStatRow()
+        {
+            for (int i = _statRowContainer.childCount - 1; i >= 0; i--)
+            {
+                Destroy(_statRowContainer.GetChild(i).gameObject);
+            }
+
+            var row1 = CreateStatSubRow("StatRow1");
+            IntStepperField.Create(row1, "라운드 길이", 95f, _roundLength, 1, 20, v => _roundLength = v, labelLeftControlRight: true);
+            IntStepperField.Create(row1, "기본 서플라이", 95f, _baseSupply, 0, 999, v => _baseSupply = v, labelLeftControlRight: true);
+            IntStepperField.Create(row1, "라운드 당 서플라이", 95f, _supplyPerRound, 0, 999, v => _supplyPerRound = v, labelLeftControlRight: true);
+        }
+
+        private Transform CreateStatSubRow(string name)
+        {
+            var rowGo = new GameObject(name, typeof(RectTransform));
+            rowGo.transform.SetParent(_statRowContainer, false);
+            var rowLe = rowGo.AddComponent<LayoutElement>();
+            rowLe.preferredHeight = 30f;
+            var rowLayout = rowGo.AddComponent<HorizontalLayoutGroup>();
+            rowLayout.spacing = 12f;
+            rowLayout.childControlWidth = true;
+            rowLayout.childForceExpandWidth = true;
+            rowLayout.childControlHeight = true;
+            rowLayout.childForceExpandHeight = false;
+            return rowGo.transform;
+        }
+
+        /// <summary>이 프로세스에 전역으로 남아있는 Input.compositionString을
+        /// 강제로 정리한다 — imeCompositionMode를 껐다 원래대로 되돌리면
+        /// OS가 밀려있던 조합 상태를 커밋/취소하고 놓아준다. TMP_InputField.
+        /// UpdateLabel()이 이 값을 "지금 이 필드가 포커스를 갖고 있는지"와
+        /// 무관하게 그대로 자기 텍스트에 박아 넣는 바람에(화면을 열거나
+        /// 프리셋을 불러올 때 UpdateLabel이 다시 불리면서) 엉뚱한 자모가
+        /// 붙는 버그가 났다 — 그 UpdateLabel 재호출 직전에 불러서 막는다.</summary>
+        private static void FlushImeComposition()
+        {
+            var mode = Input.imeCompositionMode;
+            Input.imeCompositionMode = IMECompositionMode.Off;
+            Input.imeCompositionMode = mode;
+        }
+
+        private const float MultilineScrollbarWidth = 14f;
+
+        private static TMP_InputField CreateMultilineField(Transform parent, string labelText, float fieldHeight)
+        {
+            // 자동으로 계속 늘어나게 하지 않는다(사용자 요청) — TMP_InputField의
+            // 자체 스크롤 계산과 우리 쪽 리사이즈가 계속 어긋나는 버그만
+            // 반복해서 냈다. 대신 기본 높이의 1.5배로 고정하고, 넘치는
+            // 내용은 스크롤바로 본다.
+            fieldHeight *= 1.5f;
+
+            var groupGo = new GameObject($"Field_{labelText}", typeof(RectTransform));
+            groupGo.transform.SetParent(parent, false);
+            var groupLayout = groupGo.AddComponent<VerticalLayoutGroup>();
+            groupLayout.spacing = 4f;
+            groupLayout.childControlWidth = true;
+            groupLayout.childForceExpandWidth = true;
+            groupLayout.childControlHeight = true;
+            groupLayout.childForceExpandHeight = false;
+            var groupLe = groupGo.AddComponent<LayoutElement>();
+            groupLe.preferredHeight = fieldHeight + 24f;
+
+            var labelGo = new GameObject("Label", typeof(RectTransform));
+            labelGo.transform.SetParent(groupGo.transform, false);
+            var labelLe = labelGo.AddComponent<LayoutElement>();
+            labelLe.preferredHeight = 18f;
+            var label = labelGo.AddComponent<TextMeshProUGUI>();
+            label.text = labelText;
+            label.fontSize = 13f;
+            label.color = new Color(0.8f, 0.8f, 0.8f, 1f);
+            label.raycastTarget = false;
+
+            var fieldGo = new GameObject("InputField", typeof(RectTransform));
+            fieldGo.transform.SetParent(groupGo.transform, false);
+            var fieldLe = fieldGo.AddComponent<LayoutElement>();
+            fieldLe.preferredHeight = fieldHeight;
+            var bg = fieldGo.AddComponent<Image>();
+            bg.color = new Color(0.2f, 0.2f, 0.2f, 1f);
+            var inputField = fieldGo.AddComponent<TMP_InputField>();
+            inputField.lineType = TMP_InputField.LineType.MultiLineNewline;
+
+            var textAreaGo = new GameObject("TextArea", typeof(RectTransform));
+            textAreaGo.transform.SetParent(fieldGo.transform, false);
+            var textAreaRect = (RectTransform)textAreaGo.transform;
+            textAreaRect.anchorMin = Vector2.zero;
+            textAreaRect.anchorMax = Vector2.one;
+            // 오른쪽에 세로 스크롤바가 들어갈 자리를 비워둔다.
+            textAreaRect.offsetMin = new Vector2(8f, 6f);
+            textAreaRect.offsetMax = new Vector2(-8f - MultilineScrollbarWidth - 4f, -6f);
+            textAreaGo.AddComponent<RectMask2D>();
+
+            var textGo = new GameObject("Text", typeof(RectTransform));
+            textGo.transform.SetParent(textAreaGo.transform, false);
+            var textRect = (RectTransform)textGo.transform;
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.offsetMin = Vector2.zero;
+            textRect.offsetMax = Vector2.zero;
+            var text = textGo.AddComponent<TextMeshProUGUI>();
+            text.fontSize = 14f;
+            text.color = Color.white;
+            text.enableWordWrapping = true;
+
+            inputField.textViewport = textAreaRect;
+            inputField.textComponent = text;
+            inputField.text = "";
+            // "타이핑하면 기존 내용이 다 지워진다" 버그의 진짜 원인 —
+            // TMP_InputField의 Control Settings 중 OnFocus-Select All이 켜져
+            // 있으면 포커스를 얻는 순간 텍스트 전체가 선택되고, 그 상태에서
+            // 아무 키나 누르면 선택된 전체가 그 키 입력으로 치환된다(사용자가
+            // 직접 인스펙터에서 찾아냄 — 아래 SetTextResetCaret이 시도했던
+            // "캐럿을 텍스트 끝으로" 우회는 이 근본 원인을 안 건드려서
+            // 효과가 없었다). 꺼서 막는다.
+            inputField.onFocusSelectAll = false;
+            // Caret 자식 게임 오브젝트가 아예 안 만들어지던 진짜 원인 —
+            // TMP_InputField는 AddComponent되는 순간 OnEnable()이 즉시
+            // 실행되는데, 그 시점엔 아직 textComponent/textViewport가
+            // 비어 있어서(몇 줄 위에서 방금 대입했지만 이미 지나간
+            // OnEnable에는 반영 안 됨) 내부적으로 Caret 자식을 만드는
+            // 로직이 "텍스트 컴포넌트 없음"으로 스킵된다. 모든 참조를
+            // 다 채운 지금, enabled를 껐다 켜서 OnEnable을 강제로 다시
+            // 태우면 그제서야 Caret 자식이 제대로 만들어진다.
+            //
+            // 단, OnEnable()은 그 안에서 UpdateLabel()도 같이 부르는데(TMP_
+            // InputField.cs OnEnable 끝부분), UpdateLabel()은 "지금 이 필드가
+            // 포커스를 갖고 있는지"와 무관하게 프로세스 전역인 Input.
+            // compositionString(다른 입력칸에서 조합 중이던, 아직 커밋 안 된
+            // 한글 자모가 남아있을 수 있음)을 그대로 "<u>...</u>"로 감싸서
+            // 자기 텍스트에 박아 넣어버린다 — 화면을 열자마자 "ㄴ" 같은
+            // 자모가 붙어 있던 버그의 정체(실제로 겪음). 아래에서 밀려있는
+            // 조합 상태를 먼저 정리한다.
+            FlushImeComposition();
+            inputField.enabled = false;
+            inputField.enabled = true;
+            // 이전엔 Caret Material이 비어 있어서 안 보이는 줄 알았는데,
+            // 실제 원인은 위의 생성 순서 문제였다. 그래도 Material이
+            // 비어 있는 경우를 대비해 기본 UI 머티리얼을 한 번 더
+            // 보정해준다(생성 시점을 완전히 보장할 수 없으므로 포커스
+            // 때마다도 재시도).
+            FixCaretMaterial(inputField);
+            inputField.onSelect.AddListener(_ => FixCaretMaterial(inputField));
+
+            // 세로 스크롤바 — Unity 기본 "Input Field (TMP)"의 멀티라인
+            // 프리팹과 같은 구조(배경 위에 SlidingArea, 그 안에 Handle).
+            var scrollbarGo = new GameObject("Scrollbar", typeof(RectTransform));
+            scrollbarGo.transform.SetParent(fieldGo.transform, false);
+            var scrollbarRect = (RectTransform)scrollbarGo.transform;
+            scrollbarRect.anchorMin = new Vector2(1f, 0f);
+            scrollbarRect.anchorMax = new Vector2(1f, 1f);
+            scrollbarRect.pivot = new Vector2(1f, 1f);
+            scrollbarRect.offsetMin = new Vector2(-MultilineScrollbarWidth - 2f, 4f);
+            scrollbarRect.offsetMax = new Vector2(-2f, -4f);
+            var scrollbarBg = scrollbarGo.AddComponent<Image>();
+            scrollbarBg.color = new Color(0f, 0f, 0f, 0.3f);
+            var scrollbar = scrollbarGo.AddComponent<Scrollbar>();
+            scrollbar.direction = Scrollbar.Direction.TopToBottom;
+
+            var slidingAreaGo = new GameObject("SlidingArea", typeof(RectTransform));
+            slidingAreaGo.transform.SetParent(scrollbarRect, false);
+            var slidingAreaRect = (RectTransform)slidingAreaGo.transform;
+            slidingAreaRect.anchorMin = Vector2.zero;
+            slidingAreaRect.anchorMax = Vector2.one;
+            slidingAreaRect.offsetMin = new Vector2(2f, 2f);
+            slidingAreaRect.offsetMax = new Vector2(-2f, -2f);
+
+            var handleGo = new GameObject("Handle", typeof(RectTransform));
+            handleGo.transform.SetParent(slidingAreaRect, false);
+            var handleRect = (RectTransform)handleGo.transform;
+            handleRect.anchorMin = Vector2.zero;
+            handleRect.anchorMax = Vector2.one;
+            handleRect.sizeDelta = Vector2.zero;
+            var handleImg = handleGo.AddComponent<Image>();
+            handleImg.color = new Color(0.6f, 0.6f, 0.6f, 0.9f);
+
+            scrollbar.handleRect = handleRect;
+            scrollbar.targetGraphic = handleImg;
+            inputField.verticalScrollbar = scrollbar;
+            inputField.scrollSensitivity = 5f;
+
+            return inputField;
+        }
+
+        /// <summary>TMP_InputField가 필요할 때 내부적으로 만드는 "Caret"
+        /// 자식(TMP_SelectionCaret)의 Material이 코드로 직접 컴포넌트를
+        /// 붙였을 때는 비어 있어서 캐럿이 안 그려지던 문제 — 사용자가
+        /// 인스펙터에서 유니티 내장 "Default-Line" 머티리얼을 수동으로
+        /// 넣어서 해결했었는데, 코드에서 Resources.GetBuiltinResource로
+        /// 같은 걸 가져오면 이 프로젝트에서는 null이 반환된다("Failed to
+        /// find Default-Line.mat" 엔진 경고 — Editor.log로 확인). 그래서
+        /// "Default-Line"이라는 특정 리소스 대신, uGUI가 항상 보장하는
+        /// 기본 UI 머티리얼(Graphic.defaultGraphicMaterial)을 쓴다 — 실제로
+        /// 필요했던 건 그 머티리얼 자체가 아니라 material 프로퍼티에 어떤
+        /// non-null 값이든 한 번 세팅해서 CanvasRenderer 초기화를 트리거하는
+        /// 것으로 보인다. Caret 자식이 아직 안 만들어졌으면(GetComponentInChildren
+        /// 결과가 null) 조용히 넘어간다 — 호출한 쪽에서 필요할 때 다시
+        /// 부른다.</summary>
+        private static void FixCaretMaterial(TMP_InputField field)
+        {
+            var caret = field.GetComponentInChildren<TMP_SelectionCaret>(true);
+            if (caret != null)
+            {
+                caret.material = Graphic.defaultGraphicMaterial;
+            }
+        }
+
+        private void BuildEngagementRow(Transform parent)
+        {
+            var rowGo = new GameObject("EngagementRow", typeof(RectTransform));
+            rowGo.transform.SetParent(parent, false);
+            var rowLe = rowGo.AddComponent<LayoutElement>();
+            rowLe.preferredHeight = 32f;
+            var layout = rowGo.AddComponent<HorizontalLayoutGroup>();
+            layout.spacing = 8f;
+            layout.childControlWidth = true;
+            layout.childForceExpandWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandHeight = false;
+
+            foreach (var scale in new[] { MissionSettingsData.EngagementScaleStandard, MissionSettingsData.EngagementScaleSkirmish })
+            {
+                string captured = scale;
+                var btn = CreateButton(rowGo.transform, scale, () => OnEngagementButtonPressed(captured));
+                _engagementButtons[scale] = btn;
+            }
+        }
+
+        private void OnEngagementButtonPressed(string scale)
+        {
+            _engagementScale = scale;
+            RefreshEngagementHighlight();
+        }
+
+        private void RefreshEngagementHighlight()
+        {
+            foreach (var kv in _engagementButtons)
+            {
+                bool selected = kv.Key == _engagementScale;
+                var img = kv.Value.GetComponent<Image>();
+                if (img != null)
+                {
+                    img.color = selected ? new Color(0.25f, 0.45f, 0.75f, 1f) : new Color(0.3f, 0.3f, 0.3f, 1f);
+                }
+                var label = kv.Value.GetComponentInChildren<TextMeshProUGUI>();
+                if (label != null)
+                {
+                    label.fontStyle = selected ? FontStyles.Bold : FontStyles.Normal;
+                }
+            }
+        }
+
+        // ── 완료 ────────────────────────────────────────────────────
+
+        private void OnCompletePressed()
+        {
+            MissionSettingsData.Clear();
+            MissionSettingsData.HasData = true;
+            MissionSettingsData.MissionParameters = _missionParametersField.text;
+            MissionSettingsData.ScoringConditions = _scoringConditionsField.text;
+            MissionSettingsData.AdditionalConditions = _additionalConditionsField.text;
+            MissionSettingsData.BaseSupply = _baseSupply;
+            MissionSettingsData.SupplyPerRound = _supplyPerRound;
+            MissionSettingsData.RoundLength = _roundLength;
+            MissionSettingsData.EngagementScale = _engagementScale;
+            SetupCompleted?.Invoke();
+        }
+
+        // ── 미션 프리셋 저장/불러오기(Missions/ 폴더) ─────────────────────
+
         private void BuildPresetDialogs()
         {
             _presetNameDialog = new GameObject("PresetNameDialog").AddComponent<InputDialog>();
@@ -309,20 +422,43 @@ namespace TmgBoard
             _presetNameDialog.Confirmed += OnPresetNameConfirmed;
         }
 
-        // ── 미션 프리셋 목록(우측 패널) ───────────────────────────────────
-        // 예전엔 "프리셋 불러오기" 버튼 → 파일 탐색 다이얼로그 → 마우스
-        // 올리면 미리보기 순서였는데, 사용자 요청으로 화면 우측에 모든
-        // 프리셋의 미리보기를 항상 목록으로 띄워두고 클릭하면 바로
-        // 불러오는 방식으로 바꿨다(다이얼로그/미리보기 패널 자체가 없어짐).
+        private void OnSavePresetPressed()
+        {
+            _presetNameDialog.Open("미션 프리셋 이름", "");
+        }
 
-        private const float PresetThumbnailSize = 96f;
-        private const float PresetListPanelWidth = 220f;
+        private void OnPresetNameConfirmed(string name)
+        {
+            name = name.Trim();
+            if (string.IsNullOrEmpty(name))
+            {
+                return;
+            }
 
-        /// <summary>화면 우측, MatchSettings 패널 바로 아래부터 화면 하단까지
-        /// 채우는 스크롤 목록 — Deployments/ 폴더의 모든 *.json을 미리보기
-        /// 썸네일+파일명으로 나열하고, 클릭하면 그 자리에서 바로
-        /// 불러온다(LoadPresetFromFile).</summary>
-        private void BuildPresetListPanel(float topOffset)
+            string path;
+            try
+            {
+                path = Path.Combine(ResolveMissionsDirectory(), $"{SanitizeFileName(name)}.json");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"미션 프리셋 저장 경로를 만들 수 없습니다: {e.Message}");
+                return;
+            }
+
+            try
+            {
+                MissionSettingsPresetIO.Save(path, _missionParametersField.text, _scoringConditionsField.text,
+                        _additionalConditionsField.text, _baseSupply, _supplyPerRound, _roundLength, _engagementScale);
+                RefreshPresetList();
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"미션 프리셋을 저장하지 못했습니다: {path} ({e.Message})");
+            }
+        }
+
+        private void BuildPresetListPanel()
         {
             var panelGo = new GameObject("PresetList", typeof(RectTransform));
             panelGo.transform.SetParent(Root, false);
@@ -330,9 +466,8 @@ namespace TmgBoard
             panelRect.anchorMin = new Vector2(1f, 0f);
             panelRect.anchorMax = new Vector2(1f, 1f);
             panelRect.pivot = new Vector2(1f, 0.5f);
-            float bottomInset = MarginPx;
-            panelRect.anchoredPosition = new Vector2(-MarginPx, (bottomInset - topOffset) / 2f);
-            panelRect.sizeDelta = new Vector2(PresetListPanelWidth, -(topOffset + bottomInset));
+            panelRect.anchoredPosition = new Vector2(-MarginPx, 0f);
+            panelRect.sizeDelta = new Vector2(PresetListPanelWidth, -(MarginPx * 2f));
 
             var bg = panelGo.AddComponent<Image>();
             bg.color = new Color(0.15f, 0.15f, 0.15f, 0.95f);
@@ -345,19 +480,30 @@ namespace TmgBoard
             layout.childControlHeight = true;
             layout.childForceExpandHeight = false;
 
-            var title = CreateLabel(panelRect, "프리셋 (클릭하면 바로 불러오기)");
+            var title = CreateLabel(panelRect, "미션 프리셋 (클릭하면 바로 불러오기)");
             var titleLe = title.gameObject.AddComponent<LayoutElement>();
-            titleLe.preferredHeight = 20f;
+            titleLe.preferredHeight = 32f;
 
             _presetListContent = ScrollListUtil.Create(panelRect, 100f, new Color(0f, 0f, 0f, 0.15f), out _, out var scrollLe);
-            scrollLe.flexibleHeight = 1f; // 남는 세로 공간을 전부 목록이 차지한다.
+            scrollLe.flexibleHeight = 1f;
+
+            // 무작위 로드 버튼은 목록 맨 아래(사용자 요청).
+            var randomRowGo = new GameObject("RandomRow", typeof(RectTransform));
+            randomRowGo.transform.SetParent(panelRect, false);
+            var randomRowLe = randomRowGo.AddComponent<LayoutElement>();
+            randomRowLe.preferredHeight = 32f;
+            var randomRowLayout = randomRowGo.AddComponent<HorizontalLayoutGroup>();
+            randomRowLayout.spacing = 6f;
+            randomRowLayout.childControlWidth = true;
+            randomRowLayout.childForceExpandWidth = true;
+            randomRowLayout.childControlHeight = true;
+            randomRowLayout.childForceExpandHeight = false;
+            CreateButton(randomRowGo.transform, "STANDARD 무작위", () => LoadRandomPreset(MissionSettingsData.EngagementScaleStandard));
+            CreateButton(randomRowGo.transform, "SKIRMISH 무작위", () => LoadRandomPreset(MissionSettingsData.EngagementScaleSkirmish));
 
             RefreshPresetList();
         }
 
-        /// <summary>Deployments/ 폴더를 다시 스캔해서 목록을 처음부터 다시
-        /// 그린다 — 프리셋 저장 직후에도 새로 저장된 파일이 바로 보이도록
-        /// 다시 부른다(OnPresetNameConfirmed).</summary>
         private void RefreshPresetList()
         {
             for (int i = _presetListContent.childCount - 1; i >= 0; i--)
@@ -368,7 +514,7 @@ namespace TmgBoard
             string[] files;
             try
             {
-                files = Directory.GetFiles(ResolvePresetDirectory(), "*.json");
+                files = Directory.GetFiles(ResolveMissionsDirectory(), "*.json");
             }
             catch (Exception)
             {
@@ -378,32 +524,21 @@ namespace TmgBoard
 
             foreach (var path in files)
             {
-                string jsonText;
-                try
-                {
-                    jsonText = File.ReadAllText(path);
-                }
-                catch (Exception)
+                if (!TryLoadPresetFile(path, out var preset))
                 {
                     continue;
                 }
-                if (!MissionPresetIO.TryLoad(jsonText, out var mapPreset, out var zones, out var objectives, out var terrain, out _))
-                {
-                    continue;
-                }
-                CreatePresetListItem(path, mapPreset, zones, objectives, terrain);
+                CreatePresetListItem(path, preset);
             }
         }
 
-        private void CreatePresetListItem(string path, string mapPreset, List<DeploymentZoneData> zones,
-                List<MissionObjectiveData> objectives, List<TerrainPieceData> terrain)
+        private void CreatePresetListItem(string path, MissionPresetData preset)
         {
             var itemGo = new GameObject("PresetItem", typeof(RectTransform));
             itemGo.transform.SetParent(_presetListContent, false);
             var itemLayout = itemGo.AddComponent<VerticalLayoutGroup>();
             itemLayout.padding = new RectOffset(6, 6, 6, 6);
-            itemLayout.spacing = 4f;
-            itemLayout.childAlignment = TextAnchor.UpperCenter;
+            itemLayout.spacing = 2f;
             itemLayout.childControlWidth = true;
             itemLayout.childForceExpandWidth = true;
             itemLayout.childControlHeight = true;
@@ -413,296 +548,170 @@ namespace TmgBoard
             itemBg.color = new Color(0.22f, 0.22f, 0.22f, 1f);
             var itemBtn = itemGo.AddComponent<Button>();
             itemBtn.targetGraphic = itemBg;
-            itemBtn.onClick.AddListener(() => LoadPresetFromFile(path));
-
-            var thumbGo = new GameObject("Thumb", typeof(RectTransform));
-            thumbGo.transform.SetParent(itemGo.transform, false);
-            var thumbLe = thumbGo.AddComponent<LayoutElement>();
-            thumbLe.preferredWidth = PresetThumbnailSize;
-            thumbLe.preferredHeight = PresetThumbnailSize;
-            var thumbRect = (RectTransform)thumbGo.transform;
-            var thumbBg = thumbGo.AddComponent<Image>();
-            thumbBg.color = new Color(0.05f, 0.05f, 0.05f, 1f);
-            thumbBg.raycastTarget = false;
-            DrawPresetThumbnail(thumbRect, PresetThumbnailSize, mapPreset, zones, objectives, terrain);
+            itemBtn.onClick.AddListener(() => LoadPreset(preset));
 
             var nameLabel = CreateLabel((RectTransform)itemGo.transform, Path.GetFileNameWithoutExtension(path));
-            nameLabel.fontSize = 11f;
+            nameLabel.fontSize = 13f;
+            nameLabel.fontStyle = FontStyles.Bold;
             var nameLe = nameLabel.gameObject.AddComponent<LayoutElement>();
-            nameLe.preferredHeight = 28f;
+            nameLe.preferredHeight = 18f;
+
+            var scaleLabel = CreateLabel((RectTransform)itemGo.transform, preset.EngagementScale);
+            scaleLabel.fontSize = 11f;
+            scaleLabel.color = new Color(0.7f, 0.75f, 0.85f, 1f);
+            var scaleLe = scaleLabel.gameObject.AddComponent<LayoutElement>();
+            scaleLe.preferredHeight = 16f;
+
+            string preview = string.IsNullOrEmpty(preset.MissionParameters) ? "" : Truncate(preset.MissionParameters, 40);
+            if (!string.IsNullOrEmpty(preview))
+            {
+                var previewLabel = CreateLabel((RectTransform)itemGo.transform, preview);
+                previewLabel.fontSize = 11f;
+                previewLabel.color = new Color(0.65f, 0.65f, 0.65f, 1f);
+                var previewLe = previewLabel.gameObject.AddComponent<LayoutElement>();
+                previewLe.preferredHeight = 16f;
+            }
         }
 
-        /// <summary>배치구역/지형/미션 목표를 boxSize 크기의 작은 지도로 그려서
-        /// previewMapArea 아래에 채운다 — 프리셋 목록 항목 하나하나가 이걸
-        /// 부른다(항목 자체가 통째로 파괴될 때 자식도 같이 없어지므로 별도
-        /// 정리 로직은 필요 없다).</summary>
-        private void DrawPresetThumbnail(RectTransform previewMapArea, float boxSize, string mapPreset,
-                List<DeploymentZoneData> zones, List<MissionObjectiveData> objectives, List<TerrainPieceData> terrain)
+        private static string Truncate(string s, int maxLen)
         {
-            Vector2 mapSize = GameConstants.MapSizePresets.TryGetValue(mapPreset, out var sz)
-                    ? sz
-                    : GameConstants.MapSizePresets[GameConstants.DefaultMapSizePreset];
-            float scale = Mathf.Min(boxSize / mapSize.x, boxSize / mapSize.y);
-            Vector2 drawSize = mapSize * scale;
+            s = s.Replace("\n", " ").Replace("\r", "");
+            return s.Length <= maxLen ? s : s.Substring(0, maxLen) + "...";
+        }
 
-            // 코너 원점([0,mapSize]) mm 좌표를 미리보기 박스의 중심 원점
-            // 로컬 좌표로 바꾼다(0~1로 정규화한 뒤 drawSize 기준으로 중앙 정렬).
-            Vector2 ToPreviewLocal(Vector2 cornerPointMm)
+        /// <summary>지금 채워진 값을 버리고 preset의 값으로 모든 입력칸/버튼
+        /// 상태를 되돌린다 — 프리셋 목록 클릭, 무작위 로드 둘 다 이걸 쓴다.
+        /// 텍스트 입력칸 3개는 절대 다시 안 짓고(BuildFormPanel/RefreshStatRow
+        /// 참고) 항상 같은 인스턴스에 .text만 새로 넣는다 — InputDialog
+        /// (이름/메모 등)가 매번 재사용하는 것과 같은 방식이라야 캐럿/선택
+        /// 상태가 안전하게 유지된다.</summary>
+        private void LoadPreset(MissionPresetData preset)
+        {
+            _baseSupply = preset.BaseSupply;
+            _supplyPerRound = preset.SupplyPerRound;
+            _roundLength = preset.RoundLength;
+            _engagementScale = preset.EngagementScale;
+            // 서플라이/라운드 길이 스피너는 IntStepperField가 각자 자기
+            // 표시칸을 들고 있어서(별도 참조를 안 남겨뒀다) 값을 새로 밀어넣을
+            // 방법이 없다 — 그 셋만 다시 짓는다(텍스트 입력칸은 안 건드림).
+            RefreshStatRow();
+            RefreshEngagementHighlight();
+
+            // 프리셋 불러오면 내용에 엉뚱한 자모가 붙던 버그도 같은 원인
+            // (FlushImeComposition 주석 참고) — .text 대입도 내부적으로
+            // UpdateLabel()을 다시 태운다.
+            FlushImeComposition();
+            SetTextResetCaret(_missionParametersField, preset.MissionParameters);
+            SetTextResetCaret(_scoringConditionsField, preset.ScoringConditions);
+            SetTextResetCaret(_additionalConditionsField, preset.AdditionalConditions);
+        }
+
+        /// <summary>TMP_InputField.text를 코드로 직접 대입하면 캐럿/선택 범위가
+        /// 이전 상태(예: 빈 문자열이었을 때의 "전체 선택"류 내부 상태)에
+        /// 그대로 남는 경우가 있어서, 그 다음 사용자가 칸을 클릭하고 아무
+        /// 키나 누르면 "선택된 범위"가 통째로 새 키 입력으로 치환되며 방금
+        /// 넣어준 내용이 전부 지워지는 버그가 났다(실제로 겪음). 텍스트를
+        /// 넣은 직후 캐럿/선택을 텍스트 맨 끝, 선택 없음 상태로 명시적으로
+        /// 되돌려서 막는다.</summary>
+        private static void SetTextResetCaret(TMP_InputField field, string value)
+        {
+            field.text = value ?? "";
+            int end = field.text.Length;
+            field.caretPosition = end;
+            field.selectionAnchorPosition = end;
+            field.selectionFocusPosition = end;
+        }
+
+        private void LoadRandomPreset(string engagementScale)
+        {
+            string[] files;
+            try
             {
-                Vector2 norm = new Vector2(cornerPointMm.x / mapSize.x, cornerPointMm.y / mapSize.y);
-                return new Vector2((norm.x - 0.5f) * drawSize.x, (norm.y - 0.5f) * drawSize.y);
+                files = Directory.GetFiles(ResolveMissionsDirectory(), "*.json");
+            }
+            catch (Exception)
+            {
+                return;
             }
 
-            var mapBgGo = new GameObject("MapBg", typeof(RectTransform));
-            mapBgGo.transform.SetParent(previewMapArea, false);
-            var mapBgRect = (RectTransform)mapBgGo.transform;
-            mapBgRect.anchorMin = new Vector2(0.5f, 0.5f);
-            mapBgRect.anchorMax = new Vector2(0.5f, 0.5f);
-            mapBgRect.pivot = new Vector2(0.5f, 0.5f);
-            mapBgRect.sizeDelta = drawSize;
-            mapBgRect.anchoredPosition = Vector2.zero;
-            var mapBgImg = mapBgGo.AddComponent<Image>();
-            mapBgImg.color = new Color(0.15f, 0.18f, 0.15f, 1f);
-            mapBgImg.raycastTarget = false;
-
-            foreach (var z in zones)
+            var matches = new List<MissionPresetData>();
+            foreach (var path in files)
             {
-                Vector2 a, b;
-                switch (z.Edge)
+                if (TryLoadPresetFile(path, out var preset) && preset.EngagementScale == engagementScale)
                 {
-                    case "left": a = new Vector2(0f, z.StartAlong); b = new Vector2(0f, z.EndAlong); break;
-                    case "right": a = new Vector2(mapSize.x, z.StartAlong); b = new Vector2(mapSize.x, z.EndAlong); break;
-                    case "top": a = new Vector2(z.StartAlong, 0f); b = new Vector2(z.EndAlong, 0f); break;
-                    default: a = new Vector2(z.StartAlong, mapSize.y); b = new Vector2(z.EndAlong, mapSize.y); break;
+                    matches.Add(preset);
                 }
-                Vector2 pa = ToPreviewLocal(a);
-                Vector2 pb = ToPreviewLocal(b);
-                bool horizontal = z.Edge == "top" || z.Edge == "bottom";
-
-                var go = new GameObject("Zone", typeof(RectTransform));
-                go.transform.SetParent(previewMapArea, false);
-                var rt = (RectTransform)go.transform;
-                rt.anchorMin = new Vector2(0.5f, 0.5f);
-                rt.anchorMax = new Vector2(0.5f, 0.5f);
-                rt.pivot = new Vector2(0.5f, 0.5f);
-                rt.sizeDelta = horizontal ? new Vector2(Vector2.Distance(pa, pb), 3f) : new Vector2(3f, Vector2.Distance(pa, pb));
-                rt.anchoredPosition = (pa + pb) / 2f;
-                var img = go.AddComponent<Image>();
-                img.color = ZoneColors.TryGetValue(z.Player, out var c) ? c : Color.white;
-                img.raycastTarget = false;
             }
-
-            foreach (var t in terrain)
+            if (matches.Count == 0)
             {
-                var go = new GameObject("Terrain", typeof(RectTransform));
-                go.transform.SetParent(previewMapArea, false);
-                var rt = (RectTransform)go.transform;
-                rt.anchorMin = new Vector2(0.5f, 0.5f);
-                rt.anchorMax = new Vector2(0.5f, 0.5f);
-                rt.pivot = new Vector2(0.5f, 0.5f);
-                rt.sizeDelta = new Vector2(10f, 10f);
-                rt.anchoredPosition = ToPreviewLocal(t.Position);
-                rt.localEulerAngles = new Vector3(0f, 0f, -t.RotationDeg);
-                var img = go.AddComponent<Image>();
-                img.color = new Color(0.55f, 0.45f, 0.3f, 0.9f);
-                img.raycastTarget = false;
+                Debug.LogWarning($"'{engagementScale}' 프리셋이 Missions 폴더에 없습니다.");
+                return;
             }
-
-            foreach (var o in objectives)
-            {
-                var go = new GameObject($"Objective_{o.Number}", typeof(RectTransform));
-                go.transform.SetParent(previewMapArea, false);
-                var rt = (RectTransform)go.transform;
-                rt.anchorMin = new Vector2(0.5f, 0.5f);
-                rt.anchorMax = new Vector2(0.5f, 0.5f);
-                rt.pivot = new Vector2(0.5f, 0.5f);
-                rt.sizeDelta = new Vector2(12f, 12f);
-                rt.anchoredPosition = ToPreviewLocal(o.Position);
-                var img = go.AddComponent<Image>();
-                img.color = PreviewObjectiveColors.TryGetValue(o.Number, out var objColor) ? objColor : new Color(0.85f, 0.85f, 0.8f);
-                img.raycastTarget = false;
-
-                var labelGo = new GameObject("Num", typeof(RectTransform));
-                labelGo.transform.SetParent(go.transform, false);
-                var labelRect = (RectTransform)labelGo.transform;
-                labelRect.anchorMin = Vector2.zero;
-                labelRect.anchorMax = Vector2.one;
-                labelRect.offsetMin = Vector2.zero;
-                labelRect.offsetMax = Vector2.zero;
-                var label = labelGo.AddComponent<TextMeshProUGUI>();
-                label.text = o.Number.ToString();
-                label.fontSize = 8f;
-                label.fontStyle = FontStyles.Bold;
-                label.alignment = TextAlignmentOptions.Center;
-                label.color = Color.white;
-                label.raycastTarget = false;
-            }
+            LoadPreset(matches[UnityEngine.Random.Range(0, matches.Count)]);
         }
 
-        private void BuildPalette()
+        private static bool TryLoadPresetFile(string path, out MissionPresetData preset)
         {
-            var panelGo = new GameObject("Palette", typeof(RectTransform));
-            panelGo.transform.SetParent(Root, false);
-            var panelRect = (RectTransform)panelGo.transform;
-            panelRect.anchorMin = new Vector2(0f, 1f);
-            panelRect.anchorMax = new Vector2(0f, 1f);
-            panelRect.pivot = new Vector2(0f, 1f);
-            panelRect.anchoredPosition = new Vector2(MarginPx, -(MarginPx + 32f + MarginPx));
-            panelRect.sizeDelta = new Vector2(180f, 40f);
-
-            var bg = panelGo.AddComponent<Image>();
-            bg.color = new Color(0.15f, 0.15f, 0.15f, 0.95f);
-
-            var layout = panelGo.AddComponent<VerticalLayoutGroup>();
-            layout.padding = new RectOffset(8, 8, 8, 8);
-            layout.spacing = 6f;
-            layout.childControlWidth = true;
-            layout.childForceExpandWidth = true;
-            layout.childControlHeight = false;
-            layout.childForceExpandHeight = false;
-
-            var fitter = panelGo.AddComponent<ContentSizeFitter>();
-            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-            var terrainLabel = CreateLabel(panelRect, "지형 (휠로 회전, 우클릭 메뉴로 삭제)");
-            var terrainLabelLe = terrainLabel.gameObject.AddComponent<LayoutElement>();
-            terrainLabelLe.preferredHeight = 32f;
-
-            foreach (var module in TerrainCatalog.Modules)
+            preset = default;
+            string jsonText;
+            try
             {
-                string capturedId = module.Id;
-                var btn = CreateButton(panelRect, module.DisplayName, () => OnTerrainButtonToggled(capturedId));
-                var btnLe = btn.gameObject.AddComponent<LayoutElement>();
-                btnLe.preferredHeight = 32f;
-                _terrainButtons[module.Id] = btn;
+                jsonText = File.ReadAllText(path);
             }
-
-            var instructionLabel = CreateLabel(panelRect, "배치구역 (지도 가장자리에서 드래그, 우클릭으로 삭제)");
-            var instructionLe = instructionLabel.gameObject.AddComponent<LayoutElement>();
-            instructionLe.preferredHeight = 44f;
-
-            foreach (var player in new[] { "A", "B" })
+            catch (Exception)
             {
-                var btn = CreateZoneToggleButton(panelRect, player);
-                var le = btn.gameObject.AddComponent<LayoutElement>();
-                le.preferredHeight = 32f;
-                _zoneButtons[player] = btn;
+                return false;
             }
-
-            var objectiveLabel = CreateLabel(panelRect, "미션 목표");
-            var objectiveLabelLe = objectiveLabel.gameObject.AddComponent<LayoutElement>();
-            objectiveLabelLe.preferredHeight = 20f;
-
-            foreach (var number in GameConstants.MissionObjectiveNumbers)
+            if (!MissionSettingsPresetIO.TryLoad(jsonText, out var missionParameters, out var scoringConditions,
+                    out var additionalConditions, out var baseSupply, out var supplyPerRound, out var roundLength,
+                    out var engagementScale, out _))
             {
-                int captured = number;
-                var btn = CreateButton(panelRect, $"목표 {number}", () => OnObjectiveButtonClicked(captured));
-                var le = btn.gameObject.AddComponent<LayoutElement>();
-                le.preferredHeight = 32f;
-                _objectiveButtons[number] = btn;
+                return false;
             }
+            preset = new MissionPresetData
+            {
+                MissionParameters = missionParameters,
+                ScoringConditions = scoringConditions,
+                AdditionalConditions = additionalConditions,
+                BaseSupply = baseSupply,
+                SupplyPerRound = supplyPerRound,
+                RoundLength = roundLength,
+                EngagementScale = engagementScale,
+            };
+            return true;
         }
 
-        /// <summary>화면 우상단 고정 패널 — 게임 화면의 라운드 표시기/서플라이
-        /// 자동 계산 공식이 쓸 값 3개(최대 라운드/기본 서플라이/라운드당 증가량)
-        /// 를 정수로 입력받는다(사용자 요청). 미션 프리셋 저장/불러오기에는
-        /// 아직 포함되지 않는다 — 프리셋은 배치구역/지형/목표까지만 다루는
-        /// 기존 스키마라, 이 값들을 넣으려면 스키마를 같이 넓혀야 해서 이번
-        /// 요청 범위 밖으로 남겨뒀다.</summary>
-        private RectTransform BuildMatchSettingsPanel()
+        private class MissionPresetData
         {
-            var panelGo = new GameObject("MatchSettings", typeof(RectTransform));
-            panelGo.transform.SetParent(Root, false);
-            var panelRect = (RectTransform)panelGo.transform;
-            panelRect.anchorMin = new Vector2(1f, 1f);
-            panelRect.anchorMax = new Vector2(1f, 1f);
-            panelRect.pivot = new Vector2(1f, 1f);
-            panelRect.anchoredPosition = new Vector2(-MarginPx, -MarginPx);
-            panelRect.sizeDelta = new Vector2(210f, 40f);
-
-            var bg = panelGo.AddComponent<Image>();
-            bg.color = new Color(0.15f, 0.15f, 0.15f, 0.95f);
-
-            var layout = panelGo.AddComponent<VerticalLayoutGroup>();
-            layout.padding = new RectOffset(10, 10, 8, 8);
-            layout.spacing = 6f;
-            layout.childControlWidth = true;
-            layout.childForceExpandWidth = true;
-            layout.childControlHeight = true;
-            layout.childForceExpandHeight = false;
-
-            var fitter = panelGo.AddComponent<ContentSizeFitter>();
-            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-            // stepperWidth를 안 넘기면 기본값(16f)을 써서 게임 화면
-            // (ScoreboardPanel)과 폭이 똑같아진다 — 예전엔 flexibleWidth 누수
-            // 버그를 몰라서 이 화면만 좁게 우회해뒀었는데(narrowStepperWidth=6f),
-            // 그 버그를 고친 지금은 더 이상 필요 없다.
-            IntStepperField.Create(panelRect, "최대 라운드", 90f, MissionData.MaxRounds, 1, 20, v => MissionData.MaxRounds = v);
-            IntStepperField.Create(panelRect, "기본 서플라이", 90f, MissionData.BaseSupply, 0, 999, v => MissionData.BaseSupply = v);
-            IntStepperField.Create(panelRect, "라운드당 증가", 90f, MissionData.SupplyPerRound, 0, 999, v => MissionData.SupplyPerRound = v);
-            return panelRect;
+            public string MissionParameters;
+            public string ScoringConditions;
+            public string AdditionalConditions;
+            public int BaseSupply;
+            public int SupplyPerRound;
+            public int RoundLength;
+            public string EngagementScale;
         }
 
-        private void BuildMapArea()
+        /// <summary>미션 프리셋은 맵 프리셋(Deployments/)과 별개인 Missions/
+        /// 폴더에 저장한다 — 스크린샷/맵 프리셋과 같은 AppPaths.ExeDirectory()
+        /// 계산을 쓴다.</summary>
+        private static string ResolveMissionsDirectory()
         {
-            var areaGo = new GameObject("MapArea", typeof(RectTransform));
-            areaGo.transform.SetParent(Root, false);
-            _mapArea = (RectTransform)areaGo.transform;
-            _mapArea.anchorMin = Vector2.zero;
-            _mapArea.anchorMax = Vector2.zero;
-            _mapArea.pivot = Vector2.zero;
-
-            var bgGo = new GameObject("Background", typeof(RectTransform));
-            bgGo.transform.SetParent(_mapArea, false);
-            _mapBackgroundRect = (RectTransform)bgGo.transform;
-            _mapBackgroundRect.anchorMin = Vector2.zero;
-            _mapBackgroundRect.anchorMax = Vector2.zero;
-            _mapBackgroundRect.pivot = Vector2.zero;
-            _mapBackgroundRect.anchoredPosition = Vector2.zero;
-            var bgImg = bgGo.AddComponent<Image>();
-            bgImg.color = new Color(0.15f, 0.18f, 0.15f, 1f);
-            bgImg.raycastTarget = false;
-
-            var gridGo = new GameObject("Grid", typeof(RectTransform));
-            gridGo.transform.SetParent(_mapArea, false);
-            _gridRect = (RectTransform)gridGo.transform;
-            _gridRect.anchorMin = Vector2.zero;
-            _gridRect.anchorMax = Vector2.zero;
-            _gridRect.pivot = Vector2.zero;
-            _gridRect.anchoredPosition = Vector2.zero;
-            gridGo.AddComponent<MapGridOverlay>();
-
-            var zoneLayerGo = new GameObject("ZoneLayer", typeof(RectTransform));
-            zoneLayerGo.transform.SetParent(_mapArea, false);
-            _zoneLayer = (RectTransform)zoneLayerGo.transform;
-            _zoneLayer.anchorMin = Vector2.zero;
-            _zoneLayer.anchorMax = Vector2.zero;
-            _zoneLayer.pivot = Vector2.zero;
-            _zoneLayer.anchoredPosition = Vector2.zero;
-
-            var terrainLayerGo = new GameObject("TerrainLayer", typeof(RectTransform));
-            terrainLayerGo.transform.SetParent(_mapArea, false);
-            _terrainLayer = (RectTransform)terrainLayerGo.transform;
-            _terrainLayer.anchorMin = Vector2.zero;
-            _terrainLayer.anchorMax = Vector2.zero;
-            _terrainLayer.pivot = Vector2.zero;
-            _terrainLayer.anchoredPosition = Vector2.zero;
-
-            var objectiveLayerGo = new GameObject("ObjectiveLayer", typeof(RectTransform));
-            objectiveLayerGo.transform.SetParent(_mapArea, false);
-            _objectiveLayer = (RectTransform)objectiveLayerGo.transform;
-            _objectiveLayer.anchorMin = Vector2.zero;
-            _objectiveLayer.anchorMax = Vector2.zero;
-            _objectiveLayer.pivot = Vector2.zero;
-            _objectiveLayer.anchoredPosition = Vector2.zero;
+            string dir = Path.Combine(AppPaths.ExeDirectory(), "Missions");
+            Directory.CreateDirectory(dir);
+            return dir;
         }
 
-        private static string PresetLabel(string presetName)
+        private static string SanitizeFileName(string name)
         {
-            var parts = presetName.Split('x');
-            return $"{parts[0]} x {parts[1]}\"";
+            foreach (char c in Path.GetInvalidFileNameChars())
+            {
+                name = name.Replace(c, '_');
+            }
+            return name;
         }
+
+        // ── 공용 위젯 ────────────────────────────────────────────────
 
         private static TextMeshProUGUI CreateLabel(RectTransform parent, string text)
         {
@@ -717,12 +726,32 @@ namespace TmgBoard
             return t;
         }
 
-        private static Button CreateButton(RectTransform parent, string label, UnityEngine.Events.UnityAction onClick)
+        private static Button CreateButton(Transform parent, string label, UnityEngine.Events.UnityAction onClick, float width = 160f)
         {
             var go = new GameObject($"Btn_{label}", typeof(RectTransform));
             go.transform.SetParent(parent, false);
             var rect = (RectTransform)go.transform;
-            rect.sizeDelta = new Vector2(140f, 32f);
+            rect.sizeDelta = new Vector2(width, 32f);
+            // 이 버튼이 childControlWidth/Height=true인 부모(전투 규모 토글,
+            // 프리셋 목록의 무작위 로드 줄) 안에 들어갈 수도 있는데, 배경
+            // Image에는 스프라이트가 없어서(순수 색칠용) ILayoutElement로서
+            // preferredWidth/Height 둘 다 0을 보고한다 — LayoutElement 없이는
+            // 그 부모가 이 버튼을 폭·높이 0으로 접어버려서(가로만 고치고
+            // 세로를 안 고치면 폭은 있는데 높이가 0인 채로 남아 여전히
+            // 안 보이는 반쪽짜리 수정이 된다 — 실제로 겪음) 배경은 사라지고
+            // 텍스트만 그 0크기 밖으로 삐져나와 떠 있어 보였다. 가로·세로
+            // 둘 다 preferred+flexible을 줘서 어느 축으로 눌러도 안전하게 한다.
+            var le = go.AddComponent<LayoutElement>();
+            le.preferredWidth = width;
+            le.flexibleWidth = 1f;
+            // 높이는 flexibleHeight를 안 준다 — 이 버튼이 들어가는 줄들은
+            // childForceExpandHeight=false라서 굳이 필요 없는데, 실제로
+            // 넣어봤더니 버튼이 줄 전체 남는 세로 공간을 다 차지해버려서
+            // 세로로 거대해지는 부작용이 났다(가로축과 세로축의 cross-axis
+            // 처리가 대칭이 아닌 듯— 원인을 완전히 규명하진 못했지만, 뺐더니
+            // 해결됨을 확인). preferredHeight만으로 "스프라이트 없는 배경
+            // Image가 0을 보고하는" 원래 문제는 충분히 고쳐진다.
+            le.preferredHeight = 32f;
 
             var img = go.AddComponent<Image>();
             img.color = new Color(0.3f, 0.3f, 0.3f, 1f);
@@ -736,21 +765,18 @@ namespace TmgBoard
             labelRect.anchorMax = Vector2.one;
             labelRect.offsetMin = Vector2.zero;
             labelRect.offsetMax = Vector2.zero;
-            var text = labelGo.AddComponent<TextMeshProUGUI>();
-            text.text = label;
-            text.alignment = TextAlignmentOptions.Center;
-            text.fontSize = 14f;
-            text.color = Color.white;
-            text.raycastTarget = false;
+            var labelText = labelGo.AddComponent<TextMeshProUGUI>();
+            labelText.text = label;
+            labelText.alignment = TextAlignmentOptions.Center;
+            labelText.fontSize = 13f;
+            labelText.color = Color.white;
+            labelText.enableWordWrapping = false;
+            labelText.raycastTarget = false;
 
             return btn;
         }
 
-        /// <summary>텍스트 대신 아이콘 하나로 된 정사각형 버튼(사용자 요청 —
-        /// "프리셋 저장" 버튼을 SaveButton.png로) — CreateButton과 달리
-        /// 배경색 없이 아이콘 자체만 보여준다(마커바의 아이콘 버튼들과
-        /// 같은 스타일).</summary>
-        private static Button CreateIconButton(RectTransform parent, Texture2D icon, float size, UnityEngine.Events.UnityAction onClick)
+        private static Button CreateIconButton(Transform parent, Texture2D icon, float size, UnityEngine.Events.UnityAction onClick)
         {
             var go = new GameObject("IconBtn", typeof(RectTransform));
             go.transform.SetParent(parent, false);
@@ -765,707 +791,6 @@ namespace TmgBoard
             btn.onClick.AddListener(onClick);
 
             return btn;
-        }
-
-        private Button CreateZoneToggleButton(RectTransform parent, string player)
-        {
-            var btn = CreateButton(parent, $"{player} 배치구역", () => OnZoneButtonClicked(player));
-            var text = btn.GetComponentInChildren<TextMeshProUGUI>();
-            if (text != null)
-            {
-                var c = ZoneColors[player];
-                c.a = 1f;
-                text.color = c;
-            }
-            return btn;
-        }
-
-        private static void SetButtonHighlighted(Button btn, bool highlighted)
-        {
-            var img = btn.GetComponent<Image>();
-            if (img != null)
-            {
-                img.color = highlighted ? new Color(0.5f, 0.5f, 0.5f, 1f) : new Color(0.3f, 0.3f, 0.3f, 1f);
-            }
-        }
-
-        // ── 지도 크기 프리셋 ────────────────────────────────────────────
-
-        private void OnSizePresetPressed(string presetName)
-        {
-            if (presetName == _currentPreset)
-            {
-                return;
-            }
-            ApplyPreset(presetName);
-        }
-
-        private void ApplyPreset(string presetName)
-        {
-            _currentPreset = presetName;
-            foreach (var kv in _sizeButtons)
-            {
-                SetButtonHighlighted(kv.Value, kv.Key == presetName);
-            }
-
-            for (int i = _zoneLayer.childCount - 1; i >= 0; i--)
-            {
-                Destroy(_zoneLayer.GetChild(i).gameObject);
-            }
-            _drawingZone = null;
-
-            for (int i = _terrainLayer.childCount - 1; i >= 0; i--)
-            {
-                Destroy(_terrainLayer.GetChild(i).gameObject);
-            }
-            _draggingPiece = null;
-            _placementModuleId = "";
-            foreach (var kv in _terrainButtons)
-            {
-                SetButtonHighlighted(kv.Value, false);
-            }
-
-            for (int i = _objectiveLayer.childCount - 1; i >= 0; i--)
-            {
-                Destroy(_objectiveLayer.GetChild(i).gameObject);
-            }
-            _objectivePieces.Clear();
-            _draggingObjective = null;
-            _activeObjectiveNumber = 0;
-            foreach (var btn in _objectiveButtons.Values)
-            {
-                btn.interactable = true;
-                SetButtonHighlighted(btn, false);
-            }
-
-            Vector2 mapSize = MapSize;
-            _mapBackgroundRect.sizeDelta = mapSize;
-            _gridRect.sizeDelta = mapSize;
-            _zoneLayer.sizeDelta = mapSize;
-            _terrainLayer.sizeDelta = mapSize;
-            _objectiveLayer.sizeDelta = mapSize;
-            _zoomLevel = 1f; // 지도 크기를 바꾸면 줌/팬도 깨끗한 상태로 되돌린다.
-            UpdateMapLayout();
-        }
-
-        /// <summary>지도가 팔레트/크기 행/우측 프리셋 목록을 뺀 남는 뷰포트
-        /// 안에 들어오도록 축소해서 배치한다(원본 mm 크기가 뷰포트보다
-        /// 작으면 1:1로 그대로),
-        /// 그 뷰포트 안에서 정중앙에 오도록 놓는다(사용자 요청 — 예전엔
-        /// 뷰포트의 좌하단 구석에 딱 붙어서 화면 왼쪽 아래로 치우쳐 보였다).
-        /// 여기서 계산하는 scale은 "뷰포트에 꽉 맞추는" 기준 배율
-        /// (_baseScaleFactor)일 뿐이고, 실제 적용 배율은 여기에 사용자가
-        /// 휠로 조절한 _zoomLevel을 곱한 값이다 — 게임 보드(BoardManager.
-        /// PanZoom.cs)와 완전히 같은 구조. 창 크기가 바뀔 때마다(Update())
-        /// 다시 불려서 팬 오프셋도 이 정중앙 위치로 재설정된다.</summary>
-        private void UpdateMapLayout()
-        {
-            if (_mapArea == null)
-            {
-                return;
-            }
-            float left = MarginPx + 180f + MarginPx; // 팔레트 폭 + 여백
-            float right = MarginPx + PresetListPanelWidth + MarginPx; // 프리셋 목록 폭 + 여백
-            float top = MarginPx + 32f + MarginPx; // 크기 선택 행 높이 + 여백
-            float viewportW = Mathf.Max(Screen.width - left - right, 10f);
-            float viewportH = Mathf.Max(Screen.height - top - MarginPx, 10f);
-
-            Vector2 mapSize = MapSize;
-            float scale = Mathf.Min(viewportW / mapSize.x, viewportH / mapSize.y);
-            scale = Mathf.Min(scale, 1f);
-            _baseScaleFactor = scale;
-
-            float totalScale = scale * _zoomLevel;
-            _mapArea.localScale = new Vector3(totalScale, totalScale, 1f);
-            float extraW = Mathf.Max(viewportW - mapSize.x * totalScale, 0f);
-            float extraH = Mathf.Max(viewportH - mapSize.y * totalScale, 0f);
-            _mapArea.anchoredPosition = new Vector2(left + extraW / 2f, MarginPx + extraH / 2f);
-        }
-
-        // ── 지형 배치 ────────────────────────────────────────────────────
-        // Godot판 TerrainPiece.gd/TerrainCatalog.gd + MissionSetup.gd의 지형
-        // 관련 함수들 포팅. 물리/충돌은 없다 — 순수 시각 참고용으로만
-        // 배치한다(고지대 경사로 통행 등은 사람이 직접 판정, 사용자와 합의된
-        // 방침). 회전은 휠로만 하고, 우클릭은 배치구역/미션 목표와 동일하게
-        // 바로 삭제한다(옵션이 하나뿐이면 즉시 실행하는 이 프로젝트 규칙).
-
-        private const float TerrainGridSizeMm = GameConstants.MmPerInch / 2f; // 0.5인치
-
-        private void OnTerrainButtonToggled(string moduleId)
-        {
-            bool nowActive = _placementModuleId != moduleId;
-            _placementModuleId = nowActive ? moduleId : "";
-            foreach (var kv in _terrainButtons)
-            {
-                SetButtonHighlighted(kv.Value, nowActive && kv.Key == moduleId);
-            }
-            _activeZonePlayer = "";
-            foreach (var kv in _zoneButtons)
-            {
-                SetButtonHighlighted(kv.Value, false);
-            }
-            ClearObjectiveMode();
-        }
-
-        private void ClearTerrainPlacementMode()
-        {
-            _placementModuleId = "";
-            foreach (var kv in _terrainButtons)
-            {
-                SetButtonHighlighted(kv.Value, false);
-            }
-        }
-
-        private void HandlePlacementClick()
-        {
-            if (!TryGetLocalMouse(out var local))
-            {
-                return;
-            }
-            Vector2 mapSize = MapSize;
-            if (local.x < 0f || local.x > mapSize.x || local.y < 0f || local.y > mapSize.y)
-            {
-                return;
-            }
-
-            PlacePiece(_placementModuleId, SnapToGrid(local));
-            ClearTerrainPlacementMode();
-        }
-
-        private TerrainPiece PlacePiece(string moduleId, Vector2 localPoint)
-        {
-            var module = TerrainCatalog.Get(moduleId);
-            if (module == null)
-            {
-                return null;
-            }
-
-            var go = new GameObject($"Terrain_{module.Id}", typeof(RectTransform));
-            go.transform.SetParent(_terrainLayer, false);
-            var piece = go.AddComponent<TerrainPiece>();
-            piece.RectTransform.anchorMin = Vector2.zero;
-            piece.RectTransform.anchorMax = Vector2.zero;
-            piece.Setup(module);
-            piece.Center = localPoint;
-            piece.DragRequested += OnPieceDragRequested;
-            piece.DeleteRequested += OnPieceDeleteRequested;
-            return piece;
-        }
-
-        private void HandleDragInput()
-        {
-            if (TryGetLocalMouse(out var local))
-            {
-                _draggingPiece.Center = SnapToGrid(local + _dragPieceOffset);
-            }
-            if (Input.GetMouseButtonUp(0))
-            {
-                _draggingPiece = null;
-            }
-        }
-
-        private void OnPieceDragRequested(TerrainPiece piece)
-        {
-            _draggingPiece = piece;
-            TryGetLocalMouse(out var local);
-            _dragPieceOffset = piece.Center - local;
-            piece.transform.SetAsLastSibling();
-        }
-
-        private void OnPieceDeleteRequested(TerrainPiece piece)
-        {
-            Destroy(piece.gameObject);
-        }
-
-        /// <summary>마우스 아래(맨 위에 그려진 것부터)의 지형 조각을 찾는다 —
-        /// 회전된 사각형 그대로 판정한다(Godot판 _find_terrain_piece_at_point
-        /// 포팅). 휠을 굴렸을 때 회전할지 말지 정하는 데 쓴다.</summary>
-        private TerrainPiece FindTerrainPieceAt(Vector2 point)
-        {
-            for (int i = _terrainLayer.childCount - 1; i >= 0; i--)
-            {
-                var piece = _terrainLayer.GetChild(i).GetComponent<TerrainPiece>();
-                if (piece == null)
-                {
-                    continue;
-                }
-                float rad = -piece.RotationDegrees * Mathf.Deg2Rad;
-                Vector2 offset = point - piece.Center;
-                float cos = Mathf.Cos(rad);
-                float sin = Mathf.Sin(rad);
-                Vector2 local = new Vector2(offset.x * cos - offset.y * sin, offset.x * sin + offset.y * cos);
-                Vector2 half = piece.RectTransform.sizeDelta / 2f;
-                if (Mathf.Abs(local.x) <= half.x && Mathf.Abs(local.y) <= half.y)
-                {
-                    return piece;
-                }
-            }
-            return null;
-        }
-
-        private static Vector2 SnapToGrid(Vector2 point)
-        {
-            return new Vector2(
-                    Mathf.Round(point.x / TerrainGridSizeMm) * TerrainGridSizeMm,
-                    Mathf.Round(point.y / TerrainGridSizeMm) * TerrainGridSizeMm);
-        }
-
-        // ── 배치구역 그리기 ─────────────────────────────────────────────
-
-        private void OnZoneButtonClicked(string player)
-        {
-            _activeZonePlayer = _activeZonePlayer == player ? "" : player;
-            foreach (var kv in _zoneButtons)
-            {
-                SetButtonHighlighted(kv.Value, kv.Key == _activeZonePlayer);
-            }
-            ClearObjectiveMode();
-            ClearTerrainPlacementMode();
-        }
-
-        private void HandleZoneStartClick(Vector2 local)
-        {
-            Vector2 mapSize = MapSize;
-            if (local.x < 0f || local.x > mapSize.x || local.y < 0f || local.y > mapSize.y)
-            {
-                return;
-            }
-
-            float dLeft = local.x;
-            float dRight = mapSize.x - local.x;
-            float dTop = local.y;
-            float dBottom = mapSize.y - local.y;
-
-            string candidateV = "";
-            if (Mathf.Min(dLeft, dRight) <= EdgeSnapThresholdMm)
-            {
-                candidateV = dLeft <= dRight ? "left" : "right";
-            }
-
-            string candidateH = "";
-            if (Mathf.Min(dTop, dBottom) <= EdgeSnapThresholdMm)
-            {
-                candidateH = dTop <= dBottom ? "top" : "bottom";
-            }
-
-            if (candidateV == "" && candidateH == "")
-            {
-                return;
-            }
-
-            _zoneDownLocal = local;
-            _zoneCandidateV = candidateV;
-            _zoneCandidateH = candidateH;
-            // 변 하나에서만 시작했다면 그 변으로 고정, 모서리라면 드래그 방향에
-            // 따라 매 프레임 다시 판단한다(아래 CurrentDragEdge 참고).
-            _zoneLockedEdge = candidateV == "" ? candidateH : (candidateH == "" ? candidateV : "");
-
-            _drawingZone = CreateZonePiece(_activeZonePlayer);
-            UpdateZoneDrawing(local);
-        }
-
-        private string CurrentDragEdge(Vector2 local)
-        {
-            if (_zoneLockedEdge != "")
-            {
-                return _zoneLockedEdge;
-            }
-            // 모서리에서 시작한 경우: 눌렀던 지점부터 지금까지의 누적 이동
-            // 방향으로 매번 다시 판단한다. 놓기 전까지는 언제든 가로↔세로를
-            // 바꿀 수 있다.
-            Vector2 delta = local - _zoneDownLocal;
-            return Mathf.Abs(delta.x) >= Mathf.Abs(delta.y) ? _zoneCandidateH : _zoneCandidateV;
-        }
-
-        private static float SnapAlongEdge(Vector2 local, string edge, Vector2 mapSize)
-        {
-            float value = (edge == "left" || edge == "right") ? local.y : local.x;
-            float maxValue = (edge == "left" || edge == "right") ? mapSize.y : mapSize.x;
-            value = Mathf.Clamp(value, 0f, maxValue);
-            return Mathf.Clamp(SnapToInch(value), 0f, maxValue);
-        }
-
-        private static float SnapToInch(float value)
-        {
-            return Mathf.Round(value / GameConstants.MmPerInch) * GameConstants.MmPerInch;
-        }
-
-        private void UpdateZoneDrawing(Vector2 local)
-        {
-            Vector2 mapSize = MapSize;
-            string edge = CurrentDragEdge(local);
-            float startAlong = SnapAlongEdge(_zoneDownLocal, edge, mapSize);
-            float currentAlong = SnapAlongEdge(local, edge, mapSize);
-
-            float a = Mathf.Min(startAlong, currentAlong);
-            float b = Mathf.Max(startAlong, currentAlong);
-            float length = b - a;
-            _zoneCurrentLength = length;
-
-            _drawingZone.Edge = edge;
-            _drawingZone.StartAlong = a;
-            _drawingZone.EndAlong = b;
-            ApplyZoneGeometry(_drawingZone, edge, a, length, mapSize);
-        }
-
-        /// <summary>edge/along 구간(mm)을 실제 RectTransform 위치/크기로
-        /// 변환한다 — 그리는 중(UpdateZoneDrawing)과 프리셋 불러오기(한 번에
-        /// 다시 세팅) 둘 다 이 계산이 필요해서 공유한다.</summary>
-        private static void ApplyZoneGeometry(DeploymentZonePiece piece, string edge, float a, float length, Vector2 mapSize)
-        {
-            var rt = piece.RectTransform;
-            switch (edge)
-            {
-                case "left":
-                    rt.anchoredPosition = new Vector2(-ZoneHitThicknessMm / 2f, a);
-                    rt.sizeDelta = new Vector2(ZoneHitThicknessMm, length);
-                    break;
-                case "right":
-                    rt.anchoredPosition = new Vector2(mapSize.x - ZoneHitThicknessMm / 2f, a);
-                    rt.sizeDelta = new Vector2(ZoneHitThicknessMm, length);
-                    break;
-                case "top":
-                    rt.anchoredPosition = new Vector2(a, -ZoneHitThicknessMm / 2f);
-                    rt.sizeDelta = new Vector2(length, ZoneHitThicknessMm);
-                    break;
-                case "bottom":
-                    rt.anchoredPosition = new Vector2(a, mapSize.y - ZoneHitThicknessMm / 2f);
-                    rt.sizeDelta = new Vector2(length, ZoneHitThicknessMm);
-                    break;
-            }
-        }
-
-        private void FinishZoneDrawing()
-        {
-            if (_zoneCurrentLength < GameConstants.MmPerInch - 1f)
-            {
-                Destroy(_drawingZone.gameObject);
-            }
-            _drawingZone = null;
-        }
-
-        private DeploymentZonePiece CreateZonePiece(string player)
-        {
-            var go = new GameObject($"Zone_{player}", typeof(RectTransform));
-            go.transform.SetParent(_zoneLayer, false);
-            var piece = go.AddComponent<DeploymentZonePiece>();
-            piece.OwnerPlayer = player;
-            piece.LineColor = ZoneColors[player];
-            return piece;
-        }
-
-        // ── 미션 목표 배치 ──────────────────────────────────────────────
-        // Godot판 MissionSetup.gd의 objective 관련 함수들 포팅. 배치구역과
-        // 마찬가지로 팔레트에서 번호를 고르고(한 번에 하나만 배치 모드) 지도를
-        // 클릭하면 놓인다 — 1인치 격자에 스냅, 드래그로 재배치, 우클릭으로
-        // 바로 삭제(메뉴 없음 — 선택지가 삭제 하나뿐이라서, 배치구역과 동일한
-        // 원칙). 번호당 하나만 놓을 수 있어 놓으면 그 팔레트 버튼이
-        // 비활성화되고, 지우면 다시 활성화된다.
-
-        private void OnObjectiveButtonClicked(int number)
-        {
-            _activeObjectiveNumber = _activeObjectiveNumber == number ? 0 : number;
-            _activeZonePlayer = "";
-            foreach (var kv in _zoneButtons)
-            {
-                SetButtonHighlighted(kv.Value, false);
-            }
-            foreach (var kv in _objectiveButtons)
-            {
-                SetButtonHighlighted(kv.Value, kv.Key == _activeObjectiveNumber);
-            }
-            ClearTerrainPlacementMode();
-        }
-
-        private void ClearObjectiveMode()
-        {
-            int number = _activeObjectiveNumber;
-            _activeObjectiveNumber = 0;
-            if (_objectiveButtons.TryGetValue(number, out var btn))
-            {
-                SetButtonHighlighted(btn, false);
-            }
-        }
-
-        private void HandleObjectivePlacementClick()
-        {
-            if (!TryGetLocalMouse(out var local))
-            {
-                return;
-            }
-            Vector2 mapSize = MapSize;
-            if (local.x < 0f || local.x > mapSize.x || local.y < 0f || local.y > mapSize.y)
-            {
-                return;
-            }
-
-            PlaceObjective(_activeObjectiveNumber, SnapToInchGrid(local));
-            ClearObjectiveMode();
-        }
-
-        private void PlaceObjective(int number, Vector2 localPoint)
-        {
-            float diameter = GameConstants.MissionObjectiveTokenDiameterMm
-                    + 2f * GameConstants.MissionObjectiveCaptureMarginInch * GameConstants.MmPerInch;
-
-            var go = new GameObject($"Objective_{number}", typeof(RectTransform));
-            go.transform.SetParent(_objectiveLayer, false);
-            var piece = go.AddComponent<MissionObjectivePiece>();
-            piece.Number = number;
-            var baseColor = GameConstants.GetMissionObjectiveBaseColor(number);
-            piece.TokenColor = GameConstants.Muted(baseColor, GameConstants.MissionObjectiveSaturationFactor, GameConstants.MissionObjectiveValueFactor);
-            piece.RectTransform.anchorMin = Vector2.zero;
-            piece.RectTransform.anchorMax = Vector2.zero;
-            piece.RectTransform.sizeDelta = new Vector2(diameter, diameter);
-            piece.Center = localPoint;
-            ClampObjectiveToBounds(piece);
-            piece.DragRequested += OnObjectiveDragRequested;
-            piece.DeleteRequested += OnObjectiveDeleteRequested;
-
-            _objectivePieces[number] = piece;
-            if (_objectiveButtons.TryGetValue(number, out var btn))
-            {
-                btn.interactable = false;
-            }
-        }
-
-        private void ClampObjectiveToBounds(MissionObjectivePiece piece)
-        {
-            Vector2 mapSize = MapSize;
-            float margin = GameConstants.MissionObjectiveTokenDiameterMm / 2f;
-            Vector2 c = piece.Center;
-            c.x = Mathf.Clamp(c.x, margin, Mathf.Max(margin, mapSize.x - margin));
-            c.y = Mathf.Clamp(c.y, margin, Mathf.Max(margin, mapSize.y - margin));
-            piece.Center = c;
-        }
-
-        private void HandleObjectiveDragInput()
-        {
-            if (TryGetLocalMouse(out var local))
-            {
-                _draggingObjective.Center = SnapToInchGrid(local + _dragObjectiveOffset);
-                ClampObjectiveToBounds(_draggingObjective);
-            }
-            if (Input.GetMouseButtonUp(0))
-            {
-                _draggingObjective = null;
-            }
-        }
-
-        private void OnObjectiveDragRequested(MissionObjectivePiece piece)
-        {
-            _draggingObjective = piece;
-            TryGetLocalMouse(out var local);
-            _dragObjectiveOffset = piece.Center - local;
-            piece.transform.SetAsLastSibling();
-        }
-
-        private void OnObjectiveDeleteRequested(MissionObjectivePiece piece)
-        {
-            int number = piece.Number;
-            Destroy(piece.gameObject);
-            if (_objectivePieces.TryGetValue(number, out var existing) && existing == piece)
-            {
-                _objectivePieces.Remove(number);
-            }
-            if (_objectiveButtons.TryGetValue(number, out var btn))
-            {
-                btn.interactable = true;
-            }
-        }
-
-        private static Vector2 SnapToInchGrid(Vector2 point)
-        {
-            float step = GameConstants.MmPerInch;
-            return new Vector2(Mathf.Round(point.x / step) * step, Mathf.Round(point.y / step) * step);
-        }
-
-        // ── 게임 시작 ────────────────────────────────────────────────
-
-        /// <summary>지금 화면에 놓여있는 배치구역/미션 목표/지형을 그대로
-        /// 읽어낸다 — "게임 시작"(MissionData로)과 "프리셋 저장"(파일로) 둘
-        /// 다 결국 같은 스냅샷이 필요해서 공유한다.</summary>
-        private void CollectCurrentState(out List<DeploymentZoneData> zones,
-                out List<MissionObjectiveData> objectives, out List<TerrainPieceData> terrain)
-        {
-            zones = new List<DeploymentZoneData>();
-            for (int i = 0; i < _zoneLayer.childCount; i++)
-            {
-                var piece = _zoneLayer.GetChild(i).GetComponent<DeploymentZonePiece>();
-                if (piece == null)
-                {
-                    continue;
-                }
-                zones.Add(new DeploymentZoneData
-                {
-                    Edge = piece.Edge,
-                    Player = piece.OwnerPlayer,
-                    StartAlong = piece.StartAlong,
-                    EndAlong = piece.EndAlong,
-                });
-            }
-
-            objectives = new List<MissionObjectiveData>();
-            foreach (var kv in _objectivePieces)
-            {
-                objectives.Add(new MissionObjectiveData
-                {
-                    Number = kv.Key,
-                    Position = kv.Value.Center,
-                });
-            }
-
-            terrain = new List<TerrainPieceData>();
-            for (int i = 0; i < _terrainLayer.childCount; i++)
-            {
-                var piece = _terrainLayer.GetChild(i).GetComponent<TerrainPiece>();
-                if (piece == null)
-                {
-                    continue;
-                }
-                terrain.Add(new TerrainPieceData
-                {
-                    ModuleId = piece.ModuleId,
-                    Position = piece.Center,
-                    RotationDeg = piece.RotationDegrees,
-                });
-            }
-        }
-
-        private void OnStartGamePressed()
-        {
-            // Clear()가 MaxRounds/BaseSupply/SupplyPerRound도 기본값으로
-            // 되돌리므로(MatchSettings 패널이 이미 채워둔 값을 지워버림),
-            // Clear() 전에 빼뒀다가 그 뒤에 다시 넣어준다.
-            int maxRounds = MissionData.MaxRounds;
-            int baseSupply = MissionData.BaseSupply;
-            int supplyPerRound = MissionData.SupplyPerRound;
-
-            MissionData.Clear();
-            MissionData.HasData = true;
-            MissionData.MapPreset = _currentPreset;
-            MissionData.MaxRounds = maxRounds;
-            MissionData.BaseSupply = baseSupply;
-            MissionData.SupplyPerRound = supplyPerRound;
-            CollectCurrentState(out var zones, out var objectives, out var terrain);
-            MissionData.DeploymentZones.AddRange(zones);
-            MissionData.MissionObjectives.AddRange(objectives);
-            MissionData.TerrainPieces.AddRange(terrain);
-            StartGameRequested?.Invoke();
-        }
-
-        // ── 미션 프리셋 저장/불러오기 ──────────────────────────────────
-        // 배치구역/지형/미션 목표 배치를 JSON 파일로 저장했다가 나중에 다시
-        // 불러온다(사용자 요청). 저장 위치(Deployments/)는 우측 프리셋 목록
-        // 패널(BuildPresetListPanel)이 스캔하는 폴더와 같아야 한다.
-
-        private void OnSavePresetPressed()
-        {
-            _presetNameDialog.Open("프리셋 이름", "");
-        }
-
-        private void OnPresetNameConfirmed(string name)
-        {
-            name = name.Trim();
-            if (string.IsNullOrEmpty(name))
-            {
-                return;
-            }
-
-            string path;
-            try
-            {
-                path = Path.Combine(ResolvePresetDirectory(), $"{SanitizeFileName(name)}.json");
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning($"프리셋 저장 경로를 만들 수 없습니다: {e.Message}");
-                return;
-            }
-
-            CollectCurrentState(out var zones, out var objectives, out var terrain);
-            try
-            {
-                MissionPresetIO.Save(path, _currentPreset, zones, objectives, terrain);
-                RefreshPresetList(); // 방금 저장한 파일이 목록에 바로 보이도록.
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning($"프리셋을 저장하지 못했습니다: {path} ({e.Message})");
-            }
-        }
-
-        /// <summary>프리셋 목록 항목을 클릭하면 바로 불러온다(예전엔 파일
-        /// 탐색 다이얼로그의 FileSelected 이벤트가 이걸 불렀는데, 그
-        /// 다이얼로그 자체가 없어져서 목록 항목의 클릭이 직접 부른다).</summary>
-        private void LoadPresetFromFile(string path)
-        {
-            string jsonText;
-            try
-            {
-                jsonText = File.ReadAllText(path);
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning($"프리셋 파일을 열 수 없습니다: {path} ({e.Message})");
-                return;
-            }
-
-            if (!MissionPresetIO.TryLoad(jsonText, out var mapPreset, out var zones, out var objectives, out var terrain, out var error))
-            {
-                Debug.LogWarning($"프리셋 파일 형식이 올바르지 않습니다: {path} — {error}");
-                return;
-            }
-
-            // ApplyPreset이 기존 배치구역/지형/목표를 전부 지우고 지도 크기를
-            // 다시 잡아준다 — "게임 시작"과 달리 여기선 그 뒤에 곧바로
-            // 불러온 내용을 다시 채워 넣는다.
-            ApplyPreset(mapPreset);
-
-            Vector2 mapSize = MapSize;
-            foreach (var z in zones)
-            {
-                var piece = CreateZonePiece(z.Player);
-                piece.Edge = z.Edge;
-                piece.StartAlong = z.StartAlong;
-                piece.EndAlong = z.EndAlong;
-                ApplyZoneGeometry(piece, z.Edge, z.StartAlong, z.EndAlong - z.StartAlong, mapSize);
-            }
-
-            foreach (var o in objectives)
-            {
-                PlaceObjective(o.Number, o.Position);
-            }
-
-            foreach (var t in terrain)
-            {
-                var piece = PlacePiece(t.ModuleId, t.Position);
-                if (piece != null)
-                {
-                    piece.RotationDegrees = t.RotationDeg;
-                }
-            }
-        }
-
-        /// <summary>미션 프리셋은 로스터 JSON(Document/)과 다른, 전용
-        /// Deployments/ 폴더에 저장한다(사용자가 직접 만들어둔 폴더) —
-        /// 스크린샷 기능과 같은 AppPaths.ExeDirectory() 계산을 쓰므로 에디터
-        /// 에서도 실제 빌드에서도 항상 실행 위치 기준으로 맞게 찾는다. 폴더가
-        /// 없으면(첫 저장이거나 다른 컴퓨터) 만들어준다.</summary>
-        private static string ResolvePresetDirectory()
-        {
-            string dir = Path.Combine(AppPaths.ExeDirectory(), "Deployments");
-            Directory.CreateDirectory(dir);
-            return dir;
-        }
-
-        private static string SanitizeFileName(string name)
-        {
-            foreach (char c in Path.GetInvalidFileNameChars())
-            {
-                name = name.Replace(c, '_');
-            }
-            return name;
         }
     }
 }

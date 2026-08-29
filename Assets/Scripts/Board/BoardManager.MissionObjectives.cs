@@ -15,7 +15,7 @@ namespace TmgBoard
 
         private void BuildMissionObjectiveVisuals()
         {
-            if (!MissionData.HasData)
+            if (!MapData.HasData)
             {
                 return;
             }
@@ -23,7 +23,7 @@ namespace TmgBoard
             float diameter = GameConstants.MissionObjectiveTokenDiameterMm
                     + 2f * GameConstants.MissionObjectiveCaptureMarginInch * GameConstants.MmPerInch;
 
-            foreach (var objective in MissionData.MissionObjectives)
+            foreach (var objective in MapData.MissionObjectives)
             {
                 var go = new GameObject($"MissionObjective_{objective.Number}", typeof(RectTransform));
                 go.transform.SetParent(baseLayer, false);
