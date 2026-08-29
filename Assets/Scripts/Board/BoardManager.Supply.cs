@@ -35,5 +35,18 @@ namespace TmgBoard
             }
             return total;
         }
+
+        /// <summary>지금 team이 배치하려고 띄워둔 고스트(_pendingDeploymentDef)가
+        /// 있으면 그 유닛을 배치할 때 소비될 서플라이, 없으면(또는 다른 팀이
+        /// 배치 중이면) 0. 한 번에 한 팀만 배치 드래그를 할 수 있으므로
+        /// _pendingDeploymentDef는 전역에 하나뿐이다. 스코어보드의 서플라이
+        /// 네모 미리보기 강조(ScoreboardPanel.RefreshSupplyRow)가 매 프레임
+        /// 묻는다.</summary>
+        public int GetTeamPreviewSupply(string team)
+        {
+            return _pendingDeploymentDef != null && _pendingDeploymentDef.Team == team
+                ? _pendingDeploymentDef.PreviewSupplyCost()
+                : 0;
+        }
     }
 }

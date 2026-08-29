@@ -19,8 +19,10 @@ namespace TmgBoard
     {
         private const float SupplyPipSize = 10f;
         private const float SupplyPipSpacing = 2f;
+        private const float SupplyPreviewFlashSpeed = 6f; // 라디안/초 — Base.cs의 CoherencyFlashSpeed와 동일한 속도.
         private static readonly Color SupplyUsedColor = new Color(0.25f, 0.55f, 1f, 1f);
         private static readonly Color SupplyFreeColor = new Color(0.45f, 0.45f, 0.45f, 1f);
+        private static readonly Color SupplyOverflowColor = new Color(0.9f, 0.15f, 0.15f, 1f);
 
         private readonly Dictionary<string, TextMeshProUGUI> _totalVpLabels = new Dictionary<string, TextMeshProUGUI>();
         private readonly Dictionary<string, RectTransform> _supplyRowContainers = new Dictionary<string, RectTransform>();
@@ -146,12 +148,18 @@ namespace TmgBoard
             RefreshSupplyRow("B");
         }
 
-        /// <summary>네모 개수를 MatchState.Supply(공유 상한)에 맞추고 — 개수가
-        /// 실제로 바뀔 때만 지우고 다시 만든다 — 그 중 앞쪽 N개(N = 이 팀이
-        /// 보드에 배치한 유닛들의 현재 서플라이 값(BoardManager.
-        /// GetTeamSupplyUsed, 유닛마다 남은 모델 수 기준으로 다시 계산됨) 합)를
-        /// 파란색으로, 나머지는 회색으로 칠한다. 개수 자체는 스테퍼/휠 조작
-        /// 때만 바뀌므로 매 프레임 새로 만드는 건 색칠뿐이라 가볍다.</summary>
+        /// <summary>네모 개수는 기본적으로 MatchState.Supply(공유 상한)이지만,
+        /// 실제 배치량이나(초과 배치) 배치 고스트 미리보기가 그 상한을 넘어서면
+        /// 필요한 만큼 네모를 더 늘려서(뒤에 이어붙여) 넘치는 양도 그대로 보여준다
+        /// — 개수가 바뀔 때만 지우고 다시 만든다. 칠하는 규칙(왼쪽부터):
+        /// (1) 상한 이내에서 실제로 이미 배치된 만큼 = 파란색(고정),
+        /// (2) 상한 이내에서 배치 고스트가 추가로 먹을 부분 = 회색↔팀색 반짝임,
+        /// (3) 상한 이내에서 남는 부분 = 회색(고정),
+        /// (4) 상한을 넘어 실제로 이미 배치된 부분(진짜 초과 배치) = 빨간색(고정),
+        /// (5) 상한을 넘어 배치 고스트가 추가로 밀어넣는 부분 = 회색↔빨간색 반짝임.
+        /// (2)/(5)는 사용자가 예비대 목록에서 유닛을 클릭해 배치 고스트를 띄운
+        /// 동안만 나타난다(BoardManager.GetTeamPreviewSupply, 한 번에 한 팀만
+        /// 배치 중일 수 있음).</summary>
         private void RefreshSupplyRow(string team)
         {
             if (!_supplyRowContainers.TryGetValue(team, out var container))
@@ -159,9 +167,13 @@ namespace TmgBoard
                 return;
             }
             int total = Mathf.Max(MatchState.Supply, 0);
-            var pips = _supplyPips[team];
+            int used = _board != null ? _board.GetTeamSupplyUsed(team) : 0;
+            int previewCost = _board != null ? _board.GetTeamPreviewSupply(team) : 0;
+            int previewEnd = used + previewCost;
+            int displayCount = Mathf.Max(total, Mathf.Max(used, previewEnd));
 
-            if (pips.Count != total)
+            var pips = _supplyPips[team];
+            if (pips.Count != displayCount)
             {
                 foreach (var pip in pips)
                 {
@@ -169,7 +181,7 @@ namespace TmgBoard
                 }
                 pips.Clear();
                 var squareTexture = Resources.Load<Texture2D>("UI/Square");
-                for (int i = 0; i < total; i++)
+                for (int i = 0; i < displayCount; i++)
                 {
                     var go = new GameObject("Pip", typeof(RectTransform));
                     go.transform.SetParent(container, false);
@@ -182,10 +194,35 @@ namespace TmgBoard
                 }
             }
 
-            int used = Mathf.Clamp(_board != null ? _board.GetTeamSupplyUsed(team) : 0, 0, total);
+            var teamColor = GameConstants.TeamColors.TryGetValue(team, out var tc) ? tc : SupplyUsedColor;
+            teamColor.a = 1f;
+            float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * SupplyPreviewFlashSpeed);
+
             for (int i = 0; i < pips.Count; i++)
             {
-                pips[i].color = i < used ? SupplyUsedColor : SupplyFreeColor;
+                Color color;
+                if (i < total)
+                {
+                    if (i < used)
+                    {
+                        color = SupplyUsedColor;
+                    }
+                    else if (i < previewEnd)
+                    {
+                        color = Color.Lerp(SupplyFreeColor, teamColor, pulse);
+                    }
+                    else
+                    {
+                        color = SupplyFreeColor;
+                    }
+                }
+                else
+                {
+                    color = i < used
+                        ? SupplyOverflowColor
+                        : Color.Lerp(SupplyFreeColor, SupplyOverflowColor, pulse);
+                }
+                pips[i].color = color;
             }
         }
 

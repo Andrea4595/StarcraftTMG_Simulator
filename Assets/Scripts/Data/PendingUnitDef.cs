@@ -43,5 +43,26 @@ namespace TmgBoard
         /// <summary>유닛 상세 패널 표시용 — 로스터 JSON의 나머지 모든 필드(스탯표/
         /// 태그/능력/무기 등). 로스터 임포트가 아닌 애드혹 유닛은 null.</summary>
         public RosterUnitDetail Detail;
+
+        /// <summary>이 유닛을 지금 배치하면 소비될 서플라이 — Unit.
+        /// CurrentSupplyCost()와 같은 규칙(SupplyOverride 우선, 없으면 단계표)
+        /// 이지만 아직 실제 모델이 없으므로 "지금 남은 모델 수" 대신 정의된
+        /// ModelCount를 그대로 쓴다. 스코어보드가 배치 고스트 미리보기 강조에
+        /// 쓴다(BoardManager.GetTeamPreviewSupply).</summary>
+        public int PreviewSupplyCost()
+        {
+            if (SupplyOverride.HasValue)
+            {
+                return SupplyOverride.Value;
+            }
+            foreach (var tier in SupplyTiers)
+            {
+                if (ModelCount >= tier.ModelMin && ModelCount <= tier.ModelMax)
+                {
+                    return tier.Supply;
+                }
+            }
+            return 0;
+        }
     }
 }
