@@ -213,7 +213,18 @@ namespace TmgBoard
         {
             for (int i = baseLayer.childCount - 1; i >= 0; i--)
             {
-                Destroy(baseLayer.GetChild(i).gameObject);
+                var child = baseLayer.GetChild(i);
+                // 미션 목표 마커/배치구역 표시는 언두 대상이 아니다 — 미션
+                // 셋업에서 고정된 순수 표시용이라 스냅샷에도 안 담겼는데, 그런
+                // 줄 모르고 baseLayer의 모든 자식을 무조건 지워버렸던 게
+                // "Ctrl+Z 누르면 미션 마커가 전부 사라진다"는 버그의 원인이었다
+                // (지운 뒤 다시 만들어주는 코드가 없어서 영영 사라졌다).
+                if (child.GetComponent<MissionObjectivePiece>() != null
+                        || child.name.StartsWith("DeploymentZoneEdge_"))
+                {
+                    continue;
+                }
+                Destroy(child.gameObject);
             }
             _pieces.Clear();
 

@@ -245,6 +245,7 @@ namespace TmgBoard
             UpdateMapLayout();
             InitScreenshotSession();
             BuildMissionObjectiveVisuals();
+            BuildDeploymentZoneVisuals();
             BuildTerrainVisuals();
         }
 

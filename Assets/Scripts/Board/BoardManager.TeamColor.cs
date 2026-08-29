@@ -29,6 +29,7 @@ namespace TmgBoard
             RepaintPendingUnitsForTeam(team, stored);
             RepaintCaptureMarkers();
             RepaintMissionObjectivesForTeam(team);
+            RepaintDeploymentZonesForTeam(team, stored);
         }
 
         private void RepaintPlacedUnitsForTeam(string team, Color rawColor)
