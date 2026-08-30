@@ -345,6 +345,40 @@ namespace TmgBoard
             _presetListContent = ScrollListUtil.Create(panelRect, 100f, new Color(0f, 0f, 0f, 0.15f), out _, out var scrollLe);
             scrollLe.flexibleHeight = 1f; // 남는 세로 공간을 전부 목록이 차지한다.
 
+            // 지도 크기별 무작위 불러오기 — 미션 셋업 화면(MissionSetupController)의
+            // "STANDARD 무작위"/"SKIRMISH 무작위" 버튼과 정확히 같은 개념
+            // (같은 크기 안에서 저장된 프리셋 중 하나를 무작위로 고른다),
+            // 목록 맨 아래에 두는 것도 동일(사용자 요청 — 그 기능을 그대로
+            // 참고).
+            var randomRowGo = new GameObject("RandomRow", typeof(RectTransform));
+            randomRowGo.transform.SetParent(panelRect, false);
+            var randomRowLe = randomRowGo.AddComponent<LayoutElement>();
+            randomRowLe.preferredHeight = 32f;
+            var randomRowLayout = randomRowGo.AddComponent<HorizontalLayoutGroup>();
+            randomRowLayout.spacing = 6f;
+            randomRowLayout.childControlWidth = true;
+            randomRowLayout.childForceExpandWidth = true;
+            randomRowLayout.childControlHeight = true;
+            randomRowLayout.childForceExpandHeight = false;
+            var randomRowRect = (RectTransform)randomRowGo.transform;
+            foreach (var presetName in GameConstants.MapSizePresets.Keys)
+            {
+                string captured = presetName;
+                var randomBtn = CreateButton(randomRowRect, $"{PresetLabel(presetName)} 무작위", () => LoadRandomPreset(captured));
+                // 이 CreateButton은 스프라이트 없는 배경 Image를 쓰는데, 이 행처럼
+                // childForceExpandWidth=true인 부모 안에 형제 버튼 여러 개가
+                // 나란히 들어가면 그 배경이 폭 0으로 접히는 함정이 있다(미션
+                // 셋업 화면(MissionSetupController.cs)의 무작위 로드 행에서
+                // 실제로 겪고 고친 문제 — CreateButton 자체가 다른 파일이라
+                // 여기엔 그 수정이 안 들어가 있어서 호출부에서 직접 보정한다).
+                // flexibleHeight는 일부러 안 준다(그 쪽에서 버튼이 세로로
+                // 거대해지는 부작용이 났었음).
+                var randomBtnLe = randomBtn.gameObject.AddComponent<LayoutElement>();
+                randomBtnLe.preferredWidth = 90f;
+                randomBtnLe.flexibleWidth = 1f;
+                randomBtnLe.preferredHeight = 32f;
+            }
+
             RefreshPresetList();
         }
 
@@ -1359,9 +1393,63 @@ namespace TmgBoard
                 return;
             }
 
-            // ApplyPreset이 기존 배치구역/지형/목표를 전부 지우고 지도 크기를
-            // 다시 잡아준다 — "완료"와 달리 여기선 그 뒤에 곧바로 불러온
-            // 내용을 다시 채워 넣는다.
+            ApplyLoadedPreset(mapPreset, zones, objectives, terrain);
+        }
+
+        /// <summary>같은 지도 크기(presetName)로 저장된 프리셋 중 하나를
+        /// Deployments/ 폴더에서 무작위로 골라 불러온다 — 미션 셋업 화면
+        /// (MissionSetupController.cs)의 "STANDARD 무작위"/"SKIRMISH 무작위"
+        /// 버튼과 정확히 같은 개념(전투 규모 단위 대신 지도 크기 단위,
+        /// 사용자 지정으로 그 기능을 그대로 참고).</summary>
+        private void LoadRandomPreset(string presetName)
+        {
+            string[] files;
+            try
+            {
+                files = Directory.GetFiles(ResolvePresetDirectory(), "*.json");
+            }
+            catch (Exception)
+            {
+                return;
+            }
+
+            var matches = new List<(string MapPreset, List<DeploymentZoneData> Zones, List<MissionObjectiveData> Objectives, List<TerrainPieceData> Terrain)>();
+            foreach (var path in files)
+            {
+                string jsonText;
+                try
+                {
+                    jsonText = File.ReadAllText(path);
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
+                if (MapPresetIO.TryLoad(jsonText, out var mapPreset, out var zones, out var objectives, out var terrain, out _)
+                        && mapPreset == presetName)
+                {
+                    matches.Add((mapPreset, zones, objectives, terrain));
+                }
+            }
+            if (matches.Count == 0)
+            {
+                Debug.LogWarning($"'{presetName}' 프리셋이 Deployments 폴더에 없습니다.");
+                return;
+            }
+
+            var picked = matches[UnityEngine.Random.Range(0, matches.Count)];
+            ApplyLoadedPreset(picked.MapPreset, picked.Zones, picked.Objectives, picked.Terrain);
+        }
+
+        /// <summary>불러온 프리셋 데이터를 실제 화면에 반영한다 — 파일 하나를
+        /// 클릭해서 불러오는 경우(LoadPresetFromFile)와 같은 크기의 프리셋
+        /// 중 무작위로 고른 경우(LoadRandomPreset) 둘 다 이 마지막 단계가
+        /// 똑같아서 공유한다. ApplyPreset이 기존 배치구역/지형/목표를 전부
+        /// 지우고 지도 크기를 다시 잡아준다 — "완료"와 달리 여기선 그 뒤에
+        /// 곧바로 불러온 내용을 다시 채워 넣는다.</summary>
+        private void ApplyLoadedPreset(string mapPreset, List<DeploymentZoneData> zones,
+                List<MissionObjectiveData> objectives, List<TerrainPieceData> terrain)
+        {
             ApplyPreset(mapPreset);
 
             Vector2 mapSize = MapSize;
