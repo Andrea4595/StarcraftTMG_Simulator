@@ -313,6 +313,8 @@ public static class GameFlowBootstrap
         rosterFileDialog.transform.SetParent(canvasGo.transform, false);
         var diceRollDialog = new GameObject("DiceRollDialog").AddComponent<DiceRollDialog>();
         diceRollDialog.transform.SetParent(canvasGo.transform, false);
+        var rolloffDialog = new GameObject("RolloffDialog").AddComponent<RolloffDialog>();
+        rolloffDialog.transform.SetParent(canvasGo.transform, false);
         var weaponProfileDialog = new GameObject("WeaponProfileDialog").AddComponent<WeaponProfileDialog>();
         weaponProfileDialog.transform.SetParent(canvasGo.transform, false);
         var exitConfirmDialog = new GameObject("ExitConfirmDialog").AddComponent<ConfirmDialog>();
@@ -373,6 +375,7 @@ public static class GameFlowBootstrap
         board.ConfigureRoster(rosterFileDialog);
         board.ConfigureTerrain(terrainLayerRect);
         board.ConfigureDiceRoll(diceRollDialog);
+        board.ConfigureRolloff(rolloffDialog);
         board.ConfigureWeaponProfile(weaponProfileDialog);
         board.ConfigureExit(exitConfirmDialog);
         board.ConfigureSave(saveNameDialog);

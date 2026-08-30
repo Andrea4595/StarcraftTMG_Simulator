@@ -37,6 +37,7 @@ namespace TmgBoard
         [SerializeField] private RectTransform markerLayer;
         [SerializeField] private RectTransform terrainLayer;
         [SerializeField] private DiceRollDialog diceRollDialog;
+        [SerializeField] private RolloffDialog rolloffDialog;
         [SerializeField] private WeaponProfileDialog weaponProfileDialog;
         [SerializeField] private ConfirmDialog exitConfirmDialog;
         [SerializeField] private InputDialog saveNameDialog;
@@ -318,6 +319,13 @@ namespace TmgBoard
         public void ConfigureDiceRoll(DiceRollDialog diceRollDialogRef)
         {
             diceRollDialog = diceRollDialogRef;
+        }
+
+        /// <summary>롤 오프 모달을 주입한다 — 다이스 롤 창과 같은 이유로 보드
+        /// 상태와 완전히 무관한 독립 컴포넌트다.</summary>
+        public void ConfigureRolloff(RolloffDialog rolloffDialogRef)
+        {
+            rolloffDialog = rolloffDialogRef;
         }
 
         /// <summary>유닛 상세 패널의 무기 능력 항목 "무기 프로필 보기" 버튼이 여는

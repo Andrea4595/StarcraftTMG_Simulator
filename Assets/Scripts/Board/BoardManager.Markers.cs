@@ -70,6 +70,7 @@ namespace TmgBoard
             CreateScreenshotButton(barRect);
             CreateFitButton(barRect);
             CreateDiceButton(barRect);
+            CreateRolloffButton(barRect);
             CreateExitButton(barRect);
             CreateSaveButton(barRect);
         }
@@ -228,6 +229,33 @@ namespace TmgBoard
                 if (diceRollDialog != null)
                 {
                     diceRollDialog.Open();
+                }
+            });
+        }
+
+        /// <summary>다이스 버튼 바로 왼쪽(사용자 지정) — 롤 오프 모달(RolloffDialog)을
+        /// 연다. 보드 상태와 무관한 독립 창이라 여기선 그냥 여는 것만 한다.</summary>
+        private void CreateRolloffButton(Transform parent)
+        {
+            var go = new GameObject("RolloffButton", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(1f, 0.5f);
+            rect.anchorMax = new Vector2(1f, 0.5f);
+            rect.pivot = new Vector2(1f, 0.5f);
+            rect.anchoredPosition = new Vector2(-10f - 3f * (GameConstants.MarkerBarHeight - 8f) - 18f, 0f);
+            rect.sizeDelta = new Vector2(GameConstants.MarkerBarHeight - 8f, GameConstants.MarkerBarHeight - 8f);
+
+            var img = go.AddComponent<RawImage>();
+            img.texture = Resources.Load<Texture2D>("UI/RolloffButton");
+
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() =>
+            {
+                if (rolloffDialog != null)
+                {
+                    rolloffDialog.Open();
                 }
             });
         }
