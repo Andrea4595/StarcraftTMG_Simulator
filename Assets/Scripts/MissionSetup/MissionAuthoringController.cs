@@ -8,23 +8,28 @@ using UnityEngine.UI;
 namespace TmgBoard
 {
     /// <summary>
-    /// 미션 셋업 화면 — 미션 파라미터/점수 획득 조건/추가 조건(텍스트),
-    /// 서플라이·라운드 공식(기본 서플라이/라운드당 서플라이/라운드 길이),
-    /// 전투 규모(STANDARD ENGAGEMENT / SKIRMISH LEVEL)를 입력받는다. 지도를
-    /// 다루지 않으므로 MapSetupController보다 훨씬 단순하다 — 팬/줌/배치구역/
-    /// 지형 같은 것 없이 그냥 입력 폼 하나. "완료" 버튼을 누르면
-    /// MissionSettingsData에 스냅샷을 채우고 SetupCompleted를 올린다 — 실제
-    /// 화면 전환(남은 셋업 화면 또는 게임 화면)은 이 컴포넌트를 만든 쪽
-    /// (부트스트랩)이 GameFlowState를 보고 처리한다.
+    /// 미션 프리셋 제작 화면(2026-08-30 재구성 — 예전 이름 "미션 셋업") —
+    /// 미션 이름, 미션 파라미터/점수 획득 조건/추가 조건(텍스트), 서플라이·
+    /// 라운드 공식(기본 서플라이/라운드당 서플라이/라운드 길이), 전투 규모
+    /// (STANDARD ENGAGEMENT / SKIRMISH LEVEL)를 입력받는다. 지도를 다루지
+    /// 않으므로 MapAuthoringController보다 훨씬 단순하다 — 팬/줌/배치구역
+    /// 같은 것 없이 그냥 입력 폼 하나.
+    ///
+    /// 배치 제작 화면과 마찬가지로 이제 게임 시작 흐름에 끼는 라이브 셋업
+    /// 화면이 아니라, 나중에 Selection 화면에서 골라 쓸 "미션 프리셋"을
+    /// 만들어두는 편집기 전용 화면이다 — Entry 한쪽 구석 버튼으로만 들어온다.
+    /// "완료 ▶" 버튼은 이제 MissionSettingsData를 채우고 다음 단계로
+    /// 넘어가는 게 아니라 그냥 Entry로 돌아가기다 — 프리셋으로 남기려면
+    /// 명시적으로 "프리셋 저장" 버튼을 눌러야 한다(사용자 지정).
     ///
     /// 이 컴포넌트가 붙은 GameObject 자체가 화면 전체를 덮는 RectTransform
-    /// (Canvas의 직속 자식, anchors (0,0)-(1,1))이라고 가정한다 — MapSetupController
-    /// 와 같은 방식.
+    /// (Canvas의 직속 자식, anchors (0,0)-(1,1))이라고 가정한다 —
+    /// MapAuthoringController와 같은 방식.
     /// </summary>
     [RequireComponent(typeof(RectTransform))]
-    public class MissionSetupController : MonoBehaviour
+    public class MissionAuthoringController : MonoBehaviour
     {
-        public event Action SetupCompleted;
+        public event Action BackRequested;
 
         private const float MarginPx = 8f;
         private const float PresetListPanelWidth = 220f;
@@ -76,7 +81,7 @@ namespace TmgBoard
             layout.childControlHeight = false;
             layout.childForceExpandHeight = false;
 
-            CreateButton(rowRect, "완료 ▶", OnCompletePressed);
+            CreateIconButton(rowRect, Resources.Load<Texture2D>("UI/BackButton"), 32f, () => BackRequested?.Invoke());
             CreateIconButton(rowRect, Resources.Load<Texture2D>("UI/SaveButton"), 32f, OnSavePresetPressed);
         }
 
@@ -475,23 +480,6 @@ namespace TmgBoard
             }
         }
 
-        // ── 완료 ────────────────────────────────────────────────────
-
-        private void OnCompletePressed()
-        {
-            MissionSettingsData.Clear();
-            MissionSettingsData.HasData = true;
-            MissionSettingsData.MissionName = _missionNameField.text;
-            MissionSettingsData.MissionParameters = _missionParametersField.text;
-            MissionSettingsData.ScoringConditions = _scoringConditionsField.text;
-            MissionSettingsData.AdditionalConditions = _additionalConditionsField.text;
-            MissionSettingsData.BaseSupply = _baseSupply;
-            MissionSettingsData.SupplyPerRound = _supplyPerRound;
-            MissionSettingsData.RoundLength = _roundLength;
-            MissionSettingsData.EngagementScale = _engagementScale;
-            SetupCompleted?.Invoke();
-        }
-
         // ── 미션 프리셋 저장/불러오기(Missions/ 폴더) ─────────────────────
 
         private void BuildPresetDialogs()
@@ -565,20 +553,6 @@ namespace TmgBoard
 
             _presetListContent = ScrollListUtil.Create(panelRect, 100f, new Color(0f, 0f, 0f, 0.15f), out _, out var scrollLe);
             scrollLe.flexibleHeight = 1f;
-
-            // 무작위 로드 버튼은 목록 맨 아래(사용자 요청).
-            var randomRowGo = new GameObject("RandomRow", typeof(RectTransform));
-            randomRowGo.transform.SetParent(panelRect, false);
-            var randomRowLe = randomRowGo.AddComponent<LayoutElement>();
-            randomRowLe.preferredHeight = 32f;
-            var randomRowLayout = randomRowGo.AddComponent<HorizontalLayoutGroup>();
-            randomRowLayout.spacing = 6f;
-            randomRowLayout.childControlWidth = true;
-            randomRowLayout.childForceExpandWidth = true;
-            randomRowLayout.childControlHeight = true;
-            randomRowLayout.childForceExpandHeight = false;
-            CreateButton(randomRowGo.transform, "STANDARD 무작위", () => LoadRandomPreset(MissionSettingsData.EngagementScaleStandard));
-            CreateButton(randomRowGo.transform, "SKIRMISH 무작위", () => LoadRandomPreset(MissionSettingsData.EngagementScaleSkirmish));
 
             RefreshPresetList();
         }
@@ -660,7 +634,7 @@ namespace TmgBoard
         }
 
         /// <summary>지금 채워진 값을 버리고 preset의 값으로 모든 입력칸/버튼
-        /// 상태를 되돌린다 — 프리셋 목록 클릭, 무작위 로드 둘 다 이걸 쓴다.
+        /// 상태를 되돌린다 — 프리셋 목록 클릭이 이걸 쓴다.
         /// 텍스트 입력칸 3개는 절대 다시 안 짓고(BuildFormPanel/RefreshStatRow
         /// 참고) 항상 같은 인스턴스에 .text만 새로 넣는다 — InputDialog
         /// (이름/메모 등)가 매번 재사용하는 것과 같은 방식이라야 캐럿/선택
@@ -701,34 +675,6 @@ namespace TmgBoard
             field.caretPosition = end;
             field.selectionAnchorPosition = end;
             field.selectionFocusPosition = end;
-        }
-
-        private void LoadRandomPreset(string engagementScale)
-        {
-            string[] files;
-            try
-            {
-                files = Directory.GetFiles(ResolveMissionsDirectory(), "*.json");
-            }
-            catch (Exception)
-            {
-                return;
-            }
-
-            var matches = new List<MissionPresetData>();
-            foreach (var path in files)
-            {
-                if (TryLoadPresetFile(path, out var preset) && preset.EngagementScale == engagementScale)
-                {
-                    matches.Add(preset);
-                }
-            }
-            if (matches.Count == 0)
-            {
-                Debug.LogWarning($"'{engagementScale}' 프리셋이 Missions 폴더에 없습니다.");
-                return;
-            }
-            LoadPreset(matches[UnityEngine.Random.Range(0, matches.Count)]);
         }
 
         private static bool TryLoadPresetFile(string path, out MissionPresetData preset)

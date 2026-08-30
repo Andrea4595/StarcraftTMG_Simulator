@@ -9,14 +9,18 @@ using UnityEngine.UI;
 namespace TmgBoard
 {
     /// <summary>
-    /// 맵 셋업 화면(예전 이름 "미션 셋업" — 사용자 요청으로 실제 미션 파라미터/
-    /// 점수 조건/서플라이 등을 다루는 새 미션 셋업 화면과 분리되며 개명됨) —
-    /// 지도 크기 선택 + 배치구역(팀별 지도 가장자리 구간) 그리기 + 미션
-    /// 목표(1~5번) 배치 + 지형 배치. Godot판 scenes/mission_setup/
-    /// MissionSetup.gd 포팅. "완료" 버튼을 누르면 MapData에 스냅샷을 채우고
-    /// SetupCompleted를 올린다 — 실제 화면 전환(남은 셋업 화면 또는 게임
-    /// 화면)은 이 컴포넌트를 만든 쪽(부트스트랩)이 GameFlowState를 보고
-    /// 처리한다.
+    /// 배치 프리셋 제작 화면(2026-08-30 재구성 — 예전 이름 "맵 셋업", 그 전엔
+    /// "미션 셋업") — 지도 크기 선택 + 배치구역(팀별 지도 가장자리 구간)
+    /// 그리기 + 미션 목표(1~5번) 배치. Godot판 scenes/mission_setup/
+    /// MissionSetup.gd 포팅에서 출발했지만, 이제 게임 시작 흐름에 끼는 라이브
+    /// 셋업 화면이 아니라 나중에 Selection 화면에서 골라 쓸 "배치 프리셋"을
+    /// 만들어두는 편집기 전용 화면이다 — Entry 한쪽 구석 버튼으로만 들어온다.
+    /// 지형 배치는 여기 없다(별도 TerrainSetupController로 완전히 분리 —
+    /// 지형은 매 게임 새로 배치하고 프리셋으로 저장하지 않는다는 사용자
+    /// 지정에 따라, 애초에 "제작"할 대상이 아니게 됐다). "완료 ▶" 버튼은
+    /// 이제 다음 셋업 단계로 넘어가는 게 아니라 그냥 Entry로 돌아가기다 —
+    /// 프리셋으로 남기려면 명시적으로 "프리셋 저장" 버튼을 눌러야 한다
+    /// (사용자 지정).
     ///
     /// 이 컴포넌트가 붙은 GameObject 자체가 화면 전체를 덮는 RectTransform
     /// (Canvas의 직속 자식, anchors (0,0)-(1,1))이라고 가정한다 — BoardManager
@@ -24,9 +28,9 @@ namespace TmgBoard
     /// UI를 짓는다.
     /// </summary>
     [RequireComponent(typeof(RectTransform))]
-    public class MapSetupController : MonoBehaviour
+    public class MapAuthoringController : MonoBehaviour
     {
-        public event Action SetupCompleted;
+        public event Action BackRequested;
 
         private const float EdgeSnapThresholdMm = 15f;
         private const float ZoneHitThicknessMm = 24f;
@@ -64,22 +68,16 @@ namespace TmgBoard
         private RectTransform _mapBackgroundRect;
         private RectTransform _gridRect;
         private RectTransform _zoneLayer;
-        private RectTransform _terrainLayer;
         private RectTransform _objectiveLayer;
 
         private readonly Dictionary<string, Button> _sizeButtons = new Dictionary<string, Button>();
-        private readonly Dictionary<string, Button> _terrainButtons = new Dictionary<string, Button>();
         private readonly Dictionary<string, Button> _zoneButtons = new Dictionary<string, Button>();
         private readonly Dictionary<int, Button> _objectiveButtons = new Dictionary<int, Button>();
         private readonly Dictionary<int, MissionObjectivePiece> _objectivePieces = new Dictionary<int, MissionObjectivePiece>();
 
         private string _currentPreset = GameConstants.DefaultMapSizePreset;
-        private string _placementModuleId = "";
         private string _activeZonePlayer = "";
         private int _activeObjectiveNumber;
-
-        private TerrainPiece _draggingPiece;
-        private Vector2 _dragPieceOffset;
 
         private MissionObjectivePiece _draggingObjective;
         private Vector2 _dragObjectiveOffset;
@@ -115,6 +113,7 @@ namespace TmgBoard
             // 배경으로 버튼들을 덮어버린다(Godot판 MissionSetup.gd의 동일한
             // 주석 참고).
             BuildMapArea();
+            BuildTopRow();
             BuildSizeRow();
             BuildPalette();
             BuildPresetDialogs();
@@ -133,27 +132,12 @@ namespace TmgBoard
 
             HandlePanInput();
 
-            // 휠은 지형 조각 위면 회전, 아니면(그리고 다른 UI 위가 아니면)
-            // 커서 위치 기준 줌 — 게임 보드(BoardManager.PanZoom.cs)와 같은
-            // 분기 규칙.
+            // 휠은 커서 위치 기준 줌 — 지형이 없어졌으니 게임 보드(BoardManager.
+            // PanZoom.cs)처럼 다른 UI 위가 아니면 항상 줌만 한다.
             float scroll = Input.mouseScrollDelta.y;
-            if (!Mathf.Approximately(scroll, 0f) && TryGetLocalMouse(out var wheelLocal))
+            if (!Mathf.Approximately(scroll, 0f) && !IsPointerOverUi())
             {
-                var hovered = FindTerrainPieceAt(wheelLocal);
-                if (hovered != null)
-                {
-                    hovered.RotateStep(scroll > 0f ? 1 : -1);
-                }
-                else if (!IsPointerOverUi())
-                {
-                    ZoomAt(Input.mousePosition, scroll > 0f ? ZoomStep : 1f / ZoomStep);
-                }
-            }
-
-            if (_draggingPiece != null)
-            {
-                HandleDragInput();
-                return;
+                ZoomAt(Input.mousePosition, scroll > 0f ? ZoomStep : 1f / ZoomStep);
             }
 
             if (_draggingObjective != null)
@@ -187,12 +171,6 @@ namespace TmgBoard
             if (_activeObjectiveNumber != 0 && Input.GetMouseButtonDown(0) && !IsPointerOverUi())
             {
                 HandleObjectivePlacementClick();
-                return;
-            }
-
-            if (_placementModuleId != "" && Input.GetMouseButtonDown(0) && !IsPointerOverUi())
-            {
-                HandlePlacementClick();
             }
         }
 
@@ -265,9 +243,11 @@ namespace TmgBoard
 
         // ── UI 빌드 ──────────────────────────────────────────────────
 
-        private void BuildSizeRow()
+        /// <summary>맨 위 줄 — "엔트리로"(BackButton.png)와 "프리셋 저장"
+        /// 아이콘 버튼만 남긴다(사용자 지정 — 지도 크기 버튼은 아래 줄로).</summary>
+        private void BuildTopRow()
         {
-            var rowGo = new GameObject("SizeRow", typeof(RectTransform));
+            var rowGo = new GameObject("TopRow", typeof(RectTransform));
             rowGo.transform.SetParent(Root, false);
             var rowRect = (RectTransform)rowGo.transform;
             rowRect.anchorMin = new Vector2(0f, 1f);
@@ -283,15 +263,35 @@ namespace TmgBoard
             layout.childControlHeight = false;
             layout.childForceExpandHeight = false;
 
+            CreateIconButton(rowRect, Resources.Load<Texture2D>("UI/BackButton"), 32f, () => BackRequested?.Invoke());
+            CreateIconButton(rowRect, Resources.Load<Texture2D>("UI/SaveButton"), 32f, OnSavePresetPressed);
+        }
+
+        /// <summary>맨 위 줄 바로 아래 — 지도 크기 선택 버튼들만.</summary>
+        private void BuildSizeRow()
+        {
+            var rowGo = new GameObject("SizeRow", typeof(RectTransform));
+            rowGo.transform.SetParent(Root, false);
+            var rowRect = (RectTransform)rowGo.transform;
+            rowRect.anchorMin = new Vector2(0f, 1f);
+            rowRect.anchorMax = new Vector2(0f, 1f);
+            rowRect.pivot = new Vector2(0f, 1f);
+            rowRect.anchoredPosition = new Vector2(MarginPx, -(MarginPx + 32f + MarginPx));
+            rowRect.sizeDelta = new Vector2(900f, 32f);
+
+            var layout = rowGo.AddComponent<HorizontalLayoutGroup>();
+            layout.spacing = 8f;
+            layout.childControlWidth = false;
+            layout.childForceExpandWidth = false;
+            layout.childControlHeight = false;
+            layout.childForceExpandHeight = false;
+
             foreach (var presetName in GameConstants.MapSizePresets.Keys)
             {
                 string captured = presetName;
                 var btn = CreateButton(rowRect, PresetLabel(presetName), () => OnSizePresetPressed(captured));
                 _sizeButtons[presetName] = btn;
             }
-
-            CreateButton(rowRect, "완료 ▶", OnCompletePressed);
-            CreateIconButton(rowRect, Resources.Load<Texture2D>("UI/SaveButton"), 32f, OnSavePresetPressed);
         }
 
         /// <summary>미션 프리셋 저장용 다이얼로그 — 이름 입력은 기존
@@ -344,40 +344,6 @@ namespace TmgBoard
 
             _presetListContent = ScrollListUtil.Create(panelRect, 100f, new Color(0f, 0f, 0f, 0.15f), out _, out var scrollLe);
             scrollLe.flexibleHeight = 1f; // 남는 세로 공간을 전부 목록이 차지한다.
-
-            // 지도 크기별 무작위 불러오기 — 미션 셋업 화면(MissionSetupController)의
-            // "STANDARD 무작위"/"SKIRMISH 무작위" 버튼과 정확히 같은 개념
-            // (같은 크기 안에서 저장된 프리셋 중 하나를 무작위로 고른다),
-            // 목록 맨 아래에 두는 것도 동일(사용자 요청 — 그 기능을 그대로
-            // 참고).
-            var randomRowGo = new GameObject("RandomRow", typeof(RectTransform));
-            randomRowGo.transform.SetParent(panelRect, false);
-            var randomRowLe = randomRowGo.AddComponent<LayoutElement>();
-            randomRowLe.preferredHeight = 32f;
-            var randomRowLayout = randomRowGo.AddComponent<HorizontalLayoutGroup>();
-            randomRowLayout.spacing = 6f;
-            randomRowLayout.childControlWidth = true;
-            randomRowLayout.childForceExpandWidth = true;
-            randomRowLayout.childControlHeight = true;
-            randomRowLayout.childForceExpandHeight = false;
-            var randomRowRect = (RectTransform)randomRowGo.transform;
-            foreach (var presetName in GameConstants.MapSizePresets.Keys)
-            {
-                string captured = presetName;
-                var randomBtn = CreateButton(randomRowRect, $"{PresetLabel(presetName)} 무작위", () => LoadRandomPreset(captured));
-                // 이 CreateButton은 스프라이트 없는 배경 Image를 쓰는데, 이 행처럼
-                // childForceExpandWidth=true인 부모 안에 형제 버튼 여러 개가
-                // 나란히 들어가면 그 배경이 폭 0으로 접히는 함정이 있다(미션
-                // 셋업 화면(MissionSetupController.cs)의 무작위 로드 행에서
-                // 실제로 겪고 고친 문제 — CreateButton 자체가 다른 파일이라
-                // 여기엔 그 수정이 안 들어가 있어서 호출부에서 직접 보정한다).
-                // flexibleHeight는 일부러 안 준다(그 쪽에서 버튼이 세로로
-                // 거대해지는 부작용이 났었음).
-                var randomBtnLe = randomBtn.gameObject.AddComponent<LayoutElement>();
-                randomBtnLe.preferredWidth = 90f;
-                randomBtnLe.flexibleWidth = 1f;
-                randomBtnLe.preferredHeight = 32f;
-            }
 
             RefreshPresetList();
         }
@@ -574,7 +540,8 @@ namespace TmgBoard
             panelRect.anchorMin = new Vector2(0f, 1f);
             panelRect.anchorMax = new Vector2(0f, 1f);
             panelRect.pivot = new Vector2(0f, 1f);
-            panelRect.anchoredPosition = new Vector2(MarginPx, -(MarginPx + 32f + MarginPx));
+            // 위 두 줄(엔트리로/저장 아이콘 줄 + 지도 크기 줄) 아래로.
+            panelRect.anchoredPosition = new Vector2(MarginPx, -(MarginPx + 32f + MarginPx + 32f + MarginPx));
             panelRect.sizeDelta = new Vector2(180f, 40f);
 
             var bg = panelGo.AddComponent<Image>();
@@ -590,19 +557,6 @@ namespace TmgBoard
 
             var fitter = panelGo.AddComponent<ContentSizeFitter>();
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-            var terrainLabel = CreateLabel(panelRect, "지형 (휠로 회전, 우클릭 메뉴로 삭제)");
-            var terrainLabelLe = terrainLabel.gameObject.AddComponent<LayoutElement>();
-            terrainLabelLe.preferredHeight = 32f;
-
-            foreach (var module in TerrainCatalog.Modules)
-            {
-                string capturedId = module.Id;
-                var btn = CreateButton(panelRect, module.DisplayName, () => OnTerrainButtonToggled(capturedId));
-                var btnLe = btn.gameObject.AddComponent<LayoutElement>();
-                btnLe.preferredHeight = 32f;
-                _terrainButtons[module.Id] = btn;
-            }
 
             var instructionLabel = CreateLabel(panelRect, "배치구역 (지도 가장자리에서 드래그, 우클릭으로 삭제)");
             var instructionLe = instructionLabel.gameObject.AddComponent<LayoutElement>();
@@ -666,14 +620,6 @@ namespace TmgBoard
             _zoneLayer.anchorMax = Vector2.zero;
             _zoneLayer.pivot = Vector2.zero;
             _zoneLayer.anchoredPosition = Vector2.zero;
-
-            var terrainLayerGo = new GameObject("TerrainLayer", typeof(RectTransform));
-            terrainLayerGo.transform.SetParent(_mapArea, false);
-            _terrainLayer = (RectTransform)terrainLayerGo.transform;
-            _terrainLayer.anchorMin = Vector2.zero;
-            _terrainLayer.anchorMax = Vector2.zero;
-            _terrainLayer.pivot = Vector2.zero;
-            _terrainLayer.anchoredPosition = Vector2.zero;
 
             var objectiveLayerGo = new GameObject("ObjectiveLayer", typeof(RectTransform));
             objectiveLayerGo.transform.SetParent(_mapArea, false);
@@ -800,17 +746,6 @@ namespace TmgBoard
             }
             _drawingZone = null;
 
-            for (int i = _terrainLayer.childCount - 1; i >= 0; i--)
-            {
-                Destroy(_terrainLayer.GetChild(i).gameObject);
-            }
-            _draggingPiece = null;
-            _placementModuleId = "";
-            foreach (var kv in _terrainButtons)
-            {
-                SetButtonHighlighted(kv.Value, false);
-            }
-
             for (int i = _objectiveLayer.childCount - 1; i >= 0; i--)
             {
                 Destroy(_objectiveLayer.GetChild(i).gameObject);
@@ -828,7 +763,6 @@ namespace TmgBoard
             _mapBackgroundRect.sizeDelta = mapSize;
             _gridRect.sizeDelta = mapSize;
             _zoneLayer.sizeDelta = mapSize;
-            _terrainLayer.sizeDelta = mapSize;
             _objectiveLayer.sizeDelta = mapSize;
             _zoomLevel = 1f; // 지도 크기를 바꾸면 줌/팬도 깨끗한 상태로 되돌린다.
             UpdateMapLayout();
@@ -852,7 +786,7 @@ namespace TmgBoard
             }
             float left = MarginPx + 180f + MarginPx; // 팔레트 폭 + 여백
             float right = MarginPx + PresetListPanelWidth + MarginPx; // 프리셋 목록 폭 + 여백
-            float top = MarginPx + 32f + MarginPx; // 크기 선택 행 높이 + 여백
+            float top = MarginPx + 32f + MarginPx + 32f + MarginPx; // 상단 두 줄(엔트리로/저장 + 지도 크기) 높이 + 여백
             float viewportW = Mathf.Max(Screen.width - left - right, 10f);
             float viewportH = Mathf.Max(Screen.height - top - MarginPx, 10f);
 
@@ -868,134 +802,6 @@ namespace TmgBoard
             _mapArea.anchoredPosition = new Vector2(left + extraW / 2f, MarginPx + extraH / 2f);
         }
 
-        // ── 지형 배치 ────────────────────────────────────────────────────
-        // Godot판 TerrainPiece.gd/TerrainCatalog.gd + MissionSetup.gd의 지형
-        // 관련 함수들 포팅. 물리/충돌은 없다 — 순수 시각 참고용으로만
-        // 배치한다(고지대 경사로 통행 등은 사람이 직접 판정, 사용자와 합의된
-        // 방침). 회전은 휠로만 하고, 우클릭은 배치구역/미션 목표와 동일하게
-        // 바로 삭제한다(옵션이 하나뿐이면 즉시 실행하는 이 프로젝트 규칙).
-
-        private const float TerrainGridSizeMm = GameConstants.MmPerInch / 2f; // 0.5인치
-
-        private void OnTerrainButtonToggled(string moduleId)
-        {
-            bool nowActive = _placementModuleId != moduleId;
-            _placementModuleId = nowActive ? moduleId : "";
-            foreach (var kv in _terrainButtons)
-            {
-                SetButtonHighlighted(kv.Value, nowActive && kv.Key == moduleId);
-            }
-            _activeZonePlayer = "";
-            foreach (var kv in _zoneButtons)
-            {
-                SetButtonHighlighted(kv.Value, false);
-            }
-            ClearObjectiveMode();
-        }
-
-        private void ClearTerrainPlacementMode()
-        {
-            _placementModuleId = "";
-            foreach (var kv in _terrainButtons)
-            {
-                SetButtonHighlighted(kv.Value, false);
-            }
-        }
-
-        private void HandlePlacementClick()
-        {
-            if (!TryGetLocalMouse(out var local))
-            {
-                return;
-            }
-            Vector2 mapSize = MapSize;
-            if (local.x < 0f || local.x > mapSize.x || local.y < 0f || local.y > mapSize.y)
-            {
-                return;
-            }
-
-            PlacePiece(_placementModuleId, SnapToGrid(local));
-            ClearTerrainPlacementMode();
-        }
-
-        private TerrainPiece PlacePiece(string moduleId, Vector2 localPoint)
-        {
-            var module = TerrainCatalog.Get(moduleId);
-            if (module == null)
-            {
-                return null;
-            }
-
-            var go = new GameObject($"Terrain_{module.Id}", typeof(RectTransform));
-            go.transform.SetParent(_terrainLayer, false);
-            var piece = go.AddComponent<TerrainPiece>();
-            piece.RectTransform.anchorMin = Vector2.zero;
-            piece.RectTransform.anchorMax = Vector2.zero;
-            piece.Setup(module);
-            piece.Center = localPoint;
-            piece.DragRequested += OnPieceDragRequested;
-            piece.DeleteRequested += OnPieceDeleteRequested;
-            return piece;
-        }
-
-        private void HandleDragInput()
-        {
-            if (TryGetLocalMouse(out var local))
-            {
-                _draggingPiece.Center = SnapToGrid(local + _dragPieceOffset);
-            }
-            if (Input.GetMouseButtonUp(0))
-            {
-                _draggingPiece = null;
-            }
-        }
-
-        private void OnPieceDragRequested(TerrainPiece piece)
-        {
-            _draggingPiece = piece;
-            TryGetLocalMouse(out var local);
-            _dragPieceOffset = piece.Center - local;
-            piece.transform.SetAsLastSibling();
-        }
-
-        private void OnPieceDeleteRequested(TerrainPiece piece)
-        {
-            Destroy(piece.gameObject);
-        }
-
-        /// <summary>마우스 아래(맨 위에 그려진 것부터)의 지형 조각을 찾는다 —
-        /// 회전된 사각형 그대로 판정한다(Godot판 _find_terrain_piece_at_point
-        /// 포팅). 휠을 굴렸을 때 회전할지 말지 정하는 데 쓴다.</summary>
-        private TerrainPiece FindTerrainPieceAt(Vector2 point)
-        {
-            for (int i = _terrainLayer.childCount - 1; i >= 0; i--)
-            {
-                var piece = _terrainLayer.GetChild(i).GetComponent<TerrainPiece>();
-                if (piece == null)
-                {
-                    continue;
-                }
-                float rad = -piece.RotationDegrees * Mathf.Deg2Rad;
-                Vector2 offset = point - piece.Center;
-                float cos = Mathf.Cos(rad);
-                float sin = Mathf.Sin(rad);
-                Vector2 local = new Vector2(offset.x * cos - offset.y * sin, offset.x * sin + offset.y * cos);
-                Vector2 half = piece.RectTransform.sizeDelta / 2f;
-                if (Mathf.Abs(local.x) <= half.x && Mathf.Abs(local.y) <= half.y)
-                {
-                    return piece;
-                }
-            }
-            return null;
-        }
-
-        private static Vector2 SnapToGrid(Vector2 point)
-        {
-            return new Vector2(
-                    Mathf.Round(point.x / TerrainGridSizeMm) * TerrainGridSizeMm,
-                    Mathf.Round(point.y / TerrainGridSizeMm) * TerrainGridSizeMm);
-        }
-
         // ── 배치구역 그리기 ─────────────────────────────────────────────
 
         private void OnZoneButtonClicked(string player)
@@ -1006,7 +812,6 @@ namespace TmgBoard
                 SetButtonHighlighted(kv.Value, kv.Key == _activeZonePlayer);
             }
             ClearObjectiveMode();
-            ClearTerrainPlacementMode();
         }
 
         private void HandleZoneStartClick(Vector2 local)
@@ -1160,7 +965,6 @@ namespace TmgBoard
             {
                 SetButtonHighlighted(kv.Value, kv.Key == _activeObjectiveNumber);
             }
-            ClearTerrainPlacementMode();
         }
 
         private void ClearObjectiveMode()
@@ -1268,11 +1072,11 @@ namespace TmgBoard
 
         // ── 완료 ────────────────────────────────────────────────────
 
-        /// <summary>지금 화면에 놓여있는 배치구역/미션 목표/지형을 그대로
-        /// 읽어낸다 — "완료"(MapData로)와 "프리셋 저장"(파일로) 둘 다 결국
-        /// 같은 스냅샷이 필요해서 공유한다.</summary>
-        private void CollectCurrentState(out List<DeploymentZoneData> zones,
-                out List<MissionObjectiveData> objectives, out List<TerrainPieceData> terrain)
+        /// <summary>지금 화면에 놓여있는 배치구역/미션 목표를 그대로 읽어낸다
+        /// — "프리셋 저장"이 이 스냅샷을 파일로 쓴다. 지형은 여기 없다 —
+        /// 이 화면은 더 이상 지형을 다루지 않는다(TerrainSetupController가
+        /// 매 게임 새로 배치, 프리셋으로 저장하지 않음).</summary>
+        private void CollectCurrentState(out List<DeploymentZoneData> zones, out List<MissionObjectiveData> objectives)
         {
             zones = new List<DeploymentZoneData>();
             for (int i = 0; i < _zoneLayer.childCount; i++)
@@ -1300,40 +1104,16 @@ namespace TmgBoard
                     Position = kv.Value.Center,
                 });
             }
-
-            terrain = new List<TerrainPieceData>();
-            for (int i = 0; i < _terrainLayer.childCount; i++)
-            {
-                var piece = _terrainLayer.GetChild(i).GetComponent<TerrainPiece>();
-                if (piece == null)
-                {
-                    continue;
-                }
-                terrain.Add(new TerrainPieceData
-                {
-                    ModuleId = piece.ModuleId,
-                    Position = piece.Center,
-                    RotationDeg = piece.RotationDegrees,
-                });
-            }
         }
 
-        private void OnCompletePressed()
-        {
-            MapData.Clear();
-            MapData.HasData = true;
-            MapData.MapPreset = _currentPreset;
-            CollectCurrentState(out var zones, out var objectives, out var terrain);
-            MapData.DeploymentZones.AddRange(zones);
-            MapData.MissionObjectives.AddRange(objectives);
-            MapData.TerrainPieces.AddRange(terrain);
-            SetupCompleted?.Invoke();
-        }
-
-        // ── 미션 프리셋 저장/불러오기 ──────────────────────────────────
-        // 배치구역/지형/미션 목표 배치를 JSON 파일로 저장했다가 나중에 다시
+        // ── 배치 프리셋 저장/불러오기 ──────────────────────────────────
+        // 배치구역/미션 목표 배치를 JSON 파일로 저장했다가 나중에 다시
         // 불러온다(사용자 요청). 저장 위치(Deployments/)는 우측 프리셋 목록
-        // 패널(BuildPresetListPanel)이 스캔하는 폴더와 같아야 한다.
+        // 패널(BuildPresetListPanel)이 스캔하는 폴더와 같아야 한다. 지형은
+        // 여기서 다루지 않으므로 MapPresetIO.Save에는 항상 빈 목록을
+        // 넘긴다 — 스키마 자체를 건드리지 않아 구버전 프리셋 파일(지형
+        // 데이터가 남아있는)과도 읽기 호환이 유지된다(다만 이 화면은 그
+        // 데이터를 더 이상 쓰지 않는다).
 
         private void OnSavePresetPressed()
         {
@@ -1359,10 +1139,10 @@ namespace TmgBoard
                 return;
             }
 
-            CollectCurrentState(out var zones, out var objectives, out var terrain);
+            CollectCurrentState(out var zones, out var objectives);
             try
             {
-                MapPresetIO.Save(path, _currentPreset, zones, objectives, terrain);
+                MapPresetIO.Save(path, _currentPreset, zones, objectives, new List<TerrainPieceData>());
                 RefreshPresetList(); // 방금 저장한 파일이 목록에 바로 보이도록.
             }
             catch (Exception e)
@@ -1387,68 +1167,21 @@ namespace TmgBoard
                 return;
             }
 
-            if (!MapPresetIO.TryLoad(jsonText, out var mapPreset, out var zones, out var objectives, out var terrain, out var error))
+            if (!MapPresetIO.TryLoad(jsonText, out var mapPreset, out var zones, out var objectives, out _, out var error))
             {
                 Debug.LogWarning($"프리셋 파일 형식이 올바르지 않습니다: {path} — {error}");
                 return;
             }
 
-            ApplyLoadedPreset(mapPreset, zones, objectives, terrain);
+            ApplyLoadedPreset(mapPreset, zones, objectives);
         }
 
-        /// <summary>같은 지도 크기(presetName)로 저장된 프리셋 중 하나를
-        /// Deployments/ 폴더에서 무작위로 골라 불러온다 — 미션 셋업 화면
-        /// (MissionSetupController.cs)의 "STANDARD 무작위"/"SKIRMISH 무작위"
-        /// 버튼과 정확히 같은 개념(전투 규모 단위 대신 지도 크기 단위,
-        /// 사용자 지정으로 그 기능을 그대로 참고).</summary>
-        private void LoadRandomPreset(string presetName)
-        {
-            string[] files;
-            try
-            {
-                files = Directory.GetFiles(ResolvePresetDirectory(), "*.json");
-            }
-            catch (Exception)
-            {
-                return;
-            }
-
-            var matches = new List<(string MapPreset, List<DeploymentZoneData> Zones, List<MissionObjectiveData> Objectives, List<TerrainPieceData> Terrain)>();
-            foreach (var path in files)
-            {
-                string jsonText;
-                try
-                {
-                    jsonText = File.ReadAllText(path);
-                }
-                catch (Exception)
-                {
-                    continue;
-                }
-                if (MapPresetIO.TryLoad(jsonText, out var mapPreset, out var zones, out var objectives, out var terrain, out _)
-                        && mapPreset == presetName)
-                {
-                    matches.Add((mapPreset, zones, objectives, terrain));
-                }
-            }
-            if (matches.Count == 0)
-            {
-                Debug.LogWarning($"'{presetName}' 프리셋이 Deployments 폴더에 없습니다.");
-                return;
-            }
-
-            var picked = matches[UnityEngine.Random.Range(0, matches.Count)];
-            ApplyLoadedPreset(picked.MapPreset, picked.Zones, picked.Objectives, picked.Terrain);
-        }
-
-        /// <summary>불러온 프리셋 데이터를 실제 화면에 반영한다 — 파일 하나를
-        /// 클릭해서 불러오는 경우(LoadPresetFromFile)와 같은 크기의 프리셋
-        /// 중 무작위로 고른 경우(LoadRandomPreset) 둘 다 이 마지막 단계가
-        /// 똑같아서 공유한다. ApplyPreset이 기존 배치구역/지형/목표를 전부
-        /// 지우고 지도 크기를 다시 잡아준다 — "완료"와 달리 여기선 그 뒤에
-        /// 곧바로 불러온 내용을 다시 채워 넣는다.</summary>
-        private void ApplyLoadedPreset(string mapPreset, List<DeploymentZoneData> zones,
-                List<MissionObjectiveData> objectives, List<TerrainPieceData> terrain)
+        /// <summary>불러온 프리셋 데이터를 실제 화면에 반영한다 —
+        /// LoadPresetFromFile이 부른다. ApplyPreset이 기존 배치구역/목표를 전부 지우고
+        /// 지도 크기를 다시 잡아준다 — "완료"와 달리 여기선 그 뒤에 곧바로
+        /// 불러온 내용을 다시 채워 넣는다. 지형은 이 화면에 없으므로 파일에
+        /// 남아있는 구버전 지형 데이터가 있어도 그냥 버려진다(사용 안 함).</summary>
+        private void ApplyLoadedPreset(string mapPreset, List<DeploymentZoneData> zones, List<MissionObjectiveData> objectives)
         {
             ApplyPreset(mapPreset);
 
@@ -1465,15 +1198,6 @@ namespace TmgBoard
             foreach (var o in objectives)
             {
                 PlaceObjective(o.Number, o.Position);
-            }
-
-            foreach (var t in terrain)
-            {
-                var piece = PlacePiece(t.ModuleId, t.Position);
-                if (piece != null)
-                {
-                    piece.RotationDegrees = t.RotationDeg;
-                }
             }
         }
 
