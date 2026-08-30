@@ -28,6 +28,12 @@ namespace TmgBoard
         public string ModuleId { get; private set; } = "";
         public int SizeValue { get; private set; }
 
+        /// <summary>멀티플레이어 중 네트워크로 배치된 지형만 -1이 아닌 값을
+        /// 가진다(id는 BoardNetworkSync가 발급) — 이동/회전/삭제 방송이
+        /// 도착했을 때 어느 GameObject인지 찾는 용도(TerrainSetupController.
+        /// _networkedTerrainById). 솔로 플레이/미연결 배치는 항상 -1.</summary>
+        public int NetworkTerrainId = -1;
+
         private RectTransform _rectTransform;
         public RectTransform RectTransform => _rectTransform != null ? _rectTransform : (_rectTransform = (RectTransform)transform);
 

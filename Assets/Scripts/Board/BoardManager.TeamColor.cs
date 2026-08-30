@@ -1,3 +1,4 @@
+using Unity.Netcode;
 using UnityEngine;
 
 namespace TmgBoard
@@ -13,8 +14,28 @@ namespace TmgBoard
         // 직접 갱신해줘야 한다.
 
         /// <summary>team("A"/"B")의 색을 baseColor로 바꾸고, 이미 존재하는
-        /// 모든 관련 시각 요소를 즉시 다시 칠한다.</summary>
+        /// 모든 관련 시각 요소를 즉시 다시 칠한다. 멀티 연결 중이면 로컬에서
+        /// 바로 칠하지 않고 방송 요청만 한다(마커 배치와 같은 "방송 후 로컬
+        /// 반영" 패턴) — 안 그러면 상대 화면은 색이 안 바뀐 채로 남는다.</summary>
         public void SetTeamColor(string team, Color baseColor)
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 팀 색 변경 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestSetTeamColorServerRpc(team, baseColor);
+                return;
+            }
+            ApplyTeamColorLocal(team, baseColor);
+        }
+
+        /// <summary>BoardNetworkSync.SetTeamColorRpc가 방송을 받았을 때(고른
+        /// 쪽 자신도 포함) 호출한다 — 기존 SetTeamColor의 실제 재도색
+        /// 로직 그대로.</summary>
+        internal void ApplyTeamColorLocal(string team, Color baseColor)
         {
             if (!GameConstants.TeamColors.ContainsKey(team))
             {

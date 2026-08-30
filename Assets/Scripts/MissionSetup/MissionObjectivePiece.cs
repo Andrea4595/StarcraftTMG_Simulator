@@ -27,6 +27,14 @@ namespace TmgBoard
         public event Action<MissionObjectivePiece> DragRequested;
         public event Action<MissionObjectivePiece> DeleteRequested;
 
+        /// <summary>게임 보드(RightClickCyclesColor=true)에서 우클릭했을 때
+        /// 올라간다 — 미션 설정 화면과 달리 이 컴포넌트가 직접 색을 바꾸지
+        /// 않고 호출부(BoardManager.MissionObjectives.cs)에 위임한다. 멀티
+        /// 연결 중이면 방송을 거쳐야 상대 화면도 같이 바뀌기 때문(2026-08-31
+        /// 추가) — 그 전에는 OnPointerDown이 CycleRingColor()를 직접 불러서
+        /// 로컬에서만 바뀌고 끝이었다.</summary>
+        public event Action<MissionObjectivePiece> ColorCycleRequested;
+
         /// <summary>미션 설정 화면(기본값)에서는 좌클릭 드래그 + 우클릭 즉시
         /// 삭제. 게임 보드에서는 순수 참고용이라 드래그를 막고(false) 우클릭은
         /// 삭제 대신 점령 링 색상 순환으로 대체한다(RightClickCyclesColor).
@@ -242,7 +250,7 @@ namespace TmgBoard
             {
                 if (RightClickCyclesColor)
                 {
-                    CycleRingColor();
+                    ColorCycleRequested?.Invoke(this);
                 }
                 else
                 {

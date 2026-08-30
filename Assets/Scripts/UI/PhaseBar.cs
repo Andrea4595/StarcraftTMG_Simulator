@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using TMPro;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -65,10 +66,37 @@ namespace TmgBoard
             RefreshHighlight();
         }
 
+        /// <summary>클릭하면 부른다(사용자 조작) — 멀티 연결 중이면 다음
+        /// 인덱스를 절대값으로 방송 요청만 한다(휠 회전 절대각 동기화와
+        /// 같은 이유 — "한 칸 전진" 액션 자체를 보내면 메시지가 하나
+        /// 유실됐을 때 양쪽이 서로 다른 페이즈로 어긋난 채 못 돌아온다).</summary>
         private void AdvancePhase()
         {
-            MatchState.PhaseIndex = (MatchState.PhaseIndex + 1) % MatchState.PhaseNames.Length;
+            int nextIndex = (MatchState.PhaseIndex + 1) % MatchState.PhaseNames.Length;
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[PhaseBar] BoardNetworkSync.Instance가 없음 — 페이즈 변경 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestSetPhaseServerRpc(nextIndex);
+                return;
+            }
+            SetPhaseIndex(nextIndex);
+        }
+
+        private void SetPhaseIndex(int index)
+        {
+            MatchState.PhaseIndex = index;
             RefreshHighlight();
+        }
+
+        /// <summary>BoardNetworkSync.SetPhaseRpc가 방송을 받았을 때(누른
+        /// 쪽 자신도 포함) 호출한다.</summary>
+        public void ApplyRemotePhaseIndex(int index)
+        {
+            SetPhaseIndex(index);
         }
 
         private void RefreshHighlight()

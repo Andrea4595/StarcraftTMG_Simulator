@@ -38,6 +38,7 @@ namespace TmgBoard
         [SerializeField] private RectTransform terrainLayer;
         [SerializeField] private DiceRollDialog diceRollDialog;
         [SerializeField] private RolloffDialog rolloffDialog;
+        [SerializeField] private UndoHistoryDialog undoHistoryDialog;
         [SerializeField] private WeaponProfileDialog weaponProfileDialog;
         [SerializeField] private ConfirmDialog exitConfirmDialog;
         [SerializeField] private InputDialog saveNameDialog;
@@ -209,18 +210,18 @@ namespace TmgBoard
         private Vector2 _markerDragOffset;
         private MarkerBase _markerPlacementPreview;
 
-        // ── 되돌리기(ctrl+z) / 다시 실행(ctrl+shift+z) ───────────────────
-        // "트랜잭션 전 상태를 통째로 스냅샷 → 스택에 push" 방식. Godot판과
-        // 동일한 설계(GameBoard.gd 맨 아래 섹션) — 커밋되는 모든 스냅샷은
-        // "그 트랜잭션이 시작되기 전" 상태를 담으므로, undo는 스택에서
-        // 하나 꺼내 그 상태로 복원하면 된다. 드래그처럼 여러 입력 이벤트에
-        // 걸친 동작은 시작 지점에서 BeginUndoTransaction()을, (변위 베이스를
-        // 밀어내는 후속 배치까지 포함해서) 완료 지점에서 CommitUndoTransaction()을
-        // 부른다.
-        private readonly List<BoardSnapshot> _undoStack = new List<BoardSnapshot>();
-        private readonly List<BoardSnapshot> _redoStack = new List<BoardSnapshot>();
-        private bool _undoPendingActive;
-        private BoardSnapshot _undoPendingSnapshot;
+        // 되돌리기(취소/복원) 관련 필드·로직은 전부 BoardManager.UndoRedo.cs에
+        // 있다 — 화면 우측 하단 "되돌리기" 버튼 → 모달(UndoHistoryDialog)로
+        // 조작 리스트/Undo 리스트를 보여주고 선택적으로 취소·복원한다
+        // (2026-09-01 재구성, 예전 Ctrl+Z 단축키 방식은 제거됨).
+
+        /// <summary>되돌리기 조작 리스트에 유닛을 언급할 때 공통으로 쓰는
+        /// 표기 — "A 유닛이름" 처럼 소속 팀을 이름 앞에 붙인다(사용자
+        /// 지정). unit이 null이면(방어적) 그냥 "유닛".</summary>
+        private static string DescribeUnit(Unit unit)
+        {
+            return unit == null ? "유닛" : $"{unit.Team} {unit.UnitName}";
+        }
 
         private void Start()
         {
@@ -327,6 +328,15 @@ namespace TmgBoard
         public void ConfigureRolloff(RolloffDialog rolloffDialogRef)
         {
             rolloffDialog = rolloffDialogRef;
+        }
+
+        /// <summary>되돌리기 모달을 주입한다 — 롤 오프 창과 같은 이유로 보드
+        /// 상태와 완전히 무관한 독립 컴포넌트지만, 조작 리스트/Undo 리스트를
+        /// 그리려면 이 BoardManager를 다시 참조해야 해서(GetOperationHistoryForDisplay
+        /// 등) Open() 호출부(CreateUndoHistoryButton)가 자기 자신을 넘겨준다.</summary>
+        public void ConfigureUndoHistory(UndoHistoryDialog undoHistoryDialogRef)
+        {
+            undoHistoryDialog = undoHistoryDialogRef;
         }
 
         /// <summary>유닛 상세 패널의 무기 능력 항목 "무기 프로필 보기" 버튼이 여는
@@ -473,7 +483,6 @@ namespace TmgBoard
         {
             HandlePanAndZoom();
             HandleMeasureInput();
-            HandleUndoRedoInput();
             UpdateHoveredUnit();
             UpdateUnitDetailPanel();
             UpdateScreenshotToast();
@@ -630,7 +639,7 @@ namespace TmgBoard
 
             // 유닛 이동 중이 아닌 일반 드래그 — 여기서 되돌리기 트랜잭션을 열고,
             // 마우스를 뗄 때(EndPieceDrag) 실제로 뭔가 바뀌었으면 커밋한다.
-            BeginUndoTransaction();
+            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 이동");
             _draggingPiece = piece;
             TryGetLocalMouse(out var localFree);
             _dragOffset = piece.Center - localFree;
@@ -747,7 +756,7 @@ namespace TmgBoard
             if (action.StartsWith("delete_range_"))
             {
                 int idx = int.Parse(action.Substring("delete_range_".Length));
-                DeleteRangeAtIndex(_rangeDeleteTargetUnit, idx);
+                RequestDeleteRange(_rangeDeleteTargetUnit, idx);
                 return;
             }
 
@@ -794,7 +803,8 @@ namespace TmgBoard
             {
                 return;
             }
-            BeginUndoTransaction();
+            BeginUndoTransaction($"{DescribeUnit(_menuTarget.Unit)} 데미지 변경");
+            var unit = _menuTarget.Unit;
             if (int.TryParse(value, out int dmg))
             {
                 _menuTarget.Damage = Mathf.Max(dmg, 0);
@@ -802,6 +812,10 @@ namespace TmgBoard
             }
             _menuTarget = null;
             CommitUndoTransaction();
+            // 모델 개수는 안 바뀌므로 유닛 이동/배치와 같은 방송 하나로
+            // 충분하다 — 받는 쪽은 이미 있는 UpdateUnitModelsFromTree의
+            // damage 필드 반영을 그대로 탄다(새 RPC 불필요).
+            BroadcastUnitIfNetworked(unit);
         }
 
         private void OnMemoConfirmed(string value)
@@ -810,25 +824,33 @@ namespace TmgBoard
             {
                 return;
             }
-            BeginUndoTransaction();
+            BeginUndoTransaction($"{DescribeUnit(_menuTarget.Unit)} 메모 변경");
+            var unit = _menuTarget.Unit;
             _menuTarget.Memo = value.Trim();
             _menuTarget = null;
             CommitUndoTransaction();
+            BroadcastUnitIfNetworked(unit);
         }
 
         private void RemoveBase(Base piece)
         {
-            BeginUndoTransaction();
-            piece.Unit?.Models.Remove(piece);
+            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 모델 제거");
+            var unit = piece.Unit;
+            unit?.Models.Remove(piece);
             _pieces.Remove(piece);
             Destroy(piece.gameObject);
             _menuTarget = null;
             CommitUndoTransaction();
+            // 모델 개수가 줄어드는 경우 — 받는 쪽 UpdateUnitModelsFromTree는
+            // 개수가 안 맞으면 통째로 다시 짓는 방식으로 방어적으로 처리한다
+            // (부드러운 이동 트윈은 없지만 정확하다 — 유닛 이동만큼 자주
+            // 일어나는 조작이 아니라 이 정도로 충분).
+            BroadcastUnitIfNetworked(unit);
         }
 
         private void DuplicateBase(Base piece)
         {
-            BeginUndoTransaction();
+            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 모델 복제");
             var unit = piece.Unit;
             var newPiece = CreatePieceObject(unit, piece.SizeMm, piece.FillColor, piece.IsDisplacement);
             unit?.Models.Add(newPiece);
@@ -838,6 +860,10 @@ namespace TmgBoard
             newPiece.Refresh();
             _menuTarget = null;
             CommitUndoTransaction();
+            // 모델 개수가 느는 경우 — RemoveBase와 같은 이유로 그냥 유닛
+            // 전체를 다시 방송한다(개수 불일치 시 통째로 다시 짓는 방어적
+            // 경로를 그대로 탄다).
+            BroadcastUnitIfNetworked(unit);
         }
 
         /// <summary>유닛을 배치 전 상태로 되돌린다 — 남은 모델 개수와 각 모델의
@@ -849,7 +875,7 @@ namespace TmgBoard
             {
                 return;
             }
-            BeginUndoTransaction();
+            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 리저브 복귀");
             var unit = piece.Unit;
 
             var damages = new List<int>();

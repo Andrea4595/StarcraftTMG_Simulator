@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using TMPro;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -41,6 +43,12 @@ namespace TmgBoard
         private readonly Dictionary<string, TextMeshProUGUI> _teamNameLabels = new Dictionary<string, TextMeshProUGUI>();
         private readonly Dictionary<string, GameObject> _colorPopups = new Dictionary<string, GameObject>();
         private readonly Dictionary<string, bool> _colorPopupLeft = new Dictionary<string, bool>();
+
+        // 멀티플레이어 방송으로 VP가 도착했을 때(내가 누른 게 아닌데도) 이
+        // 위젯이 보여주는 숫자를 강제로 맞추는 데 쓴다(IntStepperField.Create가
+        // 돌려주는 external setter, 2026-08-31 추가).
+        private readonly Dictionary<string, Action<int>> _missionVpSetters = new Dictionary<string, Action<int>>();
+        private readonly Dictionary<string, Action<int>> _killVpSetters = new Dictionary<string, Action<int>>();
 
         // BoardManager는 부트스트랩이 두 객체를 다 만든 뒤 SetBoardManager()로
         // 나중에 넣어준다(Awake() 시점엔 아직 BoardManager가 없을 수 있음) —
@@ -126,17 +134,11 @@ namespace TmgBoard
             _teamNameLabels[team] = nameLabel;
             BuildColorPopup(team, left);
 
-            IntStepperField.Create(statRowGo.transform, "미션VP", 52f, MatchState.MissionVp[team], 0, 999, v =>
-            {
-                MatchState.MissionVp[team] = v;
-                RefreshTotalLabel(team);
-            });
+            _missionVpSetters[team] = IntStepperField.Create(statRowGo.transform, "미션VP", 52f, MatchState.MissionVp[team], 0, 999,
+                    v => OnMissionVpChanged(team, v));
 
-            IntStepperField.Create(statRowGo.transform, "파괴VP", 52f, MatchState.KillVp[team], 0, 999, v =>
-            {
-                MatchState.KillVp[team] = v;
-                RefreshTotalLabel(team);
-            });
+            _killVpSetters[team] = IntStepperField.Create(statRowGo.transform, "파괴VP", 52f, MatchState.KillVp[team], 0, 999,
+                    v => OnKillVpChanged(team, v));
 
             var totalLabel = CreateLabel(statRowGo.transform, "", 16f, 90f, Color.white, FontStyles.Normal);
             _totalVpLabels[team] = totalLabel;
@@ -168,6 +170,24 @@ namespace TmgBoard
         {
             RefreshSupplyRow("A");
             RefreshSupplyRow("B");
+            RefreshTeamNameColors();
+        }
+
+        /// <summary>팀 이름 라벨 색을 GameConstants.TeamColors에서 매 프레임
+        /// 그대로 반영한다(2026-08-31 추가) — 예전엔 색 스와치를 클릭한
+        /// 화면에서만 라벨 색을 직접 바꿔줬는데, 멀티에서 상대가 색을
+        /// 바꾼 경우 이 화면의 라벨은 갱신될 방법이 없었다. 서플라이 네모의
+        /// 팀 색 반영(RefreshSupplyRow)도 이미 같은 "매 프레임 GameConstants
+        /// 재조회" 방식이라 일관된다.</summary>
+        private void RefreshTeamNameColors()
+        {
+            foreach (var kv in _teamNameLabels)
+            {
+                if (GameConstants.TeamColors.TryGetValue(kv.Key, out var c))
+                {
+                    kv.Value.color = c;
+                }
+            }
         }
 
         /// <summary>네모 개수는 기본적으로 MatchState.Supply(공유 상한)이지만,
@@ -382,7 +402,7 @@ namespace TmgBoard
                 img.texture = squareTexture;
                 var btn = go.AddComponent<Button>();
                 btn.targetGraphic = img;
-                btn.onClick.AddListener(() => SetRoundNumber(roundNumber));
+                btn.onClick.AddListener(() => OnRoundPipClicked(roundNumber));
                 _roundPips.Add(img);
             }
 
@@ -401,6 +421,89 @@ namespace TmgBoard
             {
                 _roundPips[i].color = i < roundNumber ? RoundActiveColor : RoundInactiveColor;
             }
+        }
+
+        /// <summary>라운드 네모를 클릭했을 때 부른다(사용자 조작) — 멀티
+        /// 연결 중이면 로컬에서 바로 바꾸지 않고 방송 요청만 한다(마커
+        /// 배치와 같은 "방송 후 로컬 반영" 패턴). BuildRoundIndicator가
+        /// 화면을 처음 지을 때 하는 초기 페인트 호출(SetRoundNumber 직접
+        /// 호출)은 사용자 조작이 아니므로 이 경로를 타지 않는다.</summary>
+        private void OnRoundPipClicked(int roundNumber)
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[ScoreboardPanel] BoardNetworkSync.Instance가 없음 — 라운드 변경 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestSetRoundServerRpc(roundNumber);
+                return;
+            }
+            SetRoundNumber(roundNumber);
+        }
+
+        /// <summary>BoardNetworkSync.SetRoundRpc가 방송을 받았을 때(누른 쪽
+        /// 자신도 포함) 호출한다.</summary>
+        public void ApplyRemoteRoundNumber(int roundNumber)
+        {
+            SetRoundNumber(roundNumber);
+        }
+
+        private void OnMissionVpChanged(string team, int value)
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[ScoreboardPanel] BoardNetworkSync.Instance가 없음 — 미션VP 변경 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestSetMissionVpServerRpc(team, value);
+                return;
+            }
+            MatchState.MissionVp[team] = value;
+            RefreshTotalLabel(team);
+        }
+
+        private void OnKillVpChanged(string team, int value)
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[ScoreboardPanel] BoardNetworkSync.Instance가 없음 — 파괴VP 변경 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestSetKillVpServerRpc(team, value);
+                return;
+            }
+            MatchState.KillVp[team] = value;
+            RefreshTotalLabel(team);
+        }
+
+        /// <summary>BoardNetworkSync.SetMissionVpRpc/SetKillVpRpc가 방송을
+        /// 받았을 때(누른 쪽 자신도 포함) 호출한다 — MatchState를 갱신하고,
+        /// 스테퍼 위젯이 보여주는 숫자도 (onChanged를 다시 부르지 않는
+        /// external setter로) 맞춘 뒤 종합VP 라벨을 새로 그린다.</summary>
+        public void ApplyRemoteMissionVp(string team, int value)
+        {
+            MatchState.MissionVp[team] = value;
+            if (_missionVpSetters.TryGetValue(team, out var setter))
+            {
+                setter(value);
+            }
+            RefreshTotalLabel(team);
+        }
+
+        public void ApplyRemoteKillVp(string team, int value)
+        {
+            MatchState.KillVp[team] = value;
+            if (_killVpSetters.TryGetValue(team, out var setter))
+            {
+                setter(value);
+            }
+            RefreshTotalLabel(team);
         }
 
         private void RefreshTotalLabel(string team)
@@ -497,11 +600,12 @@ namespace TmgBoard
                 swatchBtn.targetGraphic = img;
                 swatchBtn.onClick.AddListener(() =>
                 {
+                    // 라벨 색은 여기서 직접 안 바꾼다 — Update()의
+                    // RefreshTeamNameColors가 GameConstants.TeamColors를
+                    // 매 프레임 그대로 반영하므로(멀티에서 상대가 바꾼
+                    // 경우도 같은 경로로 자동 반영된다), 방송 왕복이
+                    // 끝나 실제로 색이 바뀐 뒤 자연스럽게 따라간다.
                     _board?.SetTeamColor(team, swatchColor);
-                    if (_teamNameLabels.TryGetValue(team, out var lbl))
-                    {
-                        lbl.color = swatchColor;
-                    }
                     popupGo.SetActive(false);
                 });
             }

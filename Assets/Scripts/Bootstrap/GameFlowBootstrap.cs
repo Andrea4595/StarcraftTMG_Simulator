@@ -33,6 +33,8 @@ public static class GameFlowBootstrap
     private const string MapAuthoringSceneName = GameConstants.MapAuthoringSceneName;
     private const string MissionAuthoringSceneName = GameConstants.MissionAuthoringSceneName;
     private const string SelectionSceneName = GameConstants.SelectionSceneName;
+    private const string CardPrepSceneName = GameConstants.CardPrepSceneName;
+    private const string CardDraftSceneName = GameConstants.CardDraftSceneName;
     private const string TerrainSetupSceneName = GameConstants.TerrainSetupSceneName;
     private const string LoadGameSceneName = GameConstants.LoadGameSceneName;
     private const string GameBoardSceneName = GameConstants.GameBoardSceneName;
@@ -141,6 +143,12 @@ public static class GameFlowBootstrap
             case SelectionSceneName:
                 BuildSelection();
                 break;
+            case CardPrepSceneName:
+                BuildCardPrep();
+                break;
+            case CardDraftSceneName:
+                BuildCardDraft();
+                break;
             case TerrainSetupSceneName:
                 BuildTerrainSetup();
                 break;
@@ -165,6 +173,10 @@ public static class GameFlowBootstrap
         canvasGo.AddComponent<GraphicRaycaster>();
 
         var entry = canvasGo.AddComponent<EntryController>();
+        // "게임 시작"은 이제 솔로 흐름 전용이다(2026-08-31 재구성) — 멀티는
+        // 더 이상 이 버튼을 거치지 않는다. RelayConnectionTest가 호스트/
+        // 클라이언트 연결이 완성되는 즉시(양쪽 다 연결됨) 자동으로
+        // CardPrep으로 넘어간다(사용자 지정 — "호스트에게 연결되는 즉시").
         entry.StartGamePicked += () => SceneManager.LoadScene(SelectionSceneName);
         entry.LoadGamePicked += () => SceneManager.LoadScene(LoadGameSceneName);
         entry.MapAuthoringPicked += () => SceneManager.LoadScene(MapAuthoringSceneName);
@@ -243,6 +255,36 @@ public static class GameFlowBootstrap
         var selection = canvasGo.AddComponent<SelectionController>();
         selection.BothPicked += () => SceneManager.LoadScene(TerrainSetupSceneName);
         selection.BackRequested += () => SceneManager.LoadScene(EntrySceneName);
+    }
+
+    /// <summary>멀티 전용 "카드 준비" 화면 — 각자 화면에서 배치 프리셋 2장 +
+    /// 미션 프리셋 2장을 고른다. 양쪽 다 고르면(DraftState.BothReady) 각자
+    /// 독립적으로 CardDraft로 넘어간다(CardPrepController 자신이 처리 —
+    /// 여기선 뒤로가기만 배선한다).</summary>
+    private static void BuildCardPrep()
+    {
+        var canvasGo = new GameObject("CardPrep_Canvas");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvasGo.AddComponent<CanvasScaler>();
+        canvasGo.AddComponent<GraphicRaycaster>();
+
+        var cardPrep = canvasGo.AddComponent<CardPrepController>();
+        cardPrep.BackRequested += () => SceneManager.LoadScene(EntrySceneName);
+    }
+
+    /// <summary>멀티 전용 "카드 드래프트" 화면 — 양쪽 8장을 모아 보여주고
+    /// 롤오프/자유 밴·픽. "다음"을 누르면 CardDraftController 자신이
+    /// MapData/MissionSettingsData를 채우고 TerrainSetup으로 넘어간다.</summary>
+    private static void BuildCardDraft()
+    {
+        var canvasGo = new GameObject("CardDraft_Canvas");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvasGo.AddComponent<CanvasScaler>();
+        canvasGo.AddComponent<GraphicRaycaster>();
+
+        canvasGo.AddComponent<CardDraftController>();
     }
 
     /// <summary>Selection에서 고른 배치 프리셋을 참고로 지형만 매 게임 새로
@@ -380,6 +422,8 @@ public static class GameFlowBootstrap
         diceRollDialog.transform.SetParent(canvasGo.transform, false);
         var rolloffDialog = new GameObject("RolloffDialog").AddComponent<RolloffDialog>();
         rolloffDialog.transform.SetParent(canvasGo.transform, false);
+        var undoHistoryDialog = new GameObject("UndoHistoryDialog").AddComponent<UndoHistoryDialog>();
+        undoHistoryDialog.transform.SetParent(canvasGo.transform, false);
         var weaponProfileDialog = new GameObject("WeaponProfileDialog").AddComponent<WeaponProfileDialog>();
         weaponProfileDialog.transform.SetParent(canvasGo.transform, false);
         var exitConfirmDialog = new GameObject("ExitConfirmDialog").AddComponent<ConfirmDialog>();
@@ -438,6 +482,7 @@ public static class GameFlowBootstrap
         board.ConfigureTerrain(terrainLayerRect);
         board.ConfigureDiceRoll(diceRollDialog);
         board.ConfigureRolloff(rolloffDialog);
+        board.ConfigureUndoHistory(undoHistoryDialog);
         board.ConfigureWeaponProfile(weaponProfileDialog);
         board.ConfigureExit(exitConfirmDialog);
         board.ConfigureSave(saveNameDialog);

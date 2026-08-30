@@ -64,7 +64,7 @@ namespace TmgBoard
             // 리딩 모델 배치부터 완료(또는 배치 중 취소)까지 전체를 되돌리기 한
             // 단계로 묶는다 — CompleteUnitMove()에서 커밋, CancelUnitMove()에서는
             // 폐기(원래 상태로 이미 되돌렸으므로 별도 되돌리기 단계가 필요 없음).
-            BeginUndoTransaction();
+            BeginUndoTransaction($"{DescribeUnit(leading.Unit)} 이동");
 
             _unitMoveActive = true;
             _unitMoveLeading = leading;

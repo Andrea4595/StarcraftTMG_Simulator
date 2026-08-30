@@ -23,7 +23,12 @@ namespace TmgBoard
         /// "설정 화면" 행 관례. false(기본값, 기존 호출부 — ScoreboardPanel의
         /// 좁은 스코어보드 행 — 는 그대로 라벨 바로 옆에 입력칸이 붙는
         /// 기존 모양을 유지)면 라벨 바로 옆에 입력칸이 붙는다.</param>
-        public static void Create(Transform parent, string labelText, float labelWidth, int initial, int minValue, int maxValue, Action<int> onChanged, float stepperButtonHeight = 13f, bool labelLeftControlRight = false)
+        /// <returns>바깥에서(예: 멀티플레이어 방송을 받았을 때) 이 위젯이
+        /// 보여주는 숫자를 onChanged를 다시 부르지 않고 강제로 맞출 때 쓰는
+        /// 함수(2026-08-31 추가) — ScoreboardPanel의 VP 동기화가 필요해져서
+        /// 뽑아냈다. 그냥 무시해도 기존 호출부(MissionAuthoringController
+        /// 등)는 전혀 영향받지 않는다.</returns>
+        public static Action<int> Create(Transform parent, string labelText, float labelWidth, int initial, int minValue, int maxValue, Action<int> onChanged, float stepperButtonHeight = 13f, bool labelLeftControlRight = false)
         {
             var rowGo = new GameObject($"Stat_{labelText}", typeof(RectTransform));
             rowGo.transform.SetParent(parent, false);
@@ -129,6 +134,16 @@ namespace TmgBoard
 
             CreateStepperButton(stepperGo.transform, upIcon, buttonWidth, stepperButtonHeight, () => ApplyValue(currentValue + 1));
             CreateStepperButton(stepperGo.transform, downIcon, buttonWidth, stepperButtonHeight, () => ApplyValue(currentValue - 1));
+
+            // onChanged를 다시 안 부르는 이유 — 이 값은 "이미 알고 있는(예:
+            // 방송으로 확정된) 값을 화면에 반영만" 하는 용도라, 다시
+            // onChanged를 부르면 멀티플레이어에서 방송을 받아 반영한 게
+            // 다시 방송 요청을 만들어내는 무한 루프가 된다.
+            return newValue =>
+            {
+                currentValue = Mathf.Clamp(newValue, minValue, maxValue);
+                inputField.SetTextWithoutNotify(currentValue.ToString());
+            };
         }
 
         private static TextMeshProUGUI CreateLabel(Transform parent, string text, float preferredWidth)

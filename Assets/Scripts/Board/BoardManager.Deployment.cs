@@ -550,7 +550,7 @@ namespace TmgBoard
             // 뒤라 되돌려도 목록에 복원이 안 된다. 지도 클릭 전에 우클릭으로
             // 취소하면(HandlePendingDeploymentInput) 폐기, 실제로 배치까지
             // 마치면 CompleteUnitMove()에서 커밋된다.
-            BeginUndoTransaction();
+            BeginUndoTransaction($"{_pendingUnits[index].Team} {_pendingUnits[index].Name} 배치");
             var def = _pendingUnits[index];
             RemovePendingUnitDefAt(index);
 

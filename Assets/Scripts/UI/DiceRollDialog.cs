@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using TMPro;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -114,7 +115,58 @@ namespace TmgBoard
             gameObject.SetActive(false);
         }
 
+        /// <summary>멀티 연결 중이면(2026-08-31 추가) 로컬에서 바로 열지
+        /// 않고 방송 요청만 한다 — 한쪽이 열면 둘 다 뜨고, 한쪽이 닫으면
+        /// 둘 다 닫히게 하기 위해(사용자 지정). 열고 난 뒤의 굴림 진행(어택
+        /// 풀/히트/아머/회피 단계, 되돌리기)도 이후 전부 동기화된다
+        /// (BroadcastStateIfNetworked 참고, 2026-08-31 확장) — 처음엔 창
+        /// 표시만 공유했지만 사용자가 "조작 하나하나가 상대에게 완전히
+        /// 반영돼야 한다"고 요청해서 넓혔다.</summary>
         public void Open()
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[DiceRollDialog] BoardNetworkSync.Instance가 없음 — 창 열기 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestSetDiceDialogOpenServerRpc(true);
+                return;
+            }
+            OpenLocal();
+        }
+
+        public void Close()
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[DiceRollDialog] BoardNetworkSync.Instance가 없음 — 창 닫기 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestSetDiceDialogOpenServerRpc(false);
+                return;
+            }
+            CloseLocal();
+        }
+
+        /// <summary>BoardNetworkSync.SetDiceDialogOpenRpc가 방송을 받았을 때
+        /// 호출한다(요청한 쪽 자신도 포함).</summary>
+        public void ApplyRemoteSetOpen(bool open)
+        {
+            if (open)
+            {
+                OpenLocal();
+            }
+            else
+            {
+                CloseLocal();
+            }
+        }
+
+        private void OpenLocal()
         {
             _history.Clear();
             _dice = new List<Die>();
@@ -128,9 +180,104 @@ namespace TmgBoard
             RebuildForStage();
         }
 
-        public void Close()
+        private void CloseLocal()
         {
             gameObject.SetActive(false);
+        }
+
+        // ── 굴림 진행 전체 동기화(2026-08-31 추가) ─────────────────────────
+        // 상태 전체(단계/주사위 배열/보너스 서지/토글/풀 크기/커트라인)가
+        // 그리 크지 않으므로, 예비대 목록 동기화와 같은 이유로 조작마다
+        // 델타가 아니라 스냅샷 전체를 다시 보낸다 — 부분 동기화보다 훨씬
+        // 단순하고 어긋날 일이 없다. 로컬 조작은(마커/지형과 달리) 방송
+        // 왕복을 기다리지 않고 즉시 반영한다 — 굴리는 사람 본인은 지연 없이
+        // 계속 다음 단계로 넘어가야 하는 워크플로우라서, 방송은 "그 결과를
+        // 상대에게도 알리는" 별도 통지일 뿐이다.
+
+        private void BroadcastStateIfNetworked()
+        {
+            if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
+            {
+                return;
+            }
+            if (BoardNetworkSync.Instance == null)
+            {
+                Debug.LogError("[DiceRollDialog] BoardNetworkSync.Instance가 없음 — 굴림 상태를 못 보냄");
+                return;
+            }
+            BoardNetworkSync.Instance.RequestBroadcastDiceState(SerializeState());
+        }
+
+        private string SerializeState()
+        {
+            var diceList = new List<object>();
+            foreach (var d in _dice)
+            {
+                diceList.Add(new Dictionary<string, object> { ["v"] = d.Value, ["s"] = d.IsSurge });
+            }
+            var root = new Dictionary<string, object>
+            {
+                ["stage"] = (int)_stage,
+                ["dice"] = diceList,
+                ["bonusSurge"] = _bonusSurgeDie == null ? null : new Dictionary<string, object> { ["v"] = _bonusSurgeDie.Value },
+                ["surgeToggle"] = _surgeToggleOn,
+                ["confirmedPoolSize"] = _confirmedPoolSize,
+                ["threshold"] = _threshold,
+            };
+            return MiniJson.Write(root);
+        }
+
+        /// <summary>BoardNetworkSync가 상대의 굴림 상태 방송을 완성했을 때
+        /// (보낸 쪽 자신도 포함) 호출한다 — 되돌리기 내역(_history)은 굳이
+        /// 안 보낸다(그 조작을 한 쪽에서만 되돌릴 수 있으면 충분하고, 매
+        /// 조작마다 스택 전체를 실어 보내는 건 낭비다).</summary>
+        public void ApplyRemoteState(string stateJson)
+        {
+            object parsed;
+            try
+            {
+                parsed = MiniJson.Parse(stateJson);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[DiceRollDialog] 굴림 상태 파싱 실패: {e.Message}");
+                return;
+            }
+            if (!(parsed is Dictionary<string, object> root))
+            {
+                return;
+            }
+
+            _stage = (Stage)GetInt(root, "stage");
+            _dice = new List<Die>();
+            if (root.TryGetValue("dice", out var diceRaw) && diceRaw is List<object> diceList)
+            {
+                foreach (var item in diceList)
+                {
+                    if (item is Dictionary<string, object> d)
+                    {
+                        _dice.Add(new Die { Value = GetInt(d, "v"), IsSurge = GetBool(d, "s") });
+                    }
+                }
+            }
+            _bonusSurgeDie = root.TryGetValue("bonusSurge", out var bonusRaw) && bonusRaw is Dictionary<string, object> bonusDict
+                    ? new Die { Value = GetInt(bonusDict, "v") }
+                    : null;
+            _surgeToggleOn = GetBool(root, "surgeToggle");
+            _confirmedPoolSize = GetInt(root, "confirmedPoolSize");
+            _threshold = GetInt(root, "threshold", -1);
+
+            RebuildForStage();
+        }
+
+        private static int GetInt(Dictionary<string, object> dict, string key, int fallback = 0)
+        {
+            return dict.TryGetValue(key, out var v) && v is double d ? (int)d : fallback;
+        }
+
+        private static bool GetBool(Dictionary<string, object> dict, string key, bool fallback = false)
+        {
+            return dict.TryGetValue(key, out var v) && v is bool b ? b : fallback;
         }
 
         // ── UI 골격 생성(한 번만) ────────────────────────────────────────
@@ -470,6 +617,7 @@ namespace TmgBoard
             _confirmedPoolSize = Mathf.Clamp(size, 1, MaxPoolSize);
             RefreshPoolDisplay(_confirmedPoolSize - 1);
             RefreshActionButton();
+            BroadcastStateIfNetworked();
         }
 
         /// <summary>히트 굴림 결과 — "이 주사위까지가 명중"이라는 판정이라
@@ -567,6 +715,7 @@ namespace TmgBoard
             _threshold = Mathf.Clamp(size, 1, _cells.Count);
             PreviewSuffixDisable(_threshold - 1);
             RefreshActionButton();
+            BroadcastStateIfNetworked();
         }
 
         /// <summary>"그룹의 시작부터 이 지점까지"가 비활성화되는 접두사 방식 —
@@ -594,6 +743,7 @@ namespace TmgBoard
         {
             _threshold = Mathf.Max(count, 0);
             PreviewPrefixDisable(groupStartIndex, _threshold - 1);
+            BroadcastStateIfNetworked();
         }
 
         /// <summary>우클릭한 주사위까지(첫 번째 주사위부터) 서지 주사위로
@@ -612,6 +762,7 @@ namespace TmgBoard
             {
                 _cells[i].SurgeIcon.gameObject.SetActive(_dice[i].IsSurge);
             }
+            BroadcastStateIfNetworked();
         }
 
         private void OnSurgeToggleClicked()
@@ -622,6 +773,7 @@ namespace TmgBoard
             }
             _surgeToggleOn = !_surgeToggleOn;
             _surgeToggleBg.color = _surgeToggleOn ? SurgeToggleOnColor : SurgeToggleOffColor;
+            BroadcastStateIfNetworked();
         }
 
         private void RefreshSurgeToggleVisual()
@@ -750,6 +902,7 @@ namespace TmgBoard
             _threshold = -1;
             _stage = Stage.HitResult;
             RebuildForStage();
+            BroadcastStateIfNetworked();
         }
 
         private void DoArmorRoll()
@@ -774,6 +927,7 @@ namespace TmgBoard
             _threshold = -1;
             _stage = Stage.ArmorResult;
             RebuildForStage();
+            BroadcastStateIfNetworked();
         }
 
         /// <summary>아머 굴림 결과 화면에서 넘어온다 — 서지 주사위(첫 줄)는
@@ -799,6 +953,7 @@ namespace TmgBoard
             _threshold = -1;
             _stage = Stage.EvadeResult;
             RebuildForStage();
+            BroadcastStateIfNetworked();
         }
 
         private void SortDiceDescending()
@@ -820,6 +975,7 @@ namespace TmgBoard
             _confirmedPoolSize = snap.ConfirmedPoolSize;
             _threshold = snap.Threshold;
             RebuildForStage();
+            BroadcastStateIfNetworked();
         }
 
         /// <summary>주사위 칸 하나의 호버/좌클릭/우클릭을 알려준다 — Button은

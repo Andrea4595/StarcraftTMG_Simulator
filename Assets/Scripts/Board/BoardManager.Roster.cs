@@ -174,7 +174,7 @@ namespace TmgBoard
         /// 처리된다(변위 베이스 관통, 놓을 때 겹친 변위 베이스 밀어내기 포함).</summary>
         private void BeginRosterTokenPlacement(Vector2 clickPoint)
         {
-            BeginUndoTransaction();
+            BeginUndoTransaction($"{_pendingRosterTokenDef?.Team} {_pendingRosterTokenDef?.Name ?? "토큰"} 배치");
             ClearPlacementPreview();
 
             var def = _pendingRosterTokenDef;

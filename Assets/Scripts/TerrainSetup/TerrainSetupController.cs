@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using TMPro;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -50,6 +51,11 @@ namespace TmgBoard
 
         private readonly Dictionary<string, Button> _terrainButtons = new Dictionary<string, Button>();
 
+        // 멀티플레이어 중 네트워크로 배치된 지형만 등록됨(id는
+        // BoardNetworkSync가 발급) — 이동/회전/삭제 방송이 도착했을 때 어느
+        // GameObject인지 찾는 용도(마커의 _networkedMarkersById와 같은 패턴).
+        private readonly Dictionary<int, TerrainPiece> _networkedTerrainById = new Dictionary<int, TerrainPiece>();
+
         private string _placementModuleId = "";
         private TerrainPiece _draggingPiece;
         private Vector2 _dragPieceOffset;
@@ -89,6 +95,11 @@ namespace TmgBoard
 
             HandlePanInput();
 
+            if (_pendingRotationPiece != null && Time.time >= _pendingRotationDeadline)
+            {
+                FlushPendingRotationBroadcast();
+            }
+
             float scroll = Input.mouseScrollDelta.y;
             if (!Mathf.Approximately(scroll, 0f) && TryGetLocalMouse(out var wheelLocal))
             {
@@ -96,6 +107,7 @@ namespace TmgBoard
                 if (hovered != null)
                 {
                     hovered.RotateStep(scroll > 0f ? 1 : -1);
+                    RequestNetworkTerrainRotateIfNeeded(hovered);
                 }
                 else if (!IsPointerOverUi())
                 {
@@ -397,11 +409,29 @@ namespace TmgBoard
                 return;
             }
 
-            PlacePiece(_placementModuleId, SnapToGrid(local));
+            string moduleId = _placementModuleId;
+            Vector2 snapped = SnapToGrid(local);
             ClearTerrainPlacementMode();
+
+            // 멀티 연결 중이면 호스트에게 배치를 요청하고 끝 — 실제 생성은
+            // 방송(BoardNetworkSync.PlaceTerrainRpc)이 도착했을 때
+            // SpawnLocalTerrainVisual이 처리한다(호스트 자신도 이 경로를
+            // 탄다, 마커 배치와 완전히 같은 패턴).
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[TerrainSetupController] BoardNetworkSync.Instance가 없음 — 지형 배치 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestPlaceTerrainServerRpc(moduleId, snapped);
+                return;
+            }
+
+            PlacePiece(moduleId, snapped);
         }
 
-        private TerrainPiece PlacePiece(string moduleId, Vector2 localPoint)
+        private TerrainPiece PlacePiece(string moduleId, Vector2 localPoint, int networkId = -1)
         {
             var module = TerrainCatalog.Get(moduleId);
             if (module == null)
@@ -416,9 +446,116 @@ namespace TmgBoard
             piece.RectTransform.anchorMax = Vector2.zero;
             piece.Setup(module);
             piece.Center = localPoint;
+            piece.NetworkTerrainId = networkId;
+            if (networkId >= 0)
+            {
+                _networkedTerrainById[networkId] = piece;
+            }
             piece.DragRequested += OnPieceDragRequested;
             piece.DeleteRequested += OnPieceDeleteRequested;
             return piece;
+        }
+
+        /// <summary>BoardNetworkSync.PlaceTerrainRpc가 방송을 받았을 때
+        /// 호출한다(배치를 요청한 쪽 자신도 포함 — 마커와 동일하게, 요청자가
+        /// 직접 만들지 않고 이 방송을 거쳐서 만든다).</summary>
+        internal void SpawnLocalTerrainVisual(string moduleId, Vector2 point, int id)
+        {
+            if (PlacePiece(moduleId, point, id) == null)
+            {
+                Debug.LogError($"[TerrainSetupController] 지형 모듈을 못 찾음: {moduleId}");
+            }
+        }
+
+        /// <summary>BoardNetworkSync.MoveTerrainRpc가 방송을 받았을 때
+        /// 호출한다(옮긴 쪽 자신도 포함 — 이미 그 자리에 있으므로 사실상
+        /// 아무 효과가 없다). 마커와 달리 부드러운 트윈 없이 즉시 반영한다 —
+        /// 지형은 자주 옮기지 않는 배치 단계 전용이라 스냅으로 충분하다.</summary>
+        internal void MoveLocalTerrainVisual(int id, Vector2 point)
+        {
+            if (!_networkedTerrainById.TryGetValue(id, out var piece))
+            {
+                Debug.LogError($"[TerrainSetupController] 이동시킬 지형을 못 찾음(id={id})");
+                return;
+            }
+            piece.Center = point;
+        }
+
+        /// <summary>BoardNetworkSync.RotateTerrainRpc가 방송을 받았을 때
+        /// 호출한다 — 상대 값(휠 한 칸)이 아니라 절대 각도를 그대로 반영해서
+        /// 메시지 유실에도 어긋나지 않는다.</summary>
+        internal void RotateLocalTerrainVisual(int id, float rotationDeg)
+        {
+            if (!_networkedTerrainById.TryGetValue(id, out var piece))
+            {
+                Debug.LogError($"[TerrainSetupController] 회전시킬 지형을 못 찾음(id={id})");
+                return;
+            }
+            piece.RotationDegrees = rotationDeg;
+        }
+
+        /// <summary>BoardNetworkSync.DeleteTerrainRpc가 방송을 받았을 때
+        /// 호출한다(삭제를 요청한 쪽도 포함 — 마커 삭제와 동일한 패턴).</summary>
+        internal void DeleteLocalTerrainVisual(int id)
+        {
+            if (!_networkedTerrainById.TryGetValue(id, out var piece))
+            {
+                Debug.LogError($"[TerrainSetupController] 삭제할 지형을 못 찾음(id={id})");
+                return;
+            }
+            _networkedTerrainById.Remove(id);
+            Destroy(piece.gameObject);
+        }
+
+        // 휠을 빠르게 연속으로 굴리면 매 틱마다 방송 왕복이 겹쳐서, 뒤늦게
+        // 도착한 예전 각도가 그 사이 더 진행된 로컬 회전을 덮어써 "드드득"
+        // 떨리는 것처럼 보였다(사용자 발견). 그래서 회전 자체는 매 틱 즉시
+        // 로컬 반영하되(반응성 유지), 방송은 마지막 조작 후 이 시간만큼
+        // 조용해야만 한 번 나간다 — 그 사이 새 휠 조작이 들어오면 마감시각을
+        // 다시 미룬다("연속된 조작이 끝나면 그때서야 공유", 사용자 지정).
+        private const float RotationBroadcastDebounceSeconds = 0.5f;
+        private TerrainPiece _pendingRotationPiece;
+        private float _pendingRotationDeadline = -1f;
+
+        /// <summary>휠로 회전시킨 지형이 네트워크로 배치된 것이면(멀티 연결
+        /// 중) 방송을 예약한다 — 회전 자체는 이미 로컬에서 즉시 반영된
+        /// 뒤이므로(반응성 우선, 마커 드래그와 같은 이유) 여기선 "언젠가
+        /// 상대에게 알리기"만 디바운스해서 미룬다.</summary>
+        private void RequestNetworkTerrainRotateIfNeeded(TerrainPiece piece)
+        {
+            if (piece.NetworkTerrainId < 0 || NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
+            {
+                return;
+            }
+            // 조작 중이던 조각이 바뀌면(다른 조각을 돌리기 시작하면) 이전
+            // 조각 걸 무기한 미루지 않고 지금 바로 흘려보낸다.
+            if (_pendingRotationPiece != null && _pendingRotationPiece != piece)
+            {
+                FlushPendingRotationBroadcast();
+            }
+            _pendingRotationPiece = piece;
+            _pendingRotationDeadline = Time.time + RotationBroadcastDebounceSeconds;
+        }
+
+        /// <summary>예약된 회전 방송이 있으면 지금 바로 내보낸다 — 디바운스
+        /// 마감시각이 됐을 때(Update()) 또는 다른 조각으로 조작이 옮겨갈
+        /// 때, 그리고 "게임 시작"으로 이 화면을 떠나기 직전(마지막 회전이
+        /// 아직 대기 중일 때 놓치지 않도록) 호출한다.</summary>
+        private void FlushPendingRotationBroadcast()
+        {
+            var piece = _pendingRotationPiece;
+            _pendingRotationPiece = null;
+            _pendingRotationDeadline = -1f;
+            if (piece == null) // 대기 중 우클릭 삭제 등으로 이미 없어졌을 수 있다.
+            {
+                return;
+            }
+            if (BoardNetworkSync.Instance == null)
+            {
+                Debug.LogError("[TerrainSetupController] BoardNetworkSync.Instance가 없음 — 지형 회전 요청을 못 보냄");
+                return;
+            }
+            BoardNetworkSync.Instance.RequestRotateTerrainServerRpc(piece.NetworkTerrainId, piece.RotationDegrees);
         }
 
         private void HandleDragInput()
@@ -429,7 +566,22 @@ namespace TmgBoard
             }
             if (Input.GetMouseButtonUp(0))
             {
+                var piece = _draggingPiece;
                 _draggingPiece = null;
+                // 드래그 자체는 반응성 때문에 항상 로컬 실시간 진행 —
+                // 여기선 드래그를 끝낸 최종 위치만 상대에게 알린다(마커
+                // 드래그-종료 방송과 같은 이유).
+                if (piece.NetworkTerrainId >= 0 && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+                {
+                    if (BoardNetworkSync.Instance == null)
+                    {
+                        Debug.LogError("[TerrainSetupController] BoardNetworkSync.Instance가 없음 — 지형 이동 요청을 못 보냄");
+                    }
+                    else
+                    {
+                        BoardNetworkSync.Instance.RequestMoveTerrainServerRpc(piece.NetworkTerrainId, piece.Center);
+                    }
+                }
             }
         }
 
@@ -443,6 +595,19 @@ namespace TmgBoard
 
         private void OnPieceDeleteRequested(TerrainPiece piece)
         {
+            // 멀티 연결 중이고 이 지형이 네트워크로 배치된 것이면 삭제
+            // 방송을 요청하고 끝 — 실제 삭제는 이 요청이 되돌아오는 방송
+            // (DeleteLocalTerrainVisual)을 거쳐서 일어난다(마커 삭제와 동일).
+            if (piece.NetworkTerrainId >= 0 && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[TerrainSetupController] BoardNetworkSync.Instance가 없음 — 지형 삭제 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestDeleteTerrainServerRpc(piece.NetworkTerrainId);
+                return;
+            }
             Destroy(piece.gameObject);
         }
 
@@ -525,6 +690,39 @@ namespace TmgBoard
         // ── 완료 ────────────────────────────────────────────────────
 
         private void OnStartGamePressed()
+        {
+            // 디바운스 중이던 회전이 있으면 지금 흘려보낸다 — 안 그러면 막
+            // 돌린 지형의 마지막 각도가 상대에게 영영 전달되지 않을 수 있다.
+            if (_pendingRotationPiece != null)
+            {
+                FlushPendingRotationBroadcast();
+            }
+
+            // 멀티 연결 중이면 양쪽 다 같은 순간에 GameBoard로 넘어가야
+            // 하므로 신호를 방송한다 — 지형은 이미 실시간 동기화돼 있으므로
+            // 스냅샷을 따로 보내지 않고, 방송을 받은 각자가 자기 화면의
+            // 지형으로 채운다(CompleteFromNetwork).
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[TerrainSetupController] BoardNetworkSync.Instance가 없음 — 게임 시작 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestStartGameServerRpc();
+                return;
+            }
+            FillMapDataAndComplete();
+        }
+
+        /// <summary>BoardNetworkSync.StartGameRpc가 방송을 받았을 때(누른
+        /// 쪽 자신도 포함) 호출한다.</summary>
+        internal void CompleteFromNetwork()
+        {
+            FillMapDataAndComplete();
+        }
+
+        private void FillMapDataAndComplete()
         {
             MapData.TerrainPieces.Clear();
             for (int i = 0; i < _terrainLayer.childCount; i++)

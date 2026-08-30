@@ -156,21 +156,30 @@ namespace TmgBoard
             return string.IsNullOrEmpty(value) ? "(내용 없음)" : value;
         }
 
-        /// <summary>MissionSettingsData를 그대로 읽어 채운다 — 이 다이얼로그는
-        /// 자체 상태가 없고 매번 Open() 시점의 static 데이터를 반영만 한다.</summary>
+        /// <summary>MissionSettingsData(현재 확정된 미션)를 그대로 읽어
+        /// 채운다 — 게임 화면의 "미션" 버튼이 쓰는 경로.</summary>
         public void Open()
         {
-            _titleLabel.text = string.IsNullOrEmpty(MissionSettingsData.MissionName)
-                    ? "미션 정보"
-                    : MissionSettingsData.MissionName;
+            Open(MissionSettingsData.MissionName, MissionSettingsData.MissionParameters, MissionSettingsData.ScoringConditions,
+                    MissionSettingsData.AdditionalConditions, MissionSettingsData.BaseSupply, MissionSettingsData.SupplyPerRound,
+                    MissionSettingsData.RoundLength, MissionSettingsData.EngagementScale);
+        }
+
+        /// <summary>임의의 미션 데이터를 직접 넣어 연다(2026-08-31 추가) —
+        /// CardDraft 화면에서 아직 확정되지 않은(=MissionSettingsData에
+        /// 반영되기 전인) 후보 미션 카드의 정보를 미리 보여주는 용도.</summary>
+        public void Open(string missionName, string missionParameters, string scoringConditions, string additionalConditions,
+                int baseSupply, int supplyPerRound, int roundLength, string engagementScale)
+        {
+            _titleLabel.text = string.IsNullOrEmpty(missionName) ? "미션 정보" : missionName;
             _roundStatsLabel.text =
-                    $"라운드 길이: {MissionSettingsData.RoundLength}  -  " +
-                    $"기본 서플라이: {MissionSettingsData.BaseSupply}  -  " +
-                    $"라운드 당 서플라이: {MissionSettingsData.SupplyPerRound}";
-            _missionParametersLabel.text = OrEmpty(MissionSettingsData.MissionParameters);
-            _scoringConditionsLabel.text = OrEmpty(MissionSettingsData.ScoringConditions);
-            _additionalConditionsLabel.text = OrEmpty(MissionSettingsData.AdditionalConditions);
-            _engagementLabel.text = MissionSettingsData.EngagementScale;
+                    $"라운드 길이: {roundLength}  -  " +
+                    $"기본 서플라이: {baseSupply}  -  " +
+                    $"라운드 당 서플라이: {supplyPerRound}";
+            _missionParametersLabel.text = OrEmpty(missionParameters);
+            _scoringConditionsLabel.text = OrEmpty(scoringConditions);
+            _additionalConditionsLabel.text = OrEmpty(additionalConditions);
+            _engagementLabel.text = engagementScale;
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(_scrollContent);
             LayoutRebuilder.ForceRebuildLayoutImmediate(_panelRect);

@@ -33,6 +33,14 @@ namespace TmgBoard
         public const string MapAuthoringSceneName = "MapAuthoring";
         public const string MissionAuthoringSceneName = "MissionAuthoring";
         public const string SelectionSceneName = "Selection";
+        // 멀티플레이어 전용 미션/배치 드래프트 흐름(2026-08-31 신설) — Entry의
+        // "게임 시작"을 눌렀을 때 NetworkManager가 연결(호스트/클라이언트)
+        // 중이면 Selection 대신 이 둘을 거친다: CardPrep(각자 화면에서 배치
+        // 프리셋 2장+미션 프리셋 2장을 고름) → CardDraft(양쪽 8장을 모아
+        // 보여주고 롤오프/자유 밴·픽) → TerrainSetup(이후는 솔로와 합류,
+        // 다만 지형 배치가 실시간으로 동기화된다는 점만 다르다).
+        public const string CardPrepSceneName = "CardPrep";
+        public const string CardDraftSceneName = "CardDraft";
         public const string TerrainSetupSceneName = "TerrainSetup";
         public const string LoadGameSceneName = "LoadGame";
         public const string GameBoardSceneName = "GameBoard";

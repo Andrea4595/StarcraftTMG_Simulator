@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -24,6 +25,10 @@ namespace TmgBoard
         // 아니라 각자 로컬로 만들어지므로, 삭제할 때 "어느 마커인지"
         // 지목하려면 배치 시점에 호스트가 발급한 id가 있어야 한다.
         private int _nextMarkerId;
+
+        // 지형 조각도 마커와 같은 이유로 NetworkObject가 아니라 로컬 생성 —
+        // 배치 시 호스트가 발급하는 id로 이동/회전/삭제를 지목한다.
+        private int _nextTerrainId;
 
         // 큰 텍스트(로스터 JSON, 유닛 JSON)를 통째로 한 RPC 파라미터에
         // 실으면, 그 RPC를 "보내는" 시점(클라이언트→서버 호출 그 자체)에
@@ -281,6 +286,651 @@ namespace TmgBoard
                 return;
             }
             board.ReceivePendingUnitsChunk(transferId, chunkIndex, totalChunks, chunk);
+        }
+
+        // ── 범위 표시 동기화(2026-08-31 신설) ─────────────────────────────
+        // _unitRanges는 Unit 자체가 아니라 BoardManager 쪽 보조 상태라
+        // BuildUnitTree(데미지/복제/제거/메모가 재사용하는 전체-유닛 트리)에
+        // 안 실린다 — 그래서 유닛의 NetworkUnitId로 대상을 지목하는 전용
+        // 방송이 필요하다(마커/지형과 같은 "id 발급 없이 이미 있는 id로
+        // 지목" 패턴 — 유닛은 이미 NetworkUnitId를 갖고 있으므로 새로 id를
+        // 발급할 필요가 없다).
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestAddRangeServerRpc(int networkUnitId, float inch, bool alwaysShow)
+        {
+            AddRangeRpc(networkUnitId, inch, alwaysShow);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void AddRangeRpc(int networkUnitId, float inch, bool alwaysShow)
+        {
+            var board = Object.FindFirstObjectByType<BoardManager>();
+            if (board == null)
+            {
+                Debug.LogError("[BoardNetworkSync] BoardManager를 못 찾음 — 범위를 못 추가함");
+                return;
+            }
+            board.ApplyAddRangeById(networkUnitId, inch, alwaysShow);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestDeleteRangeServerRpc(int networkUnitId, int index)
+        {
+            DeleteRangeRpc(networkUnitId, index);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void DeleteRangeRpc(int networkUnitId, int index)
+        {
+            var board = Object.FindFirstObjectByType<BoardManager>();
+            if (board == null)
+            {
+                Debug.LogError("[BoardNetworkSync] BoardManager를 못 찾음 — 범위를 못 지움");
+                return;
+            }
+            board.ApplyDeleteRangeById(networkUnitId, index);
+        }
+
+        // ── 미션 목표 마커(점령 링 색) 동기화(2026-08-31 신설) ────────────
+        // 목표 번호(1~5)가 이미 양쪽에 동일하게 있으므로(배치 프리셋 자체가
+        // 드래프트로 동기화됨) 마커/유닛과 달리 새 id 발급이 필요 없다 —
+        // 번호로 바로 지목한다. 절대 상태값을 방송한다(휠 회전과 같은
+        // 이유 — 메시지 유실에도 안 어긋나게).
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestSetMissionObjectiveColorServerRpc(int number, string colorState)
+        {
+            SetMissionObjectiveColorRpc(number, colorState);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetMissionObjectiveColorRpc(int number, string colorState)
+        {
+            var board = Object.FindFirstObjectByType<BoardManager>();
+            if (board == null)
+            {
+                Debug.LogError("[BoardNetworkSync] BoardManager를 못 찾음 — 미션 마커 색을 못 반영함");
+                return;
+            }
+            board.ApplyMissionObjectiveColorByNumber(number, colorState);
+        }
+
+        // ── 카드 드래프트(CardPrep/CardDraft, 2026-08-31 신설) ─────────────
+        // 미션/배치 프리셋 원본 텍스트는 상대 컴퓨터에 그 파일이 없을 수
+        // 있으므로(로스터/유닛과 같은 이유) 청크로 쪼개 원문 그대로 보낸다.
+
+        private class TextChunkBuffer
+        {
+            public string[] Parts;
+            public int ReceivedCount;
+        }
+        private readonly Dictionary<int, TextChunkBuffer> _cardPrepChunkBuffers = new();
+
+        /// <summary>CardPrep에서 "준비 완료"를 누르면 부른다 — wrapperJson은
+        /// CardPrepController가 MiniJson.Write로 만든, 배치 2장+미션 2장의
+        /// 이름+원본 텍스트를 담은 객체. team은 보낸 쪽 자신의 팀(로스터
+        /// 청크 전송과 같은 이유로 매 청크마다 같이 실어 보낸다) — 이
+        /// 방송은 보낸 쪽 자신에게도 루프백되므로, 받는 쪽이 "이게 내가
+        /// 보낸 것의 메아리인지 진짜 상대 데이터인지" 구분하는 데 필요하다
+        /// (실제로 이 구분이 없어서 클라이언트 화면에 상대 카드 자리가
+        /// 자기 카드로 덮어써지는 버그가 있었다).</summary>
+        public void RequestBroadcastCardPrep(string team, string wrapperJson)
+        {
+            int transferId = System.Guid.NewGuid().GetHashCode();
+            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(wrapperJson.Length / (float)TextChunkSize));
+            for (int i = 0; i < totalChunks; i++)
+            {
+                int start = i * TextChunkSize;
+                int length = Mathf.Min(TextChunkSize, wrapperJson.Length - start);
+                string chunk = wrapperJson.Substring(start, length);
+                RequestBroadcastCardPrepChunkServerRpc(transferId, team, i, totalChunks, chunk);
+            }
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        private void RequestBroadcastCardPrepChunkServerRpc(int transferId, string team, int chunkIndex, int totalChunks, string chunk)
+        {
+            BroadcastCardPrepChunkRpc(transferId, team, chunkIndex, totalChunks, chunk);
+        }
+
+        /// <summary>청크가 다 모이면 DraftState.ApplyRemoteCardPrepJson으로
+        /// 곧장 반영한다(씬과 무관하게 항상 — DraftState는 static이라 CardPrep/
+        /// CardDraft 어느 화면에 있든 상관없다. 내가 보낸 방송의 루프백이면
+        /// ApplyRemoteCardPrepJson 자신이 team을 보고 무시한다). CardDraft
+        /// 화면이 지금 떠있으면(상대가 먼저 끝냈고 나는 이미 카드 준비를
+        /// 마치고 넘어와 있는 경우) 그 화면의 자리표시자 카드를 실제 내용으로
+        /// 다시 그리라고 알려준다 — 화면이 없으면(아직 카드 준비 중이면)
+        /// 다음에 그 화면이 지어질 때 DraftState.Pool을 읽는 것만으로 이미
+        /// 반영돼 있다.</summary>
+        [Rpc(SendTo.ClientsAndHost)]
+        private void BroadcastCardPrepChunkRpc(int transferId, string team, int chunkIndex, int totalChunks, string chunk)
+        {
+            if (!_cardPrepChunkBuffers.TryGetValue(transferId, out var buf))
+            {
+                buf = new TextChunkBuffer { Parts = new string[totalChunks] };
+                _cardPrepChunkBuffers[transferId] = buf;
+            }
+            if (buf.Parts[chunkIndex] == null)
+            {
+                buf.ReceivedCount++;
+            }
+            buf.Parts[chunkIndex] = chunk;
+            if (buf.ReceivedCount < totalChunks)
+            {
+                return;
+            }
+            _cardPrepChunkBuffers.Remove(transferId);
+            string fullJson = string.Concat(buf.Parts);
+
+            if (!DraftState.ApplyRemoteCardPrepJson(team, fullJson))
+            {
+                Debug.LogError("[BoardNetworkSync] 상대 카드 데이터 파싱 실패");
+                return;
+            }
+            Object.FindFirstObjectByType<CardDraftController>()?.RefreshRemoteCards();
+        }
+
+        /// <summary>CardDraft에서 카드를 좌클릭(선택)했을 때 부른다 —
+        /// cardId가 이미 선택돼 있었으면 해제(빈 문자열)로 보낸다.</summary>
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestSetDraftSelectionServerRpc(string category, string cardId)
+        {
+            SetDraftSelectionRpc(category, cardId);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetDraftSelectionRpc(string category, string cardId)
+        {
+            var controller = Object.FindFirstObjectByType<CardDraftController>();
+            if (controller == null)
+            {
+                Debug.LogError("[BoardNetworkSync] CardDraftController를 못 찾음 — 카드 선택을 못 반영함");
+                return;
+            }
+            controller.ApplySetSelection(category, cardId);
+        }
+
+        /// <summary>CardDraft에서 카드를 우클릭(밴 토글)했을 때 부른다.</summary>
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestToggleDraftBanServerRpc(string cardId)
+        {
+            ToggleDraftBanRpc(cardId);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void ToggleDraftBanRpc(string cardId)
+        {
+            var controller = Object.FindFirstObjectByType<CardDraftController>();
+            if (controller == null)
+            {
+                Debug.LogError("[BoardNetworkSync] CardDraftController를 못 찾음 — 밴을 못 반영함");
+                return;
+            }
+            controller.ApplyToggleBan(cardId);
+        }
+
+        /// <summary>CardDraft에서 누구든 "다음"을 누르면 부른다 — 둘 다 같이
+        /// TerrainSetup으로 넘어가야 하므로(사용자 지정), 누른 쪽도 직접
+        /// 처리하지 않고 이 방송이 되돌아오는 걸 거친다.</summary>
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestProceedToTerrainServerRpc()
+        {
+            ProceedToTerrainRpc();
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void ProceedToTerrainRpc()
+        {
+            var controller = Object.FindFirstObjectByType<CardDraftController>();
+            if (controller == null)
+            {
+                Debug.LogError("[BoardNetworkSync] CardDraftController를 못 찾음 — 다음 단계로 못 넘어감");
+                return;
+            }
+            controller.ProceedToTerrain();
+        }
+
+        // ── 롤오프 동기화(2026-08-31 신설) ─────────────────────────────────
+        // RolloffDialog는 원래 완전히 로컬(각자 클릭한 결과만 자기 화면에
+        // 보임)이었다 — 멀티에서 재사용하려면 눈이 양쪽에 똑같이 보여야
+        // 한다. 서버가 난수를 다시 굴리는 게 아니라, 클릭한 쪽이 이미 굴린
+        // 값을 그대로 전달만 한다(이 프로젝트의 "매뉴얼 시뮬레이터" 철학 —
+        // 판정은 안 하고 결과 공유만).
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestRollDiceServerRpc(string team, int value)
+        {
+            SetDiceRpc(team, value);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetDiceRpc(string team, int value)
+        {
+            // FindObjectsInactive.Include 필수 — RolloffDialog는 평소 닫혀
+            // 있으면(SetActive(false)) 기본 검색(활성 오브젝트만)에 안
+            // 잡힌다. 아래 SetRolloffOpenRpc/SetDiceDialogOpenRpc도 같은
+            // 이유로 이 오버로드를 쓴다(실제로 이것 때문에 "못 찾음" 에러가
+            // 매번 났었다 — 여기서만은 열려 있을 때 굴리는 게 보통이라
+            // 지금까지는 우연히 안 걸렸을 뿐).
+            var dialog = Object.FindFirstObjectByType<RolloffDialog>(FindObjectsInactive.Include);
+            if (dialog == null)
+            {
+                Debug.LogError("[BoardNetworkSync] RolloffDialog를 못 찾음 — 롤오프 결과를 못 반영함");
+                return;
+            }
+            dialog.ApplyRemoteRoll(team, value);
+        }
+
+        // ── 롤오프/다이스 시뮬레이터 창 열기·닫기 동기화(2026-08-31 추가) ──
+        // 굴린 눈 값 동기화(위)와는 별개로, "창 자체"를 열고 닫는 것도 양쪽이
+        // 같이 보게 한다(사용자 지정 — 한쪽이 열면 둘 다 뜨고, 한쪽이 닫으면
+        // 둘 다 닫힘). 두 창 다 이미 열기/닫기 로직이 있으므로, RPC는 그
+        // 진입점(RolloffDialog/DiceRollDialog의 Open/Close)이 요청만 보내고
+        // 실제 표시 전환은 ApplyRemoteSetOpen을 거치는 같은 패턴.
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestSetRolloffOpenServerRpc(bool open)
+        {
+            SetRolloffOpenRpc(open);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetRolloffOpenRpc(bool open)
+        {
+            // 닫혀 있을 때 여는 방송이라 반드시 Include — 위 SetDiceRpc 주석 참고.
+            var dialog = Object.FindFirstObjectByType<RolloffDialog>(FindObjectsInactive.Include);
+            if (dialog == null)
+            {
+                Debug.LogError("[BoardNetworkSync] RolloffDialog를 못 찾음 — 창 상태를 못 반영함");
+                return;
+            }
+            dialog.ApplyRemoteSetOpen(open);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestSetDiceDialogOpenServerRpc(bool open)
+        {
+            SetDiceDialogOpenRpc(open);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetDiceDialogOpenRpc(bool open)
+        {
+            // 닫혀 있을 때 여는 방송이라 반드시 Include — 위 SetDiceRpc 주석 참고.
+            var dialog = Object.FindFirstObjectByType<DiceRollDialog>(FindObjectsInactive.Include);
+            if (dialog == null)
+            {
+                Debug.LogError("[BoardNetworkSync] DiceRollDialog를 못 찾음 — 창 상태를 못 반영함");
+                return;
+            }
+            dialog.ApplyRemoteSetOpen(open);
+        }
+
+        // ── 다이스 시뮬레이터 굴림 진행 전체 동기화(2026-08-31 추가) ────────
+        // 열기/닫기만이 아니라 어택 풀/히트/아머/회피 각 단계와 되돌리기까지
+        // 전부 공유한다(사용자 지정) — 상태 전체(주사위 배열 + 정수/불리언
+        // 몇 개)가 512자를 넘을 수 있어 청크로 쪼갠다(로스터/유닛/카드 준비와
+        // 같은 이유).
+
+        public void RequestBroadcastDiceState(string stateJson)
+        {
+            int transferId = System.Guid.NewGuid().GetHashCode();
+            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(stateJson.Length / (float)TextChunkSize));
+            for (int i = 0; i < totalChunks; i++)
+            {
+                int start = i * TextChunkSize;
+                int length = Mathf.Min(TextChunkSize, stateJson.Length - start);
+                string chunk = stateJson.Substring(start, length);
+                RequestBroadcastDiceStateChunkServerRpc(transferId, i, totalChunks, chunk);
+            }
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        private void RequestBroadcastDiceStateChunkServerRpc(int transferId, int chunkIndex, int totalChunks, string chunk)
+        {
+            BroadcastDiceStateChunkRpc(transferId, chunkIndex, totalChunks, chunk);
+        }
+
+        private readonly Dictionary<int, TextChunkBuffer> _diceStateChunkBuffers = new();
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void BroadcastDiceStateChunkRpc(int transferId, int chunkIndex, int totalChunks, string chunk)
+        {
+            if (!_diceStateChunkBuffers.TryGetValue(transferId, out var buf))
+            {
+                buf = new TextChunkBuffer { Parts = new string[totalChunks] };
+                _diceStateChunkBuffers[transferId] = buf;
+            }
+            if (buf.Parts[chunkIndex] == null)
+            {
+                buf.ReceivedCount++;
+            }
+            buf.Parts[chunkIndex] = chunk;
+            if (buf.ReceivedCount < totalChunks)
+            {
+                return;
+            }
+            _diceStateChunkBuffers.Remove(transferId);
+            string fullJson = string.Concat(buf.Parts);
+
+            // 닫혀 있을 수도 있으므로(방송이 열기 방송보다 먼저 처리되는
+            // 극단적 순서 등) Include — 위 SetDiceRpc 주석 참고.
+            var dialog = Object.FindFirstObjectByType<DiceRollDialog>(FindObjectsInactive.Include);
+            if (dialog == null)
+            {
+                Debug.LogError("[BoardNetworkSync] DiceRollDialog를 못 찾음 — 굴림 상태를 못 반영함");
+                return;
+            }
+            dialog.ApplyRemoteState(fullJson);
+        }
+
+        // ── 게임판 상태 동기화(라운드/페이즈/VP/팀 색, 2026-08-31 신설) ─────
+        // 전부 ScoreboardPanel/PhaseBar/BoardManager가 직접 부른다 — 값 자체는
+        // 작아서 청크가 필요 없다. 라운드/페이즈는 절대값을 방송한다(휠 회전
+        // 절대각과 같은 이유 — 메시지 유실에도 어긋나지 않게).
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestSetRoundServerRpc(int roundNumber)
+        {
+            SetRoundRpc(roundNumber);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetRoundRpc(int roundNumber)
+        {
+            var scoreboard = Object.FindFirstObjectByType<ScoreboardPanel>();
+            if (scoreboard == null)
+            {
+                Debug.LogError("[BoardNetworkSync] ScoreboardPanel을 못 찾음 — 라운드를 못 반영함");
+                return;
+            }
+            scoreboard.ApplyRemoteRoundNumber(roundNumber);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestSetPhaseServerRpc(int phaseIndex)
+        {
+            SetPhaseRpc(phaseIndex);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetPhaseRpc(int phaseIndex)
+        {
+            var phaseBar = Object.FindFirstObjectByType<PhaseBar>();
+            if (phaseBar == null)
+            {
+                Debug.LogError("[BoardNetworkSync] PhaseBar를 못 찾음 — 페이즈를 못 반영함");
+                return;
+            }
+            phaseBar.ApplyRemotePhaseIndex(phaseIndex);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestSetMissionVpServerRpc(string team, int value)
+        {
+            SetMissionVpRpc(team, value);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetMissionVpRpc(string team, int value)
+        {
+            var scoreboard = Object.FindFirstObjectByType<ScoreboardPanel>();
+            if (scoreboard == null)
+            {
+                Debug.LogError("[BoardNetworkSync] ScoreboardPanel을 못 찾음 — 미션VP를 못 반영함");
+                return;
+            }
+            scoreboard.ApplyRemoteMissionVp(team, value);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestSetKillVpServerRpc(string team, int value)
+        {
+            SetKillVpRpc(team, value);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetKillVpRpc(string team, int value)
+        {
+            var scoreboard = Object.FindFirstObjectByType<ScoreboardPanel>();
+            if (scoreboard == null)
+            {
+                Debug.LogError("[BoardNetworkSync] ScoreboardPanel을 못 찾음 — 파괴VP를 못 반영함");
+                return;
+            }
+            scoreboard.ApplyRemoteKillVp(team, value);
+        }
+
+        /// <summary>스코어보드에서 플레이어 이름을 클릭해 색을 고르면 부른다
+        /// — 보드 전체(배치된 유닛/예비대/마커/미션 목표 마커) 소급 재도색은
+        /// BoardManager.ApplyTeamColorLocal이 맡는다(스코어보드 자신의 팀
+        /// 이름 라벨 색은 GameConstants.TeamColors를 매 프레임 그대로
+        /// 반영하므로 별도 처리가 필요 없다 — ScoreboardPanel.Update() 참고).</summary>
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestSetTeamColorServerRpc(string team, Color color)
+        {
+            SetTeamColorRpc(team, color);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetTeamColorRpc(string team, Color color)
+        {
+            var board = Object.FindFirstObjectByType<BoardManager>();
+            if (board == null)
+            {
+                Debug.LogError("[BoardNetworkSync] BoardManager를 못 찾음 — 팀 색을 못 반영함");
+                return;
+            }
+            board.ApplyTeamColorLocal(team, color);
+        }
+
+        // ── 지형 배치 동기화(TerrainSetup, 2026-08-31 신설) ────────────────
+        // 마커와 완전히 같은 패턴 — 지형 조각도 UI 계층 밑이라 NetworkObject로
+        // 스폰할 수 없다. 배치는 호스트가 id를 발급해 방송하고, 이동/회전/
+        // 삭제는 그 id로 지목한다.
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestPlaceTerrainServerRpc(string moduleId, Vector2 point)
+        {
+            int id = ++_nextTerrainId;
+            PlaceTerrainRpc(moduleId, point, id);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void PlaceTerrainRpc(string moduleId, Vector2 point, int id)
+        {
+            var controller = Object.FindFirstObjectByType<TerrainSetupController>();
+            if (controller == null)
+            {
+                Debug.LogError("[BoardNetworkSync] TerrainSetupController를 못 찾음 — 지형을 못 놓음");
+                return;
+            }
+            controller.SpawnLocalTerrainVisual(moduleId, point, id);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestMoveTerrainServerRpc(int id, Vector2 point)
+        {
+            MoveTerrainRpc(id, point);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void MoveTerrainRpc(int id, Vector2 point)
+        {
+            var controller = Object.FindFirstObjectByType<TerrainSetupController>();
+            if (controller == null)
+            {
+                Debug.LogError("[BoardNetworkSync] TerrainSetupController를 못 찾음 — 지형을 못 옮김");
+                return;
+            }
+            controller.MoveLocalTerrainVisual(id, point);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestRotateTerrainServerRpc(int id, float rotationDeg)
+        {
+            RotateTerrainRpc(id, rotationDeg);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void RotateTerrainRpc(int id, float rotationDeg)
+        {
+            var controller = Object.FindFirstObjectByType<TerrainSetupController>();
+            if (controller == null)
+            {
+                Debug.LogError("[BoardNetworkSync] TerrainSetupController를 못 찾음 — 지형을 못 돌림");
+                return;
+            }
+            controller.RotateLocalTerrainVisual(id, rotationDeg);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestDeleteTerrainServerRpc(int id)
+        {
+            DeleteTerrainRpc(id);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void DeleteTerrainRpc(int id)
+        {
+            var controller = Object.FindFirstObjectByType<TerrainSetupController>();
+            if (controller == null)
+            {
+                Debug.LogError("[BoardNetworkSync] TerrainSetupController를 못 찾음 — 지형을 못 지움");
+                return;
+            }
+            controller.DeleteLocalTerrainVisual(id);
+        }
+
+        /// <summary>TerrainSetup의 "게임 시작"을 누르면 부른다 — 양쪽 모두
+        /// 지형이 이미 실시간으로 동기화돼 있으므로 스냅샷을 따로 보내지
+        /// 않고, 각자 자기 화면의 지형으로 MapData.TerrainPieces를 채운 뒤
+        /// GameBoard로 넘어가라는 신호만 방송한다.</summary>
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestStartGameServerRpc()
+        {
+            StartGameRpc();
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void StartGameRpc()
+        {
+            var controller = Object.FindFirstObjectByType<TerrainSetupController>();
+            if (controller == null)
+            {
+                Debug.LogError("[BoardNetworkSync] TerrainSetupController를 못 찾음 — 게임 시작을 못 반영함");
+                return;
+            }
+            controller.CompleteFromNetwork();
+        }
+
+        // ── 되돌리기(undo/redo) 스택 동기화(2026-08-31 추가) ────────────────
+        // 처음엔 카스케이드가 끝난 뒤 보드 전체 상태를 통째로 다시 보내는
+        // 방식으로 짰는데, 그러면 "상대가 한 조작은 내 되돌리기 스택에
+        // 전혀 안 쌓인다"는 더 근본적인 문제가 그대로 남아있었다 — 양쪽이
+        // 번갈아 되돌리기/다시 실행을 하면 서로 상대의 스택에 없는 항목을
+        // 기준으로 판단해서, 상대가 그 사이 만들거나 지운 걸 도로 되살리거나
+        // 없애버리는 일이 생겼다(사용자 보고). 그래서 두 단계로 다시 짰다:
+        // (1) 커밋될 때마다(BoardManager.UndoRedo.cs의 CommitUndoTransaction)
+        // 그 항목(라벨+이전 스냅샷)을 상대에게도 보내 자기 스택에 똑같이
+        // 쌓게 한다(RequestBroadcastUndoPush) — 이제 두 스택 내용이 항상
+        // 같은 순서로 같아진다. (2) 카스케이드(여러 단계를 한 번에 취소/
+        // 복원)가 끝나면, 보드 상태가 아니라 "네 스택에서도 여기까지
+        // 진행해라"는 목표 인덱스만 보낸다(RequestBroadcastUndoCascade) —
+        // 상대는 이미 (1) 덕분에 같은 내용을 가진 자기 스택으로 같은
+        // 카스케이드를 그대로 재생해서 스스로 같은 보드 상태에 도달한다.
+        // 두 RPC 모두, 보낸 쪽은 이미 로컬에서 직접 처리했으므로 이 방송의
+        // 루프백은 자기 자신에게는 무시해야 한다 — CardPrep의 team
+        // 파라미터로 자기 메아리를 구분하는 것과 같은 방식으로, 보낸
+        // 클라이언트 id를 함께 실어 보낸다.
+
+        public void RequestBroadcastUndoPush(string label, string snapshotJson)
+        {
+            ulong senderId = NetworkManager.Singleton.LocalClientId;
+            int transferId = System.Guid.NewGuid().GetHashCode();
+            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(snapshotJson.Length / (float)TextChunkSize));
+            for (int i = 0; i < totalChunks; i++)
+            {
+                int start = i * TextChunkSize;
+                int length = Mathf.Min(TextChunkSize, snapshotJson.Length - start);
+                string chunk = snapshotJson.Substring(start, length);
+                RequestBroadcastUndoPushChunkServerRpc(transferId, senderId, label, i, totalChunks, chunk);
+            }
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        private void RequestBroadcastUndoPushChunkServerRpc(int transferId, ulong senderId, string label, int chunkIndex, int totalChunks, string chunk)
+        {
+            BroadcastUndoPushChunkRpc(transferId, senderId, label, chunkIndex, totalChunks, chunk);
+        }
+
+        private readonly Dictionary<int, TextChunkBuffer> _undoPushChunkBuffers = new();
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void BroadcastUndoPushChunkRpc(int transferId, ulong senderId, string label, int chunkIndex, int totalChunks, string chunk)
+        {
+            if (!_undoPushChunkBuffers.TryGetValue(transferId, out var buf))
+            {
+                buf = new TextChunkBuffer { Parts = new string[totalChunks] };
+                _undoPushChunkBuffers[transferId] = buf;
+            }
+            if (buf.Parts[chunkIndex] == null)
+            {
+                buf.ReceivedCount++;
+            }
+            buf.Parts[chunkIndex] = chunk;
+            if (buf.ReceivedCount < totalChunks)
+            {
+                return;
+            }
+            _undoPushChunkBuffers.Remove(transferId);
+
+            if (senderId == NetworkManager.Singleton.LocalClientId)
+            {
+                return; // 내가 커밋한 항목의 메아리 — 이미 로컬에서 직접 스택에 쌓았다.
+            }
+
+            string fullJson = string.Concat(buf.Parts);
+            var board = Object.FindFirstObjectByType<BoardManager>();
+            if (board == null)
+            {
+                Debug.LogError("[BoardNetworkSync] BoardManager를 못 찾음 — 되돌리기 기록을 못 반영함");
+                return;
+            }
+            board.ApplyRemoteUndoPush(label, fullJson);
+        }
+
+        /// <summary>카스케이드(값이 작아 청크가 필요 없다) — isRedo=false면
+        /// _undoStack을 targetIndex까지, true면 _redoStack을 targetIndex까지
+        /// 되감는다(BoardManager.CancelOperationsDownTo/RestoreOperationsDownTo와
+        /// 같은 의미).</summary>
+        public void RequestBroadcastUndoCascade(bool isRedo, int targetIndex)
+        {
+            ulong senderId = NetworkManager.Singleton.LocalClientId;
+            RequestBroadcastUndoCascadeServerRpc(senderId, isRedo, targetIndex);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        private void RequestBroadcastUndoCascadeServerRpc(ulong senderId, bool isRedo, int targetIndex)
+        {
+            BroadcastUndoCascadeRpc(senderId, isRedo, targetIndex);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void BroadcastUndoCascadeRpc(ulong senderId, bool isRedo, int targetIndex)
+        {
+            if (senderId == NetworkManager.Singleton.LocalClientId)
+            {
+                return; // 내가 수행한 카스케이드의 메아리 — 이미 로컬에서 직접 처리했다.
+            }
+            var board = Object.FindFirstObjectByType<BoardManager>();
+            if (board == null)
+            {
+                Debug.LogError("[BoardNetworkSync] BoardManager를 못 찾음 — 되돌리기 진행을 못 반영함");
+                return;
+            }
+            board.ApplyRemoteUndoCascade(isRedo, targetIndex);
         }
     }
 }

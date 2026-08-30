@@ -27,6 +27,37 @@ namespace TmgBoard
         }
         private readonly List<MarkerMoveTween> _markerMoveTweens = new();
 
+        /// <summary>되돌리기 조작 리스트에 보여줄 마커 종류 이름 — MarkerBarEntries에
+        /// 이미 있는 한글 이름을 그대로 재사용한다.</summary>
+        private static string GetMarkerKindLabel(string kind)
+        {
+            foreach (var entry in MarkerBarEntries)
+            {
+                if (entry.Kind == kind)
+                {
+                    return entry.Label;
+                }
+            }
+            return "마커";
+        }
+
+        /// <summary>구체 타입(ActivationMarker/CaptureMarker/IconMarker)만 보고
+        /// 종류 이름을 알아낸다 — MarkerBase 자체엔 종류 문자열이 없다.</summary>
+        private static string DescribeMarkerKind(MarkerBase marker)
+        {
+            switch (marker)
+            {
+                case ActivationMarker:
+                    return GetMarkerKindLabel("activation");
+                case CaptureMarker:
+                    return GetMarkerKindLabel("capture");
+                case IconMarker icon:
+                    return GetMarkerKindLabel(icon.Kind);
+                default:
+                    return "마커";
+            }
+        }
+
         /// <summary>화면 맨 아래를 가로지르는 바 — 마커 종류별 버튼은 중앙에
         /// 모아두고, 스크린샷 버튼은 우측 하단에 고정한다. 누르면
         /// StartMarkerPlacement()로 배치 모드에 들어간다. Godot판
@@ -88,6 +119,7 @@ namespace TmgBoard
             CreateFitButton(barRect);
             CreateDiceButton(barRect);
             CreateRolloffButton(barRect);
+            CreateUndoHistoryButton(barRect);
             CreateExitButton(barRect);
             CreateSaveButton(barRect);
         }
@@ -277,6 +309,34 @@ namespace TmgBoard
             });
         }
 
+        /// <summary>롤 오프 버튼 바로 왼쪽 — 되돌리기 모달(UndoHistoryDialog)을
+        /// 연다(2026-09-01 신설 — 예전 Ctrl+Z 단축키를 대체). 보드 상태와
+        /// 무관한 독립 창이라 여기선 그냥 여는 것만 한다.</summary>
+        private void CreateUndoHistoryButton(Transform parent)
+        {
+            var go = new GameObject("UndoHistoryButton", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(1f, 0.5f);
+            rect.anchorMax = new Vector2(1f, 0.5f);
+            rect.pivot = new Vector2(1f, 0.5f);
+            rect.anchoredPosition = new Vector2(-10f - 4f * (GameConstants.MarkerBarHeight - 8f) - 24f, 0f);
+            rect.sizeDelta = new Vector2(GameConstants.MarkerBarHeight - 8f, GameConstants.MarkerBarHeight - 8f);
+
+            var img = go.AddComponent<RawImage>();
+            img.texture = Resources.Load<Texture2D>("UI/UndoButton");
+
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() =>
+            {
+                if (undoHistoryDialog != null)
+                {
+                    undoHistoryDialog.Open(this);
+                }
+            });
+        }
+
         private void CreateMarkerBarButton(Transform parent, string kind, Texture icon)
         {
             var go = new GameObject($"MarkerBtn_{kind}", typeof(RectTransform));
@@ -413,20 +473,24 @@ namespace TmgBoard
             // 멀티플레이어 연결 중이면 호스트에게 배치를 요청하고 끝 —
             // 실제 마커 생성은 방송(PlaceMarkerRpc)이 도착했을 때
             // SpawnLocalMarkerVisual이 처리한다(호스트 자신도 이 경로를
-            // 탄다). 되돌리기(undo)는 아직 이 경로를 지원하지 않는다 —
-            // 다음 단계.
+            // 탄다). 되돌리기는 여기서 먼저 커밋해둔다 — CommitUndoTransaction이
+            // 상대에게도 같은 항목을 방송하므로(BoardManager.UndoRedo.cs),
+            // 마커가 실제로 화면에 나타나기 살짝 전에 스택에 먼저 올라가는
+            // 셈이지만 그 시차는 무시할 수준이다.
+            BeginUndoTransaction($"{GetMarkerKindLabel(kind)} 배치");
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 if (BoardNetworkSync.Instance == null)
                 {
                     Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 마커 배치 요청을 못 보냄");
+                    DiscardUndoTransaction();
                     return;
                 }
                 BoardNetworkSync.Instance.RequestPlaceMarkerServerRpc(kind, point);
+                CommitUndoTransaction();
                 return;
             }
 
-            BeginUndoTransaction();
             var marker = CreateMarkerObject(kind, markerLayer);
             marker.Center = ClampMarkerToMap(marker, point);
             WireMarkerEvents(marker, kind);
@@ -570,7 +634,7 @@ namespace TmgBoard
 
         private void OnMarkerDragRequested(MarkerBase piece)
         {
-            BeginUndoTransaction();
+            BeginUndoTransaction($"{DescribeMarkerKind(piece)} 이동");
             _draggingMarker = piece;
             if (TryGetLocalMouse(out var mouseLocal))
             {
@@ -654,8 +718,12 @@ namespace TmgBoard
             var marker = (ActivationMarker)piece;
             if (shiftHeld)
             {
-                if (TryRequestNetworkMarkerDelete(marker)) return;
-                BeginUndoTransaction();
+                BeginUndoTransaction($"{DescribeMarkerKind(marker)} 삭제");
+                if (TryRequestNetworkMarkerDelete(marker))
+                {
+                    CommitUndoTransaction();
+                    return;
+                }
                 Destroy(marker.gameObject);
                 CommitUndoTransaction();
                 return;
@@ -663,8 +731,12 @@ namespace TmgBoard
             // 우클릭은 이동 → 돌격 → 완료를 계속 순환한다.
             int idx = System.Array.IndexOf(ActivationMarker.StateSequence, marker.State);
             string nextState = ActivationMarker.StateSequence[(idx + 1) % ActivationMarker.StateSequence.Length];
-            if (TryRequestNetworkMarkerStateChange(marker, nextState)) return;
-            BeginUndoTransaction();
+            BeginUndoTransaction($"{DescribeMarkerKind(marker)} 상태 변경");
+            if (TryRequestNetworkMarkerStateChange(marker, nextState))
+            {
+                CommitUndoTransaction();
+                return;
+            }
             marker.SetState(nextState);
             CommitUndoTransaction();
         }
@@ -674,8 +746,12 @@ namespace TmgBoard
             var marker = (CaptureMarker)piece;
             if (shiftHeld)
             {
-                if (TryRequestNetworkMarkerDelete(marker)) return;
-                BeginUndoTransaction();
+                BeginUndoTransaction($"{DescribeMarkerKind(marker)} 삭제");
+                if (TryRequestNetworkMarkerDelete(marker))
+                {
+                    CommitUndoTransaction();
+                    return;
+                }
                 Destroy(marker.gameObject);
                 CommitUndoTransaction();
                 return;
@@ -685,8 +761,12 @@ namespace TmgBoard
             // 삭제는 별도 입력으로 뺐다.
             int idx = System.Array.IndexOf(CaptureMarker.ColorSequence, marker.ColorState);
             string nextState = CaptureMarker.ColorSequence[(idx + 1) % CaptureMarker.ColorSequence.Length];
-            if (TryRequestNetworkMarkerStateChange(marker, nextState)) return;
-            BeginUndoTransaction();
+            BeginUndoTransaction($"{DescribeMarkerKind(marker)} 색 변경");
+            if (TryRequestNetworkMarkerStateChange(marker, nextState))
+            {
+                CommitUndoTransaction();
+                return;
+            }
             marker.SetColorState(nextState);
             CommitUndoTransaction();
         }
@@ -694,8 +774,12 @@ namespace TmgBoard
         private void OnIconMarkerRightClicked(MarkerBase piece, bool shiftHeld)
         {
             // 순환 없이 우클릭 한 번으로 바로 삭제(shift 여부는 상관없다).
-            if (TryRequestNetworkMarkerDelete(piece)) return;
-            BeginUndoTransaction();
+            BeginUndoTransaction($"{DescribeMarkerKind(piece)} 삭제");
+            if (TryRequestNetworkMarkerDelete(piece))
+            {
+                CommitUndoTransaction();
+                return;
+            }
             Destroy(piece.gameObject);
             CommitUndoTransaction();
         }

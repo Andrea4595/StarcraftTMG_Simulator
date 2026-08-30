@@ -1,4 +1,5 @@
 using TMPro;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -147,7 +148,56 @@ namespace TmgBoard
             gameObject.SetActive(false);
         }
 
+        /// <summary>멀티 연결 중이면(2026-08-31 추가) 로컬에서 바로 열지
+        /// 않고 방송 요청만 한다 — 실제로 여는 건 그 요청이 되돌아오는
+        /// 방송(BoardNetworkSync.SetRolloffOpenRpc → ApplyRemoteSetOpen)을
+        /// 거쳐서, 나를 포함한 양쪽 모두에서 동시에 일어난다(사용자 지정 —
+        /// 한쪽이 열면 둘 다 뜨고, 한쪽이 닫으면 둘 다 닫힘).</summary>
         public void Open()
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[RolloffDialog] BoardNetworkSync.Instance가 없음 — 창 열기 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestSetRolloffOpenServerRpc(true);
+                return;
+            }
+            OpenLocal();
+        }
+
+        public void Close()
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[RolloffDialog] BoardNetworkSync.Instance가 없음 — 창 닫기 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestSetRolloffOpenServerRpc(false);
+                return;
+            }
+            CloseLocal();
+        }
+
+        /// <summary>BoardNetworkSync.SetRolloffOpenRpc가 방송을 받았을 때
+        /// 호출한다(요청한 쪽 자신도 포함, 롤 결과 방송과 같은 루프백).</summary>
+        public void ApplyRemoteSetOpen(bool open)
+        {
+            if (open)
+            {
+                OpenLocal();
+            }
+            else
+            {
+                CloseLocal();
+            }
+        }
+
+        private void OpenLocal()
         {
             _flashStartA = -1f;
             _flashStartB = -1f;
@@ -157,7 +207,7 @@ namespace TmgBoard
             transform.SetAsLastSibling();
         }
 
-        public void Close()
+        private void CloseLocal()
         {
             gameObject.SetActive(false);
         }
@@ -235,9 +285,39 @@ namespace TmgBoard
             face.rectTransform.localScale = Vector3.one;
         }
 
+        /// <summary>클릭한 사각형을 다시 굴린다 — 멀티 연결 중이면(2026-08-31
+        /// 추가) 로컬에서 바로 칠하지 않고 방금 굴린 값을 방송 요청만 한다.
+        /// 실제 반영은 그 요청이 되돌아오는 방송(BoardNetworkSync.SetDiceRpc
+        /// → ApplyRemoteRoll)을 거쳐서 일어난다 — 마커 배치와 같은 "방송 후
+        /// 로컬 반영" 패턴. 서버가 다시 굴리지 않고 클릭한 쪽이 굴린 값을
+        /// 그대로 전달만 하는 이유는 이 프로젝트의 "매뉴얼 시뮬레이터" 철학
+        /// (판정은 안 함, 결과 공유만) 그대로.</summary>
         private void RollSquare(RawImage face, string team)
         {
             int value = Random.Range(1, 7);
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[RolloffDialog] BoardNetworkSync.Instance가 없음 — 롤 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestRollDiceServerRpc(team, value);
+                return;
+            }
+            ApplyRoll(team, value);
+        }
+
+        /// <summary>BoardNetworkSync.SetDiceRpc가 방송을 받았을 때 호출한다
+        /// (굴린 쪽 자신도 포함, 마커/유닛 방송과 동일한 루프백).</summary>
+        public void ApplyRemoteRoll(string team, int value)
+        {
+            ApplyRoll(team, value);
+        }
+
+        private void ApplyRoll(string team, int value)
+        {
+            var face = team == "A" ? _faceA : _faceB;
             face.texture = _diceTextures[value - 1];
             face.color = Color.white; // 흰색으로 번쩍이는 시작점 — Update()의 UpdateFlash가 여기서부터 팀 색으로 가라앉힌다.
             if (team == "A")

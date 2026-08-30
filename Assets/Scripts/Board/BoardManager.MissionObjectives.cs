@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using Unity.Netcode;
 using UnityEngine;
 
 namespace TmgBoard
@@ -12,6 +15,12 @@ namespace TmgBoard
         // 것뿐(CaptureMarker와 같은 인터랙션, 삭제는 절대 없음) — 그래서
         // raycastTarget은 켜두되(우클릭을 받으려면 필요) AllowDrag=false로
         // 드래그만 막는다.
+
+        // 번호(1~5)는 MapData.MissionObjectives에서 온 것이라 양쪽 클라이언트가
+        // 이미 동일하게 갖고 있다(배치 프리셋 자체가 드래프트로 동기화됨) —
+        // 그래서 마커/유닛과 달리 새로 네트워크 id를 발급할 필요 없이 번호
+        // 그대로 방송 대상 지목에 쓸 수 있다.
+        private readonly Dictionary<int, MissionObjectivePiece> _missionObjectivePiecesByNumber = new Dictionary<int, MissionObjectivePiece>();
 
         private void BuildMissionObjectiveVisuals()
         {
@@ -37,7 +46,42 @@ namespace TmgBoard
                 piece.Center = CornerToCenterMm(objective.Position);
                 piece.AllowDrag = false;
                 piece.RightClickCyclesColor = true;
+                piece.ColorCycleRequested += OnMissionObjectiveColorCycleRequested;
+                _missionObjectivePiecesByNumber[objective.Number] = piece;
             }
+        }
+
+        /// <summary>우클릭 시(MissionObjectivePiece.ColorCycleRequested) 부른다
+        /// — 멀티 연결 중이면 다음 상태를 절대값으로 미리 계산해 방송 요청만
+        /// 하고(휠 회전 절대각과 같은 이유 — 메시지 유실에도 안 어긋나게),
+        /// 실제 반영은 그 방송이 되돌아오는 걸 거친다.</summary>
+        private void OnMissionObjectiveColorCycleRequested(MissionObjectivePiece piece)
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 미션 마커 색 변경 요청을 못 보냄");
+                    return;
+                }
+                int idx = Array.IndexOf(MissionObjectivePiece.RingColorSequence, piece.RingColorState);
+                string nextState = MissionObjectivePiece.RingColorSequence[(idx + 1) % MissionObjectivePiece.RingColorSequence.Length];
+                BoardNetworkSync.Instance.RequestSetMissionObjectiveColorServerRpc(piece.Number, nextState);
+                return;
+            }
+            piece.CycleRingColor();
+        }
+
+        /// <summary>BoardNetworkSync.SetMissionObjectiveColorRpc가 방송을
+        /// 받았을 때(요청한 쪽 자신도 포함) 호출한다.</summary>
+        internal void ApplyMissionObjectiveColorByNumber(int number, string colorState)
+        {
+            if (!_missionObjectivePiecesByNumber.TryGetValue(number, out var piece))
+            {
+                Debug.LogError($"[BoardManager] 색을 바꿀 미션 마커를 못 찾음(번호={number})");
+                return;
+            }
+            piece.SetRingColorState(colorState);
         }
     }
 }

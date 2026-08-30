@@ -8,6 +8,7 @@ using Unity.Services.Core;
 using Unity.Services.Relay;
 using Unity.Services.Relay.Models;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 namespace TmgBoard
@@ -52,9 +53,19 @@ namespace TmgBoard
             }
         }
 
+        /// <summary>호스트/클라이언트 양쪽 다에서 발생 — 호스트는 상대가
+        /// 들어올 때, 클라이언트는 자기 자신이 접속에 성공할 때. 총 인원이
+        /// 2명이 되는 순간(사용자 지정 — "호스트에게 연결되는 즉시") 곧바로
+        /// 카드 준비 화면으로 넘어간다. 이 컴포넌트는 Entry 화면에서만
+        /// 살아있으므로(BuildEntry에서만 생성) 게임 도중 재접속 등에는
+        /// 영향이 없다.</summary>
         private void OnClientConnected(ulong clientId)
         {
             SetStatus($"연결됨 (clientId={clientId}, 총 {NetworkManager.Singleton.ConnectedClients.Count}명)");
+            if (NetworkManager.Singleton.ConnectedClients.Count >= 2)
+            {
+                SceneManager.LoadScene(GameConstants.CardPrepSceneName);
+            }
         }
 
         private void OnClientDisconnected(ulong clientId)
