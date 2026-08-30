@@ -615,7 +615,9 @@ namespace TmgBoard
             {
                 headerBase += " [업그레이드]";
             }
-            string costSuffix = showCost && ability.Kind == "rule" ? $"({ability.Cost})" : null;
+            // 패시브는 애초에 "사용"이라는 개념이 없어 코스트가 의미 없다
+            // (사용자 지정) — 로스터 JSON에 cost 값이 들어있어도 표시하지 않는다.
+            string costSuffix = showCost && ability.Kind == "rule" && ability.Type != "Passive" ? $"({ability.Cost})" : null;
             Color color = AbilityTypeColor(ability);
 
             var headerRowGo = BuildAbilityHeaderRow(abilityGo.transform, ability.Phase, color, headerBase, costSuffix, out _, out var chevronLabel);

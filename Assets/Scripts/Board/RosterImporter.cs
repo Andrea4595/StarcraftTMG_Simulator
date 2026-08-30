@@ -14,10 +14,12 @@ namespace TmgBoard
     /// 상세 패널에 쓰인다. "squad_tier_index"(로스터 작성 시 고른 단계)는
     /// 게임 로직에는 안 쓴다(인게임 실제 서플라이는 항상 남은 모델 수로
     /// 그때그때 다시 찾는다) — 상세 패널 표시용으로만 읽는다.
-    /// "tactical_cards"는 name/count/abilities를 읽는다(gas_cost/resource/
+    /// "tactical_cards"는 name/count/abilities/resource를 읽는다(gas_cost/
     /// slots/is_faction_card는 여전히 무시) — 예비대 패널의 택티컬 카드
     /// 목록에 쓰이고, abilities는 유닛 능력과 같은 ParseAbilities로 읽어서
-    /// 카드 버튼 아래에 펼치기 가능한 능력 목록으로 보여준다.
+    /// 카드 버튼 아래에 펼치기 가능한 능력 목록으로 보여준다. "resource"는
+    /// 최상위 "resource_label"의 abbr(테란 CP/저그 BM/프로토스 EN)과 함께
+    /// 카드가 소모하는 종족 포인트 제공량으로 카드 버튼에 표시된다.
     /// "supply_override"(int|null, 메딕류 능력의 서플라이 "대입"값 — 단계표에
     /// 더하는 게 아니라 통째로 대체)와 "specialists"({"en","ko"} 이름 객체
     /// 리스트)도 읽는다 — 어느 모델이 어느 전문가인지는 여기서 정하지 않고
@@ -25,8 +27,7 @@ namespace TmgBoard
     /// 그 밖의 나머지 필드(unit_type/stat의 shld·eva·arm·hp·siz/tags/
     /// abilities 전체/specialists의 이중언어 원본)는 게임 로직에는 안
     /// 쓰지만 ParseUnitDetail()이 유닛 상세 패널 표시용으로 통째로
-    /// 구조화해서 읽는다(PendingUnitDef.Detail 참고). "resource_label"은
-    /// 여전히 완전히 무시한다.
+    /// 구조화해서 읽는다(PendingUnitDef.Detail 참고).
     /// </summary>
     public static class RosterImporter
     {
@@ -126,6 +127,10 @@ namespace TmgBoard
 
             if (root.TryGetValue("tactical_cards", out var cardsRaw) && cardsRaw is List<object> cardList)
             {
+                // 로스터 최상위 "resource_label"({"full","abbr"}) — 테란/저그/
+                // 프로토스마다 다른 종족 포인트(CP/BM/EN) 이름을 여기서 한
+                // 번만 읽어 카드마다 나눠 넣는다(로스터 하나 전체가 한 종족).
+                string resourceAbbr = GetString(GetDict(root, "resource_label"), "abbr", "");
                 foreach (var raw in cardList)
                 {
                     if (!(raw is Dictionary<string, object> cardData) || !cardData.ContainsKey("name"))
@@ -145,6 +150,8 @@ namespace TmgBoard
                         Count = count,
                         Remaining = count,
                         Abilities = ParseAbilities(GetList(cardData, "abilities")),
+                        ResourceAbbr = resourceAbbr,
+                        ResourceAmount = (int)GetFloat(cardData, "resource", 0f),
                     });
                 }
             }

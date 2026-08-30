@@ -13,6 +13,15 @@ namespace TmgBoard
         public int Count = 1;
         public int Remaining = 1;
 
+        /// <summary>이 카드의 종족별 포인트(테란 CP/저그 BM/프로토스 EN)
+        /// 제공량. 로스터 최상위의 "resource_label"({"full","abbr"})이
+        /// 어느 포인트 종류인지 정하고, 이 카드 자체의 "resource" 필드가
+        /// 그 개수다 — 로스터(팀) 전체가 같은 종족이라 ResourceAbbr는 모든
+        /// 카드가 같은 값을 갖지만, 값이 없는 구형 로스터 파일과의 호환을
+        /// 위해 카드마다 들고 있다(빈 문자열이면 표시하지 않는다).</summary>
+        public string ResourceAbbr = "";
+        public int ResourceAmount;
+
         /// <summary>카드 버튼 아래에 이름만 나열되고, 클릭하면 펼쳐지며 정보가
         /// 드러난다(사용자 지정) — 유닛 능력과 정확히 같은 모양(kind/name/
         /// phase/type/cost/rule)이라 RosterImporter.ParseAbilities를 그대로

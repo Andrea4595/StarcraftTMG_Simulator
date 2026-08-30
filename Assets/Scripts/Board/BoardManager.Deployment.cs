@@ -365,6 +365,24 @@ namespace TmgBoard
             var nameLe = nameGo.AddComponent<LayoutElement>();
             nameLe.flexibleWidth = 1f; // 이름이 남는 폭을 먹고, 핍은 오른쪽에 자기 크기만.
 
+            // 종족 포인트(테란 CP/저그 BM/프로토스 EN) 제공량 — 로스터에
+            // resource_label이 없는 구형 파일은 ResourceAbbr가 빈 문자열이라
+            // 자동으로 표시를 건너뛴다(사용자 지정 — 카드에 CP 제공량 기재).
+            if (!string.IsNullOrEmpty(def.ResourceAbbr))
+            {
+                var resourceGo = new GameObject("Resource", typeof(RectTransform));
+                resourceGo.transform.SetParent(btnGo.transform, false);
+                var resourceLabel = resourceGo.AddComponent<TextMeshProUGUI>();
+                resourceLabel.text = $"{def.ResourceAbbr} {def.ResourceAmount}";
+                resourceLabel.fontSize = 12f;
+                resourceLabel.color = new Color(0.7f, 0.75f, 0.85f, 1f);
+                resourceLabel.alignment = TextAlignmentOptions.MidlineRight;
+                resourceLabel.raycastTarget = false;
+                resourceLabel.enableWordWrapping = false;
+                var resourceLe = resourceGo.AddComponent<LayoutElement>();
+                resourceLe.preferredWidth = 40f;
+            }
+
             var pipsGo = new GameObject("Pips", typeof(RectTransform));
             pipsGo.transform.SetParent(btnGo.transform, false);
             var pipsLayout = pipsGo.AddComponent<HorizontalLayoutGroup>();
