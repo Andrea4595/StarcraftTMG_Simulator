@@ -35,13 +35,15 @@ namespace TmgBoard
         public bool AllowDrag = true;
         public bool RightClickCyclesColor;
 
-        /// <summary>점령 범위 링의 색 상태 — CaptureMarker.ColorState와 같은
+        /// <summary>점령 범위 링의 색/상태 — CaptureMarker.ColorState와 같은
         /// 개념이지만 별도 필드다: TokenColor는 이미 번호 토큰 자체의 색(팀
-        /// 배정)을 뜻하므로 링 색과 혼동하면 안 된다. 우클릭할 때마다 흰색 →
-        /// 빨간색 → 파란색 순으로 계속 순환한다(삭제 없이 영원히 반복).</summary>
-        public static readonly string[] RingColorSequence = { "white", "red", "blue" };
+        /// 배정)을 뜻하므로 링 색과 혼동하면 안 된다. 우클릭할 때마다 비활성 →
+        /// 활성(흰색) → 플레이어 A(빨강) → 플레이어 B(파랑) 순으로 계속
+        /// 순환한다(삭제 없이 영원히 반복, 사용자 지정 순서). 기본값은
+        /// "inactive" — 마커를 새로 놓으면 항상 비활성 상태로 시작한다.</summary>
+        public static readonly string[] RingColorSequence = { "inactive", "white", "red", "blue" };
 
-        public string RingColorState { get; private set; } = "white";
+        public string RingColorState { get; private set; } = "inactive";
 
         public void CycleRingColor()
         {
@@ -51,11 +53,14 @@ namespace TmgBoard
         }
 
         /// <summary>CaptureMarker.ResolveColor와 같은 이유로 "red"/"blue"는
-        /// 고정 색이 아니라 A/B팀의 현재 색을 그대로 따라간다.</summary>
+        /// 고정 색이 아니라 A/B팀의 현재 색을 그대로 따라간다. "inactive"는
+        /// 어느 팀과도 무관한 고정 회색(사용자 지정).</summary>
         private static Color ResolveRingColor(string state)
         {
             switch (state)
             {
+                case "inactive":
+                    return new Color(0.2f, 0.2f, 0.2f); // "어두운 회색" 느낌이 나도록 더 짙게(사용자 지정).
                 case "red":
                     return GameConstants.TeamColors.TryGetValue("A", out var a) ? a : new Color(0.9f, 0.15f, 0.15f);
                 case "blue":
@@ -136,9 +141,22 @@ namespace TmgBoard
             float tokenRadius = GameConstants.MissionObjectiveTokenDiameterMm / 2f;
             float captureRadius = tokenRadius + GameConstants.MissionObjectiveCaptureMarginInch * GameConstants.MmPerInch;
 
+            // 비활성 상태는 내부를 짙은 회색(알파도 높여 "어두운 회색"
+            // 느낌이 확실히 나도록)으로, 테두리는 점선으로 그려서 "아직
+            // 아무 팀도 아니다"가 한눈에 구분되게 한다. 활성(흰색)/A/B는
+            // 기존처럼 실선이지만, A/B로 팀이 배정된 상태는 배경 채움을
+            // 더 투명하게(기존 0.10 → 0.05) 낮췄고, 테두리도 팀 원색
+            // 그대로가 아니라 명도/채도를 살짝 낮춘 톤(Muted — 로스터
+            // 토큰/미션 목표 토큰 색과 같은 방식)을 쓴다(둘 다 사용자 지정).
+            // 흰색(활성, 아직 팀 없음) 쪽은 그대로 둔다.
+            bool isInactive = RingColorState == "inactive";
+            bool isTeamAssigned = RingColorState == "red" || RingColorState == "blue";
             var ringColor = ResolveRingColor(RingColorState);
-            AddFilledCircle(vh, captureRadius, new Color(ringColor.r, ringColor.g, ringColor.b, 0.10f));
-            AddCircleOutline(vh, captureRadius, new Color(ringColor.r, ringColor.g, ringColor.b, 0.6f), 1.5f);
+            var outlineColor = isTeamAssigned ? GameConstants.Muted(ringColor, 0.55f, 0.75f) : ringColor;
+            float fillAlpha = isInactive ? 0.55f : (RingColorState == "white" ? 0.10f : 0.05f);
+            float outlineAlpha = isInactive ? 0.9f : 0.6f;
+            AddFilledCircle(vh, captureRadius, new Color(ringColor.r, ringColor.g, ringColor.b, fillAlpha));
+            AddCircleOutline(vh, captureRadius, new Color(outlineColor.r, outlineColor.g, outlineColor.b, outlineAlpha), 1.5f, dashed: isInactive);
 
             AddFilledCircle(vh, tokenRadius, TokenColor);
             AddCircleOutline(vh, tokenRadius, new Color(0.1f, 0.1f, 0.1f, 0.8f), 1.5f);
@@ -160,7 +178,13 @@ namespace TmgBoard
             }
         }
 
-        private static void AddCircleOutline(VertexHelper vh, float radius, Color color, float thickness)
+        // 점선 한 칸(온) + 한 칸(오프)의 세그먼트 개수 — VisualSides(48)가
+        // DashPeriod(4)의 배수라 원 한 바퀴에 딱 맞아떨어져(12쌍) 이음매가
+        // 어긋나지 않는다.
+        private const int DashOnSegments = 2;
+        private const int DashPeriod = 4;
+
+        private static void AddCircleOutline(VertexHelper vh, float radius, Color color, float thickness, bool dashed = false)
         {
             float half = thickness / 2f;
             var pts = new Vector3[VisualSides];
@@ -171,6 +195,10 @@ namespace TmgBoard
             }
             for (int i = 0; i < VisualSides; i++)
             {
+                if (dashed && (i % DashPeriod) >= DashOnSegments)
+                {
+                    continue; // 점선의 "오프" 구간 — 이 변은 그리지 않고 건너뛴다.
+                }
                 int next = (i + 1) % VisualSides;
                 Vector3 a = pts[i];
                 Vector3 b = pts[next];
