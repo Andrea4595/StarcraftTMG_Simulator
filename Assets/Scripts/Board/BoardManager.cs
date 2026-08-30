@@ -322,10 +322,19 @@ namespace TmgBoard
             exitConfirmDialog.Confirmed += OnExitConfirmed;
         }
 
+        /// <summary>2026-08-30 재구성 이후로는 Entry→Selection→TerrainSetup→
+        /// GameBoard가 씬 하나짜리 선형 흐름이라(예전 GameFlowState의
+        /// "맵/미션 중 어느 쪽을 먼저 끝냈는지" 교차-씬 추적이 더 이상 필요
+        /// 없다), Entry로 돌아가는 것 외에 별도로 리셋할 흐름 상태는 MatchState
+        /// 뿐이었다. 그런데 GameConstants.TeamColors(플레이어가 스코어보드에서
+        /// 바꾼 A/B 색)는 그동안 여기서 전혀 리셋되지 않아서, 나갔다 새로
+        /// 시작한 판의 지형 배치 화면(미션 마커 참고 표시 등)에 지난 판에서
+        /// 바꾼 색이 그대로 남아있는 실제 버그가 있었다(사용자 발견) — 같이
+        /// 리셋한다.</summary>
         private void OnExitConfirmed()
         {
             MatchState.Reset();
-            GameFlowState.Reset();
+            GameConstants.ResetTeamColors();
             UnityEngine.SceneManagement.SceneManager.LoadScene(GameConstants.EntrySceneName);
         }
 

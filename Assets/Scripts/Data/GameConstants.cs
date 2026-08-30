@@ -13,12 +13,23 @@ namespace TmgBoard
 
         // 씬 이름 — GameFlowBootstrap의 씬 전환 스위치와 BoardManager의
         // "나가기" 버튼(진행 중인 판을 버리고 처음으로 돌아가기) 둘 다 같은
-        // 이름을 써야 하므로 여기 하나로 모아둔다. 흐름: Entry(맵/미션 중
-        // 먼저 할 것을 고름) → 고른 순서대로 MapSetup/MissionSetup 둘 다
-        // 끝내면 → GameBoard.
+        // 이름을 써야 하므로 여기 하나로 모아둔다.
+        //
+        // 실제 게임 흐름(싱글플레이, 2026-08-30 재구성): Entry → Selection
+        // (배치/미션 프리셋을 원하는 순서로 골라 MapData/MissionSettingsData를
+        // 채움, 둘 다 고르면 자동 진행) → TerrainSetup(그 배치 프리셋의 지도
+        // 크기/배치구역/미션 마커를 읽기 전용 참고로 보여주며 지형만 매 게임
+        // 새로 배치 — 지형은 프리셋으로 저장하지 않는다) → GameBoard.
+        //
+        // MapAuthoring/MissionAuthoring은 이 흐름에 안 낀다 — Entry 한쪽
+        // 구석의 별도 버튼으로 들어가는 "프리셋 제작" 전용 화면(옛 MapSetup/
+        // MissionSetup, 예전엔 라이브 셋업 화면이었다가 지금은 편집기로만
+        // 쓰인다)이고, 완료하면 그냥 Entry로 돌아간다.
         public const string EntrySceneName = "Entry";
-        public const string MapSetupSceneName = "MapSetup";
-        public const string MissionSetupSceneName = "MissionSetup";
+        public const string MapAuthoringSceneName = "MapAuthoring";
+        public const string MissionAuthoringSceneName = "MissionAuthoring";
+        public const string SelectionSceneName = "Selection";
+        public const string TerrainSetupSceneName = "TerrainSetup";
         public const string GameBoardSceneName = "GameBoard";
 
         public const float ScoreboardHeight = 56f;
@@ -41,12 +52,30 @@ namespace TmgBoard
         // SetTeamColor) — Dictionary 참조 자체는 readonly지만 내용물(값)은
         // 자유롭게 갱신되므로, 이미 이 딕셔너리를 참조하는 모든 코드(로스터
         // 임포트, 마커, 미션 목표 마커 등)가 자동으로 새 색을 따라간다.
+        private static readonly Color DefaultTeamColorA = new Color(1f, 0.15f, 0.15f, 0.85f);
+        private static readonly Color DefaultTeamColorB = new Color(0.15f, 0.35f, 1f, 0.85f);
+        private static readonly Color DefaultTeamColorNeutral = new Color(0.6f, 0.6f, 0.6f, 0.85f);
+
         public static readonly Dictionary<string, Color> TeamColors = new Dictionary<string, Color>
         {
-            { "A", new Color(1f, 0.15f, 0.15f, 0.85f) },
-            { "B", new Color(0.15f, 0.35f, 1f, 0.85f) },
-            { "neutral", new Color(0.6f, 0.6f, 0.6f, 0.85f) },
+            { "A", DefaultTeamColorA },
+            { "B", DefaultTeamColorB },
+            { "neutral", DefaultTeamColorNeutral },
         };
+
+        /// <summary>진행 중이던 판을 버리고 Entry로 나갈 때(BoardManager.
+        /// OnExitConfirmed) 부른다 — TeamColors는 static Dictionary라 값이
+        /// 그대로 남기 때문에, 스코어보드에서 바꾼 플레이어 색이 다음 판의
+        /// 지형 배치 화면(미션 마커 미리보기 등)에 잘못 이어지는 실제 버그가
+        /// 있었다(사용자 발견). 딕셔너리 참조 자체는 그대로 두고 값만
+        /// 기본값으로 되돌린다 — 이미 이 딕셔너리를 참조 중인 모든 코드가
+        /// 자동으로 반영된다.</summary>
+        public static void ResetTeamColors()
+        {
+            TeamColors["A"] = DefaultTeamColorA;
+            TeamColors["B"] = DefaultTeamColorB;
+            TeamColors["neutral"] = DefaultTeamColorNeutral;
+        }
 
         /// <summary>플레이어 색상 선택 팝업에 보여줄 미리 정해둔 팔레트.</summary>
         public static readonly Color[] TeamColorPalette =

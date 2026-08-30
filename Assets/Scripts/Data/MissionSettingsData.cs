@@ -1,9 +1,12 @@
 namespace TmgBoard
 {
-    /// <summary>미션 셋업 화면(MissionSetupController)에서 만든 상태를 게임
-    /// 화면으로 넘겨주는 핸드오프 저장소 — 미션 파라미터/점수 획득 조건/추가
-    /// 조건(텍스트), 서플라이·라운드 공식, 전투 규모. 지도/배치구역/지형은
-    /// 별도인 MapData가 담당한다. "완료" 버튼을 누르는 순간 채워진다.</summary>
+    /// <summary>게임 화면으로 넘겨주는 미션 프리셋 핸드오프 저장소 — 미션
+    /// 이름/파라미터/점수 획득 조건/추가 조건(텍스트), 서플라이·라운드 공식,
+    /// 전투 규모. 지도/배치구역은 별도인 MapData가 담당한다. Selection
+    /// 화면에서 미션 프리셋을 고르는 순간 그 파일 내용으로 채워진다(2026-08-30
+    /// 재구성 이전엔 MissionSetupController의 "완료" 버튼이 라이브 편집
+    /// 내용을 직접 채웠지만, 이제 그 화면(MissionAuthoringController)은
+    /// 프리셋 "제작"만 하고 실제 핸드오프는 Selection이 담당한다).</summary>
     public static class MissionSettingsData
     {
         public static bool HasData;

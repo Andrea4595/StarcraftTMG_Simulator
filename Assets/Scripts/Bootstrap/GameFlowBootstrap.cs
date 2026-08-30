@@ -6,16 +6,20 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 /// <summary>
-/// 실제 Unity 씬 전환(Entry → MapSetup/MissionSetup(순서 무관) → GameBoard)에
-/// 맞춰 각 씬의 UI를 코드로 짓는 부트스트랩 — 이전 GameFlowTestBootstrap이
-/// 같은 씬 안에서 캔버스만 바꿔치기하던 임시 방식을 대체한다. 씬 파일 자체는
-/// 카메라 하나만 있는 빈 씬이고(에디터에서 손으로 만든 게 아니라 기존
-/// SampleScene을 복사한 최소 구성), 실제 UI 구성은 전부 여기서 한다 — 이
-/// 프로젝트의 "UI는 코드로 짓는다" 기존 방침을 그대로 유지.
+/// 실제 Unity 씬 전환에 맞춰 각 씬의 UI를 코드로 짓는 부트스트랩 — 이전
+/// GameFlowTestBootstrap이 같은 씬 안에서 캔버스만 바꿔치기하던 임시 방식을
+/// 대체한다. 씬 파일 자체는 카메라 하나만 있는 빈 씬이고(에디터에서 손으로
+/// 만든 게 아니라 기존 SampleScene을 복사한 최소 구성), 실제 UI 구성은 전부
+/// 여기서 한다 — 이 프로젝트의 "UI는 코드로 짓는다" 기존 방침을 그대로 유지.
 ///
-/// 흐름: Entry 화면에서 "맵"/"미션" 중 하나를 고르면 그 셋업 화면으로 가고,
-/// 그 화면이 끝나면 아직 안 끝난 나머지 셋업 화면으로, 둘 다 끝났으면
-/// GameBoard로 넘어간다(GameFlowState가 "이미 끝낸 쪽"을 기억한다).
+/// 흐름(2026-08-30 재구성 — "배치/미션 셋업"이 "제작"으로 바뀌고, 실제 게임
+/// 시작 흐름에서 빠지면서 완전히 선형이 됐다): Entry → Selection(배치/미션
+/// 프리셋을 자유 순서로 고름, 둘 다 고르면 자동 진행) → TerrainSetup(그
+/// 배치 프리셋을 참고로 지형만 매 게임 새로 배치) → GameBoard. MapAuthoring/
+/// MissionAuthoring은 이 흐름과 무관하게 Entry 한쪽 구석 버튼으로만 들어가는
+/// 별도 "프리셋 제작" 화면(완료하면 Entry로 돌아감) — 예전 GameFlowState의
+/// "맵/미션 중 어느 쪽을 먼저 끝냈는지" 교차-씬 추적이 여기선 필요 없다
+/// (Selection 하나가 양쪽을 다 처리하므로).
 ///
 /// EventSystem은 씬을 넘나들며 살아있어야 하므로 DontDestroyOnLoad로 한 번만
 /// 만든다. MapData/MissionSettingsData(Data/)는 static 클래스라 씬 전환과
@@ -24,8 +28,10 @@ using UnityEngine.UI;
 public static class GameFlowBootstrap
 {
     private const string EntrySceneName = GameConstants.EntrySceneName;
-    private const string MapSetupSceneName = GameConstants.MapSetupSceneName;
-    private const string MissionSetupSceneName = GameConstants.MissionSetupSceneName;
+    private const string MapAuthoringSceneName = GameConstants.MapAuthoringSceneName;
+    private const string MissionAuthoringSceneName = GameConstants.MissionAuthoringSceneName;
+    private const string SelectionSceneName = GameConstants.SelectionSceneName;
+    private const string TerrainSetupSceneName = GameConstants.TerrainSetupSceneName;
     private const string GameBoardSceneName = GameConstants.GameBoardSceneName;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -66,11 +72,17 @@ public static class GameFlowBootstrap
             case EntrySceneName:
                 BuildEntry();
                 break;
-            case MapSetupSceneName:
-                BuildMapSetup();
+            case MapAuthoringSceneName:
+                BuildMapAuthoring();
                 break;
-            case MissionSetupSceneName:
-                BuildMissionSetup();
+            case MissionAuthoringSceneName:
+                BuildMissionAuthoring();
+                break;
+            case SelectionSceneName:
+                BuildSelection();
+                break;
+            case TerrainSetupSceneName:
+                BuildTerrainSetup();
                 break;
             case GameBoardSceneName:
                 BuildGameBoard();
@@ -78,8 +90,9 @@ public static class GameFlowBootstrap
         }
     }
 
-    /// <summary>화면 중앙에 "맵"/"미션" 큰 버튼 두 개 — 어느 쪽을 먼저
-    /// 고르든 그 셋업 화면으로 간다.</summary>
+    /// <summary>화면 중앙 "게임 시작" 큰 버튼(→ Selection) + 오른쪽 아래
+    /// 구석의 "배치/미션 프리셋 제작" 작은 버튼 두 개(→ 각 Authoring 화면,
+    /// 완료하면 다시 Entry로).</summary>
     private static void BuildEntry()
     {
         var canvasGo = new GameObject("Entry_Canvas");
@@ -89,48 +102,72 @@ public static class GameFlowBootstrap
         canvasGo.AddComponent<GraphicRaycaster>();
 
         var entry = canvasGo.AddComponent<EntryController>();
-        entry.MapPicked += () => SceneManager.LoadScene(MapSetupSceneName);
-        entry.MissionPicked += () => SceneManager.LoadScene(MissionSetupSceneName);
+        entry.StartGamePicked += () => SceneManager.LoadScene(SelectionSceneName);
+        entry.MapAuthoringPicked += () => SceneManager.LoadScene(MapAuthoringSceneName);
+        entry.MissionAuthoringPicked += () => SceneManager.LoadScene(MissionAuthoringSceneName);
     }
 
-    /// <summary>맵 셋업(예전 이름 "미션 셋업") 화면 — 지도 크기/배치구역/
-    /// 미션 목표/지형. 완료되면 아직 안 끝난 미션 셋업으로, 둘 다 끝났으면
-    /// 게임 화면으로.</summary>
-    private static void BuildMapSetup()
+    /// <summary>배치 프리셋 제작 화면(예전 "맵 셋업") — 지도 크기/배치구역/
+    /// 미션 목표. 지형은 없다(TerrainSetup으로 분리됨). "완료 ▶"는 그냥
+    /// Entry로 돌아간다 — 프리셋으로 남기려면 화면 안의 "프리셋 저장"을
+    /// 따로 눌러야 한다.</summary>
+    private static void BuildMapAuthoring()
     {
-        var canvasGo = new GameObject("MapSetup_Canvas");
+        var canvasGo = new GameObject("MapAuthoring_Canvas");
         var canvas = canvasGo.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvasGo.AddComponent<CanvasScaler>();
         canvasGo.AddComponent<GraphicRaycaster>();
 
-        // MapSetupController는 자기 GameObject의 RectTransform(캔버스 직속,
-        // 화면 전체를 덮음)을 직접 기준으로 UI를 짓는다 — 별도 참조 주입이 없다.
-        var mapSetup = canvasGo.AddComponent<MapSetupController>();
-        mapSetup.SetupCompleted += () =>
-        {
-            GameFlowState.MapSetupDone = true;
-            SceneManager.LoadScene(GameFlowState.MissionSetupDone ? GameBoardSceneName : MissionSetupSceneName);
-        };
+        var mapAuthoring = canvasGo.AddComponent<MapAuthoringController>();
+        mapAuthoring.BackRequested += () => SceneManager.LoadScene(EntrySceneName);
     }
 
-    /// <summary>미션 셋업(새 화면) — 미션 파라미터/점수 획득 조건/추가 조건/
-    /// 서플라이·라운드 공식/전투 규모. 완료되면 아직 안 끝난 맵 셋업으로,
-    /// 둘 다 끝났으면 게임 화면으로.</summary>
-    private static void BuildMissionSetup()
+    /// <summary>미션 프리셋 제작 화면(예전 "미션 셋업") — 미션 이름/파라미터/
+    /// 점수 획득 조건/추가 조건/서플라이·라운드 공식/전투 규모. "완료 ▶"는
+    /// 배치 제작 화면과 마찬가지로 그냥 Entry로 돌아간다.</summary>
+    private static void BuildMissionAuthoring()
     {
-        var canvasGo = new GameObject("MissionSetup_Canvas");
+        var canvasGo = new GameObject("MissionAuthoring_Canvas");
         var canvas = canvasGo.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvasGo.AddComponent<CanvasScaler>();
         canvasGo.AddComponent<GraphicRaycaster>();
 
-        var missionSetup = canvasGo.AddComponent<MissionSetupController>();
-        missionSetup.SetupCompleted += () =>
-        {
-            GameFlowState.MissionSetupDone = true;
-            SceneManager.LoadScene(GameFlowState.MapSetupDone ? GameBoardSceneName : MapSetupSceneName);
-        };
+        var missionAuthoring = canvasGo.AddComponent<MissionAuthoringController>();
+        missionAuthoring.BackRequested += () => SceneManager.LoadScene(EntrySceneName);
+    }
+
+    /// <summary>실제 게임 시작 흐름의 첫 단계 — 배치/미션 프리셋을 골라
+    /// MapData/MissionSettingsData를 채운다. 둘 다 고르면 자동으로
+    /// TerrainSetup으로 넘어간다.</summary>
+    private static void BuildSelection()
+    {
+        var canvasGo = new GameObject("Selection_Canvas");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvasGo.AddComponent<CanvasScaler>();
+        canvasGo.AddComponent<GraphicRaycaster>();
+
+        var selection = canvasGo.AddComponent<SelectionController>();
+        selection.BothPicked += () => SceneManager.LoadScene(TerrainSetupSceneName);
+        selection.BackRequested += () => SceneManager.LoadScene(EntrySceneName);
+    }
+
+    /// <summary>Selection에서 고른 배치 프리셋을 참고로 지형만 매 게임 새로
+    /// 배치한다. "게임 시작 ▶"을 누르면 MapData.TerrainPieces가 채워지고
+    /// GameBoard로 넘어간다.</summary>
+    private static void BuildTerrainSetup()
+    {
+        var canvasGo = new GameObject("TerrainSetup_Canvas");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvasGo.AddComponent<CanvasScaler>();
+        canvasGo.AddComponent<GraphicRaycaster>();
+
+        var terrainSetup = canvasGo.AddComponent<TerrainSetupController>();
+        terrainSetup.Completed += () => SceneManager.LoadScene(GameBoardSceneName);
+        terrainSetup.BackRequested += () => SceneManager.LoadScene(SelectionSceneName);
     }
 
     private static void BuildGameBoard()
