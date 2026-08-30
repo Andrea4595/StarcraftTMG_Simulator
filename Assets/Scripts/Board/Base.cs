@@ -211,7 +211,7 @@ namespace TmgBoard
             _nameLabel.alignment = TextAlignmentOptions.Center;
             _nameLabel.fontSize = 12f;
             _nameLabel.color = Color.black;
-            _nameLabel.enableWordWrapping = false;
+            _nameLabel.textWrappingMode = TextWrappingModes.NoWrap;
             _nameLabel.raycastTarget = false;
 
             _damageBadgeGo = new GameObject("DamageBadge", typeof(RectTransform));

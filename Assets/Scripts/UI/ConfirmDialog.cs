@@ -108,7 +108,7 @@ namespace TmgBoard
             label.fontSize = 16f;
             label.color = Color.white;
             label.alignment = TextAlignmentOptions.Center;
-            label.enableWordWrapping = true;
+            label.textWrappingMode = TextWrappingModes.Normal;
             return label;
         }
 

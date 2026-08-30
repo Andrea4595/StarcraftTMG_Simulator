@@ -145,7 +145,7 @@ namespace TmgBoard
             _screenshotToastLabel = labelGo.AddComponent<TextMeshProUGUI>();
             _screenshotToastLabel.fontSize = 13f;
             _screenshotToastLabel.color = Color.white;
-            _screenshotToastLabel.enableWordWrapping = false;
+            _screenshotToastLabel.textWrappingMode = TextWrappingModes.NoWrap;
             _screenshotToastLabel.raycastTarget = false;
 
             // 클릭하면 스크린샷 폴더를 연다(사용자 요청) — 배경 Image 자체가

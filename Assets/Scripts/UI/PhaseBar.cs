@@ -93,7 +93,7 @@ namespace TmgBoard
             label.color = color;
             label.fontStyle = style;
             label.alignment = TextAlignmentOptions.Midline;
-            label.enableWordWrapping = false;
+            label.textWrappingMode = TextWrappingModes.NoWrap;
             label.raycastTarget = raycastTarget;
             return label;
         }

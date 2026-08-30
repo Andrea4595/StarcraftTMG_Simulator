@@ -360,8 +360,8 @@ namespace TmgBoard
             nameLabel.fontSize = 13f;
             nameLabel.color = Color.white;
             nameLabel.raycastTarget = false;
-            nameLabel.enableWordWrapping = false;
-            nameLabel.overflowMode = TextOverflowModes.Ellipsis;
+            nameLabel.textWrappingMode = TextWrappingModes.NoWrap;
+            nameLabel.overflowMode = TextOverflowModes.Truncate;
             var nameLe = nameGo.AddComponent<LayoutElement>();
             nameLe.flexibleWidth = 1f; // 이름이 남는 폭을 먹고, 핍은 오른쪽에 자기 크기만.
 
@@ -378,7 +378,7 @@ namespace TmgBoard
                 resourceLabel.color = new Color(0.7f, 0.75f, 0.85f, 1f);
                 resourceLabel.alignment = TextAlignmentOptions.MidlineRight;
                 resourceLabel.raycastTarget = false;
-                resourceLabel.enableWordWrapping = false;
+                resourceLabel.textWrappingMode = TextWrappingModes.NoWrap;
                 var resourceLe = resourceGo.AddComponent<LayoutElement>();
                 resourceLe.preferredWidth = 40f;
             }
@@ -552,8 +552,7 @@ namespace TmgBoard
             // 마치면 CompleteUnitMove()에서 커밋된다.
             BeginUndoTransaction();
             var def = _pendingUnits[index];
-            _pendingUnits.RemoveAt(index);
-            RefreshPendingList();
+            RemovePendingUnitDefAt(index);
 
             _pendingDeploymentDef = def;
             ShowBasePlacementPreview(def.SizeMm, def.FillColor, def.IsDisplacement);
@@ -565,9 +564,8 @@ namespace TmgBoard
             if (Input.GetMouseButtonDown(1) && !IsPointerOverUi())
             {
                 // 빈 곳 우클릭 — 배치 취소, 정의를 예비대 목록으로 되돌린다.
-                _pendingUnits.Add(_pendingDeploymentDef);
+                AddPendingUnitDef(_pendingDeploymentDef);
                 _pendingDeploymentDef = null;
-                RefreshPendingList();
                 ClearPlacementPreview();
                 ClearDeploymentBand();
                 // StartDeployment()에서 연 트랜잭션을 그냥 버린다 — 예비대

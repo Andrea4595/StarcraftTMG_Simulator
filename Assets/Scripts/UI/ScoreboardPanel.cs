@@ -424,7 +424,7 @@ namespace TmgBoard
             label.color = color;
             label.fontStyle = style;
             label.alignment = TextAlignmentOptions.MidlineLeft;
-            label.enableWordWrapping = false; // 좁은 스코어보드 바 안이라 줄바꿈되면 보기 나쁘다 — 폭이 좁으면 넘치더라도 한 줄로.
+            label.textWrappingMode = TextWrappingModes.NoWrap; // 좁은 스코어보드 바 안이라 줄바꿈되면 보기 나쁘다 — 폭이 좁으면 넘치더라도 한 줄로.
             label.raycastTarget = false;
             return label;
         }
@@ -447,7 +447,7 @@ namespace TmgBoard
             label.color = teamColor;
             label.fontStyle = FontStyles.Bold;
             label.alignment = TextAlignmentOptions.MidlineLeft;
-            label.enableWordWrapping = false;
+            label.textWrappingMode = TextWrappingModes.NoWrap;
             label.raycastTarget = true;
 
             var btn = go.AddComponent<Button>();

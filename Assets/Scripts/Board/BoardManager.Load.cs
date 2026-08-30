@@ -25,95 +25,20 @@ namespace TmgBoard
                 }
             }
 
-            var restoredUnits = new List<Unit>();
             foreach (var raw in GameSaveIO.GetList(root, "units"))
             {
-                if (!(raw is Dictionary<string, object> u))
+                if (raw is Dictionary<string, object> u)
                 {
-                    continue;
-                }
-                var unit = new Unit
-                {
-                    UnitName = GameSaveIO.GetString(u, "unit_name"),
-                    Team = GameSaveIO.GetString(u, "team", "neutral"),
-                    CoherencyInch = GameSaveIO.GetFloat(u, "coherency_inch", GameConstants.DefaultCoherencyInch),
-                    MoveInch = GameSaveIO.GetFloat(u, "move_inch", GameConstants.DefaultMoveInch),
-                    IsToken = GameSaveIO.GetBool(u, "is_token"),
-                    CanMove = GameSaveIO.GetBool(u, "can_move", true),
-                    SupplyOverride = GameSaveIO.GetNullableInt(u, "supply_override"),
-                    Detail = GameSaveIO.DetailFromTree(u.TryGetValue("detail", out var detailRaw) ? detailRaw : null),
-                };
-                unit.SupplyTiers.AddRange(GameSaveIO.TreeToSupplyTiers(GameSaveIO.GetList(u, "supply_tiers")));
-                restoredUnits.Add(unit);
-                if (unit.IsToken)
-                {
-                    _rosterTokenUnits[$"{unit.Team}|{unit.UnitName}"] = unit;
-                }
-
-                var ranges = GameSaveIO.TreeToRanges(GameSaveIO.GetList(u, "ranges"));
-                if (ranges.Count > 0)
-                {
-                    _unitRanges[unit] = ranges;
-                }
-
-                foreach (var rawModel in GameSaveIO.GetList(u, "models"))
-                {
-                    if (!(rawModel is Dictionary<string, object> m))
-                    {
-                        continue;
-                    }
-                    var sizeMm = GameSaveIO.TreeToVec2(GameSaveIO.GetDict(m, "size_mm"));
-                    var fillColor = GameSaveIO.TreeToColor(GameSaveIO.GetDict(m, "fill_color"));
-                    var piece = CreatePieceObject(unit, sizeMm, fillColor, GameSaveIO.GetBool(m, "is_displacement"));
-                    piece.Damage = GameSaveIO.GetInt(m, "damage");
-                    piece.Memo = GameSaveIO.GetString(m, "memo");
-                    piece.Center = GameSaveIO.TreeToVec2(GameSaveIO.GetDict(m, "center"));
-                    piece.RotationDegrees = GameSaveIO.GetFloat(m, "rotation_degrees");
-                    piece.Refresh();
-                    unit.Models.Add(piece);
+                    CreateUnitFromTree(u);
                 }
             }
 
             foreach (var raw in GameSaveIO.GetList(root, "pending_units"))
             {
-                if (!(raw is Dictionary<string, object> p))
+                if (raw is Dictionary<string, object> p)
                 {
-                    continue;
+                    _pendingUnits.Add(ParsePendingUnitDefTree(p));
                 }
-                var damages = new List<int>();
-                foreach (var d in GameSaveIO.GetList(p, "damages"))
-                {
-                    if (d is double dd)
-                    {
-                        damages.Add((int)dd);
-                    }
-                }
-                var specialists = new List<string>();
-                foreach (var s in GameSaveIO.GetList(p, "specialists"))
-                {
-                    if (s is string ss)
-                    {
-                        specialists.Add(ss);
-                    }
-                }
-                _pendingUnits.Add(new PendingUnitDef
-                {
-                    Name = GameSaveIO.GetString(p, "name"),
-                    Team = GameSaveIO.GetString(p, "team", "neutral"),
-                    ModelCount = GameSaveIO.GetInt(p, "model_count", 1),
-                    SizeMm = GameSaveIO.TreeToVec2(GameSaveIO.GetDict(p, "size_mm")),
-                    FillColor = GameSaveIO.TreeToColor(GameSaveIO.GetDict(p, "fill_color")),
-                    MoveInch = GameSaveIO.GetFloat(p, "move_inch", GameConstants.DefaultMoveInch),
-                    CoherencyInch = GameSaveIO.GetFloat(p, "coherency_inch", GameConstants.DefaultCoherencyInch),
-                    CanMove = GameSaveIO.GetBool(p, "can_move", true),
-                    IsDisplacement = GameSaveIO.GetBool(p, "is_displacement"),
-                    SupplyTiers = GameSaveIO.TreeToSupplyTiers(GameSaveIO.GetList(p, "supply_tiers")),
-                    Damages = damages,
-                    Ranges = GameSaveIO.TreeToRanges(GameSaveIO.GetList(p, "ranges")),
-                    SupplyOverride = GameSaveIO.GetNullableInt(p, "supply_override"),
-                    Specialists = specialists,
-                    Detail = GameSaveIO.DetailFromTree(p.TryGetValue("detail", out var pDetailRaw) ? pDetailRaw : null),
-                });
             }
 
             foreach (var raw in GameSaveIO.GetList(root, "pending_tokens"))
@@ -216,6 +141,46 @@ namespace TmgBoard
             RefreshRosterTokenList();
             RefreshTacticalCardList();
             RefreshRangeOverlays();
+        }
+
+        /// <summary>예비대 정의 하나를 트리에서 만든다 — 게임 불러오기와
+        /// 예비대 목록 동기화(BoardManager.PendingUnitSync.cs) 둘 다 쓴다.</summary>
+        private static PendingUnitDef ParsePendingUnitDefTree(Dictionary<string, object> p)
+        {
+            var damages = new List<int>();
+            foreach (var d in GameSaveIO.GetList(p, "damages"))
+            {
+                if (d is double dd)
+                {
+                    damages.Add((int)dd);
+                }
+            }
+            var specialists = new List<string>();
+            foreach (var s in GameSaveIO.GetList(p, "specialists"))
+            {
+                if (s is string ss)
+                {
+                    specialists.Add(ss);
+                }
+            }
+            return new PendingUnitDef
+            {
+                Name = GameSaveIO.GetString(p, "name"),
+                Team = GameSaveIO.GetString(p, "team", "neutral"),
+                ModelCount = GameSaveIO.GetInt(p, "model_count", 1),
+                SizeMm = GameSaveIO.TreeToVec2(GameSaveIO.GetDict(p, "size_mm")),
+                FillColor = GameSaveIO.TreeToColor(GameSaveIO.GetDict(p, "fill_color")),
+                MoveInch = GameSaveIO.GetFloat(p, "move_inch", GameConstants.DefaultMoveInch),
+                CoherencyInch = GameSaveIO.GetFloat(p, "coherency_inch", GameConstants.DefaultCoherencyInch),
+                CanMove = GameSaveIO.GetBool(p, "can_move", true),
+                IsDisplacement = GameSaveIO.GetBool(p, "is_displacement"),
+                SupplyTiers = GameSaveIO.TreeToSupplyTiers(GameSaveIO.GetList(p, "supply_tiers")),
+                Damages = damages,
+                Ranges = GameSaveIO.TreeToRanges(GameSaveIO.GetList(p, "ranges")),
+                SupplyOverride = GameSaveIO.GetNullableInt(p, "supply_override"),
+                Specialists = specialists,
+                Detail = GameSaveIO.DetailFromTree(p.TryGetValue("detail", out var pDetailRaw) ? pDetailRaw : null),
+            };
         }
     }
 }

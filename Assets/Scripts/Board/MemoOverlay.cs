@@ -53,7 +53,7 @@ namespace TmgBoard
                 label.fontSize = 13f;
                 label.color = TextColor;
                 label.raycastTarget = false;
-                label.enableWordWrapping = false;
+                label.textWrappingMode = TextWrappingModes.NoWrap;
                 _pool.Add(label);
             }
         }

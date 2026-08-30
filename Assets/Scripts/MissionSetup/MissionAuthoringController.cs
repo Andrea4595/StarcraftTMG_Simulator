@@ -259,7 +259,7 @@ namespace TmgBoard
             var text = textGo.AddComponent<TextMeshProUGUI>();
             text.fontSize = 14f;
             text.color = Color.white;
-            text.enableWordWrapping = true;
+            text.textWrappingMode = TextWrappingModes.Normal;
 
             inputField.textViewport = textAreaRect;
             inputField.textComponent = text;
@@ -397,7 +397,7 @@ namespace TmgBoard
             var text = textGo.AddComponent<TextMeshProUGUI>();
             text.fontSize = 14f;
             text.color = Color.white;
-            text.enableWordWrapping = false;
+            text.textWrappingMode = TextWrappingModes.NoWrap;
 
             inputField.textViewport = textAreaRect;
             inputField.textComponent = text;
@@ -751,7 +751,7 @@ namespace TmgBoard
             t.fontSize = 12f;
             t.color = Color.white;
             t.raycastTarget = false;
-            t.enableWordWrapping = true;
+            t.textWrappingMode = TextWrappingModes.Normal;
             return t;
         }
 
@@ -799,7 +799,7 @@ namespace TmgBoard
             labelText.alignment = TextAlignmentOptions.Center;
             labelText.fontSize = 13f;
             labelText.color = Color.white;
-            labelText.enableWordWrapping = false;
+            labelText.textWrappingMode = TextWrappingModes.NoWrap;
             labelText.raycastTarget = false;
 
             return btn;

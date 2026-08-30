@@ -193,7 +193,7 @@ namespace TmgBoard
                 // 길게 이어질 수 있어 가운데 정렬이면 읽기 불편하다(사용자 지적).
                 bool leftAlign = i == 0 || i == ColumnWidths.Length - 1;
                 cellLabel.alignment = leftAlign ? TextAlignmentOptions.MidlineLeft : TextAlignmentOptions.Center;
-                cellLabel.enableWordWrapping = true;
+                cellLabel.textWrappingMode = TextWrappingModes.Normal;
                 cellLabel.raycastTarget = false;
             }
         }

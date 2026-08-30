@@ -200,7 +200,7 @@ namespace TmgBoard
             titleLe.preferredWidth = 260f;
             titleLe.preferredHeight = 32f;
 
-            CreateButton(rowRect, "게임 시작 ▶", OnStartGamePressed);
+            CreateButton(rowRect, "게임 시작 >", OnStartGamePressed);
         }
 
         private void BuildPalette()
@@ -555,7 +555,7 @@ namespace TmgBoard
             t.fontSize = 12f;
             t.color = Color.white;
             t.raycastTarget = false;
-            t.enableWordWrapping = true;
+            t.textWrappingMode = TextWrappingModes.Normal;
             return t;
         }
 

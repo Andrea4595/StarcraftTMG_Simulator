@@ -146,8 +146,8 @@ namespace TmgBoard
             int phaseIndex = GameSaveIO.GetInt(matchState, "phase_index", 0);
             string phaseName = phaseIndex >= 0 && phaseIndex < MatchState.PhaseNames.Length ? MatchState.PhaseNames[phaseIndex] : "";
             string summary = string.IsNullOrEmpty(missionName)
-                    ? $"라운드 {round} · {phaseName}"
-                    : $"{missionName} · 라운드 {round} · {phaseName}";
+                    ? $"라운드 {round} - {phaseName}"
+                    : $"{missionName} - 라운드 {round} - {phaseName}";
 
             var itemGo = new GameObject("Item", typeof(RectTransform));
             itemGo.transform.SetParent(_listContent, false);
@@ -185,7 +185,7 @@ namespace TmgBoard
             label.fontSize = 13f;
             label.color = Color.white;
             label.raycastTarget = false;
-            label.enableWordWrapping = true;
+            label.textWrappingMode = TextWrappingModes.Normal;
             return label;
         }
     }

@@ -113,7 +113,7 @@ namespace TmgBoard
             _pathLabel.fontSize = 13f;
             _pathLabel.color = new Color(0.8f, 0.8f, 0.8f, 1f);
             _pathLabel.alignment = TextAlignmentOptions.MidlineLeft;
-            _pathLabel.enableWordWrapping = false;
+            _pathLabel.textWrappingMode = TextWrappingModes.NoWrap;
             _pathLabel.overflowMode = TextOverflowModes.Truncate;
 
             // 스크롤 목록.
@@ -276,7 +276,7 @@ namespace TmgBoard
 
             if (dirs.Length == 0 && files.Length == 0)
             {
-                CreateLabel(_listContent, "(비어 있음 — .json 파일이 없습니다)", 13f, 24f);
+                CreateLabel(_listContent, "(비어 있음 - .json 파일이 없습니다)", 13f, 24f);
             }
         }
 

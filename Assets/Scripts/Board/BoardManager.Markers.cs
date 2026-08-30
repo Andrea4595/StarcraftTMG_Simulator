@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using TMPro;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -9,6 +10,22 @@ namespace TmgBoard
     public partial class BoardManager
     {
         // ── 마커(활성화/점령/아이콘) ───────────────────────────────────
+
+        // 멀티플레이어 중 배치된 마커만 등록됨(id는 BoardNetworkSync가
+        // 발급) — 삭제/이동 방송이 도착했을 때 어느 GameObject인지 찾는 용도.
+        private readonly Dictionary<int, MarkerBase> _networkedMarkersById = new();
+
+        // 드래그를 끝낸 쪽이 아닌 다른 클라이언트가 이동 방송을 받았을 때,
+        // 순간이동 대신 부드럽게 그 자리로 움직이게 하는 진행 중 트윈 목록.
+        private const float MarkerMoveTweenDuration = 0.2f;
+        private struct MarkerMoveTween
+        {
+            public MarkerBase Marker;
+            public Vector2 From;
+            public Vector2 To;
+            public float StartTime;
+        }
+        private readonly List<MarkerMoveTween> _markerMoveTweens = new();
 
         /// <summary>화면 맨 아래를 가로지르는 바 — 마커 종류별 버튼은 중앙에
         /// 모아두고, 스크린샷 버튼은 우측 하단에 고정한다. 누르면
@@ -57,11 +74,11 @@ namespace TmgBoard
 
             foreach (var entry in MarkerBarEntries)
             {
-                Texture2D icon = entry.Kind switch
+                Texture icon = entry.Kind switch
                 {
-                    "activation" => _activationTextureMovement,
-                    "capture" => _captureTexture,
-                    _ => _iconTextures != null && _iconTextures.TryGetValue(entry.Kind, out var t) ? t : null,
+                    "activation" => _activationMarkerPrefab != null ? _activationMarkerPrefab.texture : null,
+                    "capture" => _captureMarkerPrefab != null ? _captureMarkerPrefab.texture : null,
+                    _ => _iconMarkerPrefabsByKind != null && _iconMarkerPrefabsByKind.TryGetValue(entry.Kind, out var p) ? p.texture : null,
                 };
                 CreateMarkerBarButton(iconsRect, entry.Kind, icon);
             }
@@ -158,7 +175,7 @@ namespace TmgBoard
             _markerHintLabel.fontSize = 13f;
             _markerHintLabel.color = new Color(0.85f, 0.85f, 0.85f, 1f);
             _markerHintLabel.alignment = TextAlignmentOptions.MidlineLeft;
-            _markerHintLabel.enableWordWrapping = false;
+            _markerHintLabel.textWrappingMode = TextWrappingModes.NoWrap;
             _markerHintLabel.raycastTarget = false;
             _markerHintLabel.text = "";
         }
@@ -260,7 +277,7 @@ namespace TmgBoard
             });
         }
 
-        private void CreateMarkerBarButton(Transform parent, string kind, Texture2D icon)
+        private void CreateMarkerBarButton(Transform parent, string kind, Texture icon)
         {
             var go = new GameObject($"MarkerBtn_{kind}", typeof(RectTransform));
             go.transform.SetParent(parent, false);
@@ -346,38 +363,21 @@ namespace TmgBoard
             }
         }
 
-        /// <summary>kind에 맞는 마커 컴포넌트를 새로 만들어 parent 아래에 붙인다
+        /// <summary>kind에 맞는 마커 프리팹을 parent 아래에 인스턴스화한다
         /// (아직 위치/이벤트 연결은 안 함 — 배치 미리보기/실제 배치 양쪽에서
-        /// 공용으로 쓴다).</summary>
+        /// 공용으로 쓴다). 텍스처/크기는 프리팹에 이미 채워져 있다.</summary>
         private MarkerBase CreateMarkerObject(string kind, Transform parent)
         {
             switch (kind)
             {
                 case "activation":
-                {
-                    var go = new GameObject("ActivationMarker", typeof(RectTransform));
-                    go.transform.SetParent(parent, false);
-                    var marker = go.AddComponent<ActivationMarker>();
-                    marker.Configure(_activationTextureMovement, _activationTextureAssault, _activationTextureDone);
-                    return marker;
-                }
+                    return _activationMarkerPrefab != null ? Instantiate(_activationMarkerPrefab, parent, false) : null;
                 case "capture":
-                {
-                    var go = new GameObject("CaptureMarker", typeof(RectTransform));
-                    go.transform.SetParent(parent, false);
-                    var marker = go.AddComponent<CaptureMarker>();
-                    marker.Configure(_captureTexture);
-                    return marker;
-                }
+                    return _captureMarkerPrefab != null ? Instantiate(_captureMarkerPrefab, parent, false) : null;
                 default:
-                {
-                    var go = new GameObject($"IconMarker_{kind}", typeof(RectTransform));
-                    go.transform.SetParent(parent, false);
-                    var marker = go.AddComponent<IconMarker>();
-                    _iconTextures.TryGetValue(kind, out var tex);
-                    marker.Configure(kind, tex);
-                    return marker;
-                }
+                    return _iconMarkerPrefabsByKind != null && _iconMarkerPrefabsByKind.TryGetValue(kind, out var prefab)
+                            ? Instantiate(prefab, parent, false)
+                            : null;
             }
         }
 
@@ -410,9 +410,31 @@ namespace TmgBoard
 
         private void PlaceMarker(string kind, Vector2 point)
         {
+            // 멀티플레이어 연결 중이면 호스트에게 배치를 요청하고 끝 —
+            // 실제 마커 생성은 방송(PlaceMarkerRpc)이 도착했을 때
+            // SpawnLocalMarkerVisual이 처리한다(호스트 자신도 이 경로를
+            // 탄다). 되돌리기(undo)는 아직 이 경로를 지원하지 않는다 —
+            // 다음 단계.
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 마커 배치 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestPlaceMarkerServerRpc(kind, point);
+                return;
+            }
+
             BeginUndoTransaction();
             var marker = CreateMarkerObject(kind, markerLayer);
             marker.Center = ClampMarkerToMap(marker, point);
+            WireMarkerEvents(marker, kind);
+            CommitUndoTransaction();
+        }
+
+        private void WireMarkerEvents(MarkerBase marker, string kind)
+        {
             marker.DragRequested += OnMarkerDragRequested;
             switch (kind)
             {
@@ -426,7 +448,113 @@ namespace TmgBoard
                     marker.RightClicked += OnIconMarkerRightClicked;
                     break;
             }
-            CommitUndoTransaction();
+        }
+
+        /// <summary>BoardNetworkSync.PlaceMarkerRpc가 방송을 받았을 때
+        /// 호출한다(호스트 자신도 포함) — 완전히 로컬로(1인용 PlaceMarker와
+        /// 같은 경로) 마커를 만든다. NetworkObject로 마커 자체를 스폰하지
+        /// 않는 이유는 BoardNetworkSync.cs 클래스 주석 참고(NGO가
+        /// NetworkObject를 일반 UI Transform 밑으로 재부모화하는 걸 막음).
+        /// id는 호스트가 발급한 것 — 나중에 삭제 방송이 도착했을 때 이
+        /// GameObject를 다시 찾는 데 쓴다.</summary>
+        internal void SpawnLocalMarkerVisual(string kind, Vector2 point, int id)
+        {
+            var marker = CreateMarkerObject(kind, markerLayer);
+            if (marker == null)
+            {
+                Debug.LogError($"[BoardManager] 마커 프리팹을 못 찾음: {kind}");
+                return;
+            }
+            marker.Center = ClampMarkerToMap(marker, point);
+            marker.NetworkMarkerId = id;
+            _networkedMarkersById[id] = marker;
+            WireMarkerEvents(marker, kind);
+        }
+
+        /// <summary>BoardNetworkSync.DeleteMarkerRpc가 방송을 받았을 때
+        /// 호출한다(호스트 자신도 포함, 삭제를 요청한 쪽도 포함 — 요청자가
+        /// 직접 지우지 않고 이 방송을 거쳐서 지운다).</summary>
+        internal void DeleteLocalMarkerVisual(int id)
+        {
+            if (!_networkedMarkersById.TryGetValue(id, out var marker))
+            {
+                Debug.LogError($"[BoardManager] 삭제할 마커를 못 찾음(id={id})");
+                return;
+            }
+            _networkedMarkersById.Remove(id);
+            _markerMoveTweens.RemoveAll(t => t.Marker == marker);
+            Destroy(marker.gameObject);
+        }
+
+        /// <summary>BoardNetworkSync.SetMarkerStateRpc가 방송을 받았을 때
+        /// 호출한다(호스트 자신도 포함) — 활성화 마커(이동→돌격→완료)와
+        /// 점령 마커(색 순환) 양쪽 다 이걸로 처리한다. 마커 자체가
+        /// NetworkObject가 아니라 타입 정보를 따로 안 보내므로, 여기서
+        /// 실제 타입을 보고 판별한다.</summary>
+        internal void SetLocalMarkerState(int id, string state)
+        {
+            if (!_networkedMarkersById.TryGetValue(id, out var marker))
+            {
+                Debug.LogError($"[BoardManager] 상태를 바꿀 마커를 못 찾음(id={id})");
+                return;
+            }
+            switch (marker)
+            {
+                case ActivationMarker activationMarker:
+                    activationMarker.SetState(state);
+                    break;
+                case CaptureMarker captureMarker:
+                    captureMarker.SetColorState(state);
+                    break;
+                default:
+                    Debug.LogError($"[BoardManager] 상태 순환을 지원하지 않는 마커 타입(id={id})");
+                    break;
+            }
+        }
+
+        /// <summary>BoardNetworkSync.MoveMarkerRpc가 방송을 받았을 때
+        /// 호출한다(드래그를 끝낸 쪽 자신도 포함 — 이미 그 자리에 있으므로
+        /// 트윈이 사실상 아무 효과가 없다). 실시간 방송이 아니라 드래그
+        /// 종료 시점 최종 위치 하나만 오므로(2026-08-30 사용자 요청 — 실시간일
+        /// 필요 없다), 순간이동 대신 짧게 트윈해서 부드럽게 도착시킨다.</summary>
+        internal void AnimateLocalMarkerMove(int id, Vector2 to)
+        {
+            if (!_networkedMarkersById.TryGetValue(id, out var marker))
+            {
+                Debug.LogError($"[BoardManager] 이동시킬 마커를 못 찾음(id={id})");
+                return;
+            }
+            _markerMoveTweens.RemoveAll(t => t.Marker == marker);
+            _markerMoveTweens.Add(new MarkerMoveTween
+            {
+                Marker = marker,
+                From = marker.Center,
+                To = to,
+                StartTime = Time.time,
+            });
+        }
+
+        /// <summary>매 프레임 BoardManager.Update()에서 호출 — 진행 중인 마커
+        /// 이동 트윈을 전진시킨다. 삭제된 마커(Destroy됨)는 Unity의 null
+        /// 비교 오버로드 덕에 여기서 그냥 걸러진다.</summary>
+        private void UpdateMarkerMoveTweens()
+        {
+            for (int i = _markerMoveTweens.Count - 1; i >= 0; i--)
+            {
+                var tween = _markerMoveTweens[i];
+                if (tween.Marker == null)
+                {
+                    _markerMoveTweens.RemoveAt(i);
+                    continue;
+                }
+                float t = Mathf.Clamp01((Time.time - tween.StartTime) / MarkerMoveTweenDuration);
+                float eased = t * t * (3f - 2f * t); // smoothstep
+                tween.Marker.Center = Vector2.LerpUnclamped(tween.From, tween.To, eased);
+                if (t >= 1f)
+                {
+                    _markerMoveTweens.RemoveAt(i);
+                }
+            }
         }
 
         /// <summary>markerLayer는 baseLayer와 같은 중심-원점 mm 좌표계이므로
@@ -455,7 +583,24 @@ namespace TmgBoard
         {
             if (Input.GetMouseButtonUp(0))
             {
+                var marker = _draggingMarker;
                 _draggingMarker = null;
+                // 드래그 자체는(반응성 때문에) 언제나 로컬로 실시간 진행됐다 —
+                // 여기선 그 최종 위치만 상대에게 알린다. 매 프레임 방송하지
+                // 않는 이유는 실시간일 필요가 없다는 사용자 판단(2026-08-30) —
+                // 대신 받는 쪽은 AnimateLocalMarkerMove로 부드럽게 그 자리로
+                // 움직여준다.
+                if (marker.NetworkMarkerId >= 0 && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+                {
+                    if (BoardNetworkSync.Instance == null)
+                    {
+                        Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 마커 이동 요청을 못 보냄");
+                    }
+                    else
+                    {
+                        BoardNetworkSync.Instance.RequestMoveMarkerServerRpc(marker.NetworkMarkerId, marker.Center);
+                    }
+                }
                 CommitUndoTransaction();
                 return;
             }
@@ -466,43 +611,90 @@ namespace TmgBoard
             }
         }
 
+        /// <summary>멀티 연결 중이고 이 마커가 네트워크로 배치된 것이면
+        /// 삭제 방송을 요청하고 true를 반환한다 — 호출자는 이때 로컬
+        /// Destroy를 건너뛰어야 한다(삭제는 이 요청이 되돌아오는 방송,
+        /// BoardNetworkSync.DeleteMarkerRpc → DeleteLocalMarkerVisual을
+        /// 거쳐서 일어난다). 미연결이면 false(호출자가 기존처럼 로컬로
+        /// 바로 처리).</summary>
+        private bool TryRequestNetworkMarkerDelete(MarkerBase marker)
+        {
+            if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
+            {
+                return false;
+            }
+            if (BoardNetworkSync.Instance == null)
+            {
+                Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 마커 삭제 요청을 못 보냄");
+                return true; // 로컬 삭제도 막는다 — 안 그러면 다른 클라이언트와 화면이 어긋난다
+            }
+            BoardNetworkSync.Instance.RequestDeleteMarkerServerRpc(marker.NetworkMarkerId);
+            return true;
+        }
+
+        /// <summary>TryRequestNetworkMarkerDelete와 같은 모양 — 활성화/점령
+        /// 마커의 우클릭 상태 순환(이동→돌격→완료, 색 순환)용.</summary>
+        private bool TryRequestNetworkMarkerStateChange(MarkerBase marker, string state)
+        {
+            if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
+            {
+                return false;
+            }
+            if (BoardNetworkSync.Instance == null)
+            {
+                Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 마커 상태 변경 요청을 못 보냄");
+                return true;
+            }
+            BoardNetworkSync.Instance.RequestSetMarkerStateServerRpc(marker.NetworkMarkerId, state);
+            return true;
+        }
+
         private void OnActivationMarkerRightClicked(MarkerBase piece, bool shiftHeld)
         {
-            // 우클릭은 이동 → 돌격 → 완료를 계속 순환한다. shift+우클릭이 삭제.
-            BeginUndoTransaction();
             var marker = (ActivationMarker)piece;
             if (shiftHeld)
             {
+                if (TryRequestNetworkMarkerDelete(marker)) return;
+                BeginUndoTransaction();
                 Destroy(marker.gameObject);
                 CommitUndoTransaction();
                 return;
             }
+            // 우클릭은 이동 → 돌격 → 완료를 계속 순환한다.
             int idx = System.Array.IndexOf(ActivationMarker.StateSequence, marker.State);
-            marker.SetState(ActivationMarker.StateSequence[(idx + 1) % ActivationMarker.StateSequence.Length]);
+            string nextState = ActivationMarker.StateSequence[(idx + 1) % ActivationMarker.StateSequence.Length];
+            if (TryRequestNetworkMarkerStateChange(marker, nextState)) return;
+            BeginUndoTransaction();
+            marker.SetState(nextState);
             CommitUndoTransaction();
         }
 
         private void OnCaptureMarkerRightClicked(MarkerBase piece, bool shiftHeld)
         {
-            // 우클릭은 흰색 → 빨간색 → 파란색을 계속 순환한다. shift+우클릭이 삭제 —
-            // 색 순환에 종료 지점이 없어서(활성화 마커처럼 마지막에 사라지는 게
-            // 아님) 삭제는 별도 입력으로 뺐다.
-            BeginUndoTransaction();
             var marker = (CaptureMarker)piece;
             if (shiftHeld)
             {
+                if (TryRequestNetworkMarkerDelete(marker)) return;
+                BeginUndoTransaction();
                 Destroy(marker.gameObject);
                 CommitUndoTransaction();
                 return;
             }
+            // 우클릭은 흰색 → 빨간색 → 파란색을 계속 순환한다. 색 순환에
+            // 종료 지점이 없어서(활성화 마커처럼 마지막에 사라지는 게 아님)
+            // 삭제는 별도 입력으로 뺐다.
             int idx = System.Array.IndexOf(CaptureMarker.ColorSequence, marker.ColorState);
-            marker.SetColorState(CaptureMarker.ColorSequence[(idx + 1) % CaptureMarker.ColorSequence.Length]);
+            string nextState = CaptureMarker.ColorSequence[(idx + 1) % CaptureMarker.ColorSequence.Length];
+            if (TryRequestNetworkMarkerStateChange(marker, nextState)) return;
+            BeginUndoTransaction();
+            marker.SetColorState(nextState);
             CommitUndoTransaction();
         }
 
         private void OnIconMarkerRightClicked(MarkerBase piece, bool shiftHeld)
         {
             // 순환 없이 우클릭 한 번으로 바로 삭제(shift 여부는 상관없다).
+            if (TryRequestNetworkMarkerDelete(piece)) return;
             BeginUndoTransaction();
             Destroy(piece.gameObject);
             CommitUndoTransaction();

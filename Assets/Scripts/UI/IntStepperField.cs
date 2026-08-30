@@ -143,7 +143,7 @@ namespace TmgBoard
             label.fontSize = 14f;
             label.color = Color.white;
             label.alignment = TextAlignmentOptions.MidlineLeft;
-            label.enableWordWrapping = false;
+            label.textWrappingMode = TextWrappingModes.NoWrap;
             label.raycastTarget = false;
             return label;
         }

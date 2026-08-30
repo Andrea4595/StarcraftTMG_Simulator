@@ -130,35 +130,43 @@ namespace TmgBoard
                 var unit = piece.Unit;
                 if (seen.Add(unit))
                 {
-                    var models = new List<object>();
-                    foreach (var m in unit.Models)
-                    {
-                        models.Add(new Dictionary<string, object>
-                        {
-                            { "center", GameSaveIO.Vec2ToTree(m.Center) },
-                            { "rotation_degrees", (double)m.RotationDegrees },
-                            { "size_mm", GameSaveIO.Vec2ToTree(m.SizeMm) },
-                            { "fill_color", GameSaveIO.ColorToTree(m.FillColor) },
-                            { "damage", m.Damage },
-                            { "is_displacement", m.IsDisplacement },
-                            { "memo", m.Memo },
-                        });
-                    }
-                    var ranges = _unitRanges.TryGetValue(unit, out var unitRanges) ? unitRanges : new List<RangeSpec>();
-                    units.Add(new Dictionary<string, object>
-                    {
-                        { "unit_name", unit.UnitName }, { "team", unit.Team },
-                        { "coherency_inch", (double)unit.CoherencyInch }, { "move_inch", (double)unit.MoveInch },
-                        { "is_token", unit.IsToken }, { "can_move", unit.CanMove },
-                        { "supply_override", unit.SupplyOverride },
-                        { "supply_tiers", GameSaveIO.SupplyTiersToTree(unit.SupplyTiers) },
-                        { "ranges", GameSaveIO.RangesToTree(ranges) },
-                        { "detail", GameSaveIO.DetailToTree(unit.Detail) },
-                        { "models", models },
-                    });
+                    units.Add(BuildUnitTree(unit));
                 }
             }
             return units;
+        }
+
+        /// <summary>유닛 하나를 트리로 직렬화한다 — BuildUnitsTree(전체 저장)와
+        /// BoardNetworkSync 유닛 동기화(BoardManager.UnitSync.cs) 양쪽이 쓴다.</summary>
+        private Dictionary<string, object> BuildUnitTree(Unit unit)
+        {
+            var models = new List<object>();
+            foreach (var m in unit.Models)
+            {
+                models.Add(new Dictionary<string, object>
+                {
+                    { "center", GameSaveIO.Vec2ToTree(m.Center) },
+                    { "rotation_degrees", (double)m.RotationDegrees },
+                    { "size_mm", GameSaveIO.Vec2ToTree(m.SizeMm) },
+                    { "fill_color", GameSaveIO.ColorToTree(m.FillColor) },
+                    { "damage", m.Damage },
+                    { "is_displacement", m.IsDisplacement },
+                    { "memo", m.Memo },
+                });
+            }
+            var ranges = _unitRanges.TryGetValue(unit, out var unitRanges) ? unitRanges : new List<RangeSpec>();
+            return new Dictionary<string, object>
+            {
+                { "network_unit_id", unit.NetworkUnitId },
+                { "unit_name", unit.UnitName }, { "team", unit.Team },
+                { "coherency_inch", (double)unit.CoherencyInch }, { "move_inch", (double)unit.MoveInch },
+                { "is_token", unit.IsToken }, { "can_move", unit.CanMove },
+                { "supply_override", unit.SupplyOverride },
+                { "supply_tiers", GameSaveIO.SupplyTiersToTree(unit.SupplyTiers) },
+                { "ranges", GameSaveIO.RangesToTree(ranges) },
+                { "detail", GameSaveIO.DetailToTree(unit.Detail) },
+                { "models", models },
+            };
         }
 
         private List<object> BuildPendingUnitsTree()

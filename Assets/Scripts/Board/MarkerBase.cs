@@ -22,6 +22,12 @@ namespace TmgBoard
         private RectTransform _rectTransform;
         public RectTransform RectTransform => _rectTransform != null ? _rectTransform : (_rectTransform = (RectTransform)transform);
 
+        /// <summary>멀티플레이어 중 BoardNetworkSync가 호스트에서 발급한 id —
+        /// 삭제를 방송할 때 어느 마커인지 지목하는 용도(마커 자체는
+        /// NetworkObject가 아니라 각자 로컬로 만들어지므로 별도 식별자가
+        /// 필요하다). 1인용/미연결 상태에서는 -1.</summary>
+        public int NetworkMarkerId { get; set; } = -1;
+
         public Vector2 Center
         {
             get => RectTransform.anchoredPosition;

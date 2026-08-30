@@ -130,7 +130,7 @@ namespace TmgBoard
             body.fontSize = 14f;
             body.color = Color.white;
             body.alignment = TextAlignmentOptions.TopLeft;
-            body.enableWordWrapping = true;
+            body.textWrappingMode = TextWrappingModes.Normal;
             body.raycastTarget = false;
             return body;
         }
@@ -146,7 +146,7 @@ namespace TmgBoard
             label.fontStyle = style;
             label.color = color;
             label.alignment = TextAlignmentOptions.MidlineLeft;
-            label.enableWordWrapping = true;
+            label.textWrappingMode = TextWrappingModes.Normal;
             label.raycastTarget = false;
             return label;
         }
@@ -164,8 +164,8 @@ namespace TmgBoard
                     ? "미션 정보"
                     : MissionSettingsData.MissionName;
             _roundStatsLabel.text =
-                    $"라운드 길이: {MissionSettingsData.RoundLength}  ·  " +
-                    $"기본 서플라이: {MissionSettingsData.BaseSupply}  ·  " +
+                    $"라운드 길이: {MissionSettingsData.RoundLength}  -  " +
+                    $"기본 서플라이: {MissionSettingsData.BaseSupply}  -  " +
                     $"라운드 당 서플라이: {MissionSettingsData.SupplyPerRound}";
             _missionParametersLabel.text = OrEmpty(MissionSettingsData.MissionParameters);
             _scoringConditionsLabel.text = OrEmpty(MissionSettingsData.ScoringConditions);

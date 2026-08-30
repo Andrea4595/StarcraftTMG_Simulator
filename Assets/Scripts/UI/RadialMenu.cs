@@ -165,7 +165,7 @@ namespace TmgBoard
             label.alignment = TextAlignmentOptions.Center;
             label.fontSize = 16f;
             label.color = Color.white;
-            label.enableWordWrapping = false;
+            label.textWrappingMode = TextWrappingModes.NoWrap;
             label.raycastTarget = false; // 클릭 판정은 DialClickArea 하나가 전담.
         }
 

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using TMPro;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -36,9 +37,44 @@ namespace TmgBoard
                 return;
             }
 
-            if (!RosterImporter.TryImport(jsonText, _rosterImportTeam, out var units, out var tokens, out var tacticalCards, out var error))
+            // 형식 검증은 여기서 먼저 한다 — 파일 경로가 있는 지금 여기서만
+            // 의미 있는 에러 메시지를 보여줄 수 있다. 이 결과 자체는 버리고
+            // 아래에서 다시 파싱한다(멀티 연결 중이면 방송이 돌아왔을 때
+            // ApplyRosterImport가, 아니면 바로 아래에서) — 마커와 같은 패턴:
+            // 로컬 적용은 항상 같은 한 경로(ApplyRosterImport)를 거치게
+            // 하고, 텍스트가 작아서 두 번 파싱하는 비용은 무시할 만하다.
+            if (!RosterImporter.TryImport(jsonText, _rosterImportTeam, out _, out _, out _, out var error))
             {
                 Debug.LogWarning($"로스터 파일 형식이 올바르지 않습니다: {path} — {error}");
+                return;
+            }
+
+            // 멀티 연결 중이면 파일 내용을 그대로 방송한다 — 이 파일은 이
+            // 기기에만 있으므로, 파싱된 결과 구조체가 아니라 원본 JSON
+            // 텍스트를 보내고 각자 로컬로 똑같이 파싱한다.
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (BoardNetworkSync.Instance == null)
+                {
+                    Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 로스터 공유 요청을 못 보냄");
+                    return;
+                }
+                BoardNetworkSync.Instance.RequestImportRoster(_rosterImportTeam, jsonText);
+                return;
+            }
+
+            ApplyRosterImport(_rosterImportTeam, jsonText);
+        }
+
+        /// <summary>BoardNetworkSync.ImportRosterRpc가 방송을 받았을 때
+        /// 호출한다(호스트 자신도 포함, 파일을 고른 쪽도 포함 — 요청자도
+        /// 직접 적용하지 않고 이 방송을 거쳐서 적용한다). 미연결(1인용)
+        /// 로컬 로드도 OnRosterFileSelected에서 바로 여기로 온다.</summary>
+        internal void ApplyRosterImport(string team, string jsonText)
+        {
+            if (!RosterImporter.TryImport(jsonText, team, out var units, out var tokens, out var tacticalCards, out var error))
+            {
+                Debug.LogError($"[BoardManager] 로스터 텍스트 파싱 실패(team={team}): {error}");
                 return;
             }
 
@@ -49,10 +85,44 @@ namespace TmgBoard
             // 하나도 안 줬어도(형식은 맞았지만 내용이 빈 롤스터), 버튼을 다시
             // 안 보여준다. RefreshPendingList/RefreshRosterTokenList가 끝에서
             // 부르는 RefreshPanelLayout()이 이 집합을 보고 버튼/목록을 정리한다.
-            _rosterLoadedTeams.Add(_rosterImportTeam);
+            _rosterLoadedTeams.Add(team);
             RefreshPendingList();
             RefreshRosterTokenList();
             RefreshTacticalCardList();
+        }
+
+        // transferId별로 도착한 조각을 모은다 — BoardNetworkSync가 로스터
+        // JSON을 TextChunkSize 단위로 쪼개 보내므로(한 RPC에 다 실으면
+        // FastBufferWriter 오버플로우), 다 모일 때까지 여기서 들고 있는다.
+        private readonly Dictionary<int, RosterTransferBuffer> _rosterTransfersInProgress = new();
+        private class RosterTransferBuffer
+        {
+            public string Team;
+            public string[] Chunks;
+            public int ReceivedCount;
+        }
+
+        /// <summary>BoardNetworkSync.ImportRosterChunkRpc가 조각을 방송할
+        /// 때마다 호출한다(호스트 자신도 포함) — 같은 transferId의 조각이
+        /// 다 모이면 그제서야 이어붙여서 ApplyRosterImport로 적용한다.</summary>
+        internal void ReceiveRosterChunk(int transferId, string team, int chunkIndex, int totalChunks, string chunk)
+        {
+            if (!_rosterTransfersInProgress.TryGetValue(transferId, out var buffer))
+            {
+                buffer = new RosterTransferBuffer { Team = team, Chunks = new string[totalChunks] };
+                _rosterTransfersInProgress[transferId] = buffer;
+            }
+            if (buffer.Chunks[chunkIndex] == null)
+            {
+                buffer.Chunks[chunkIndex] = chunk;
+                buffer.ReceivedCount++;
+            }
+            if (buffer.ReceivedCount < totalChunks)
+            {
+                return;
+            }
+            _rosterTransfersInProgress.Remove(transferId);
+            ApplyRosterImport(buffer.Team, string.Concat(buffer.Chunks));
         }
 
         /// <summary>토큰 정의는 유닛과 달리 목록에서 지우지 않는다 — 몇 번이든

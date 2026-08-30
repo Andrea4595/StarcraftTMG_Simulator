@@ -464,7 +464,7 @@ namespace TmgBoard
             valueLabel.color = Color.white;
             valueLabel.fontStyle = FontStyles.Bold;
             valueLabel.alignment = TextAlignmentOptions.Center;
-            valueLabel.enableWordWrapping = false;
+            valueLabel.textWrappingMode = TextWrappingModes.NoWrap;
             valueLabel.raycastTarget = false;
 
             var labelGo = new GameObject("Label", typeof(RectTransform));
@@ -474,7 +474,7 @@ namespace TmgBoard
             labelText.fontSize = 10f;
             labelText.color = new Color(0.6f, 0.6f, 0.6f, 1f);
             labelText.alignment = TextAlignmentOptions.Center;
-            labelText.enableWordWrapping = false;
+            labelText.textWrappingMode = TextWrappingModes.NoWrap;
             labelText.raycastTarget = false;
         }
 
@@ -582,7 +582,7 @@ namespace TmgBoard
             label.color = color;
             label.fontStyle = FontStyles.Bold;
             label.alignment = TextAlignmentOptions.Center;
-            label.enableWordWrapping = false;
+            label.textWrappingMode = TextWrappingModes.NoWrap;
             label.raycastTarget = false;
         }
 
@@ -637,7 +637,7 @@ namespace TmgBoard
 
             void UpdateChevron(bool expanded)
             {
-                chevronLabel.text = expanded ? "▼" : "▶";
+                chevronLabel.text = expanded ? "v" : ">";
             }
             UpdateChevron(false);
             headerButton.onClick.AddListener(() =>
@@ -733,7 +733,7 @@ namespace TmgBoard
             chevronLabel.color = color;
             chevronLabel.fontStyle = FontStyles.Bold;
             chevronLabel.alignment = TextAlignmentOptions.MidlineLeft;
-            chevronLabel.enableWordWrapping = false;
+            chevronLabel.textWrappingMode = TextWrappingModes.NoWrap;
             chevronLabel.raycastTarget = false;
             var chevronLe = chevronGo.AddComponent<LayoutElement>();
             chevronLe.preferredWidth = 12f;
@@ -745,7 +745,7 @@ namespace TmgBoard
             nameLabel.fontSize = 13f;
             nameLabel.color = color;
             nameLabel.fontStyle = FontStyles.Bold;
-            nameLabel.enableWordWrapping = true;
+            nameLabel.textWrappingMode = TextWrappingModes.Normal;
             nameLabel.raycastTarget = false;
             var nameLe = nameGo.AddComponent<LayoutElement>();
             nameLe.flexibleWidth = 1f;
@@ -759,7 +759,7 @@ namespace TmgBoard
                 costLabel.fontSize = 12f;
                 costLabel.color = new Color(0.7f, 0.7f, 0.7f, 1f);
                 costLabel.alignment = TextAlignmentOptions.MidlineRight;
-                costLabel.enableWordWrapping = false;
+                costLabel.textWrappingMode = TextWrappingModes.NoWrap;
                 costLabel.raycastTarget = false;
             }
 
@@ -824,7 +824,7 @@ namespace TmgBoard
             label.fontSize = fontSize;
             label.color = color;
             label.fontStyle = style;
-            label.enableWordWrapping = true;
+            label.textWrappingMode = TextWrappingModes.Normal;
             label.raycastTarget = false;
             return label;
         }

@@ -189,22 +189,20 @@ namespace TmgBoard
         /// 아이콘류는 그냥 삭제)는 걸 그때그때 알려달라는 사용자 요청.</summary>
         private static readonly Dictionary<string, string> MarkerControlHints = new Dictionary<string, string>
         {
-            { "activation", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 상태 순환(이동→돌격→완료) · Shift+우클릭: 삭제" },
-            { "capture", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 색 순환(중립 / 플레이어 A / B) · Shift+우클릭: 삭제" },
-            { "movement", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 삭제" },
-            { "assault", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 삭제" },
-            { "combat", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 삭제" },
-            { "buff", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 삭제" },
-            { "debuff", "좌클릭: 배치 · 드래그: 이동 · 우클릭: 삭제" },
+            { "activation", "좌클릭: 배치 - 드래그: 이동 - 우클릭: 상태 순환(이동->돌격->완료) - Shift+우클릭: 삭제" },
+            { "capture", "좌클릭: 배치 - 드래그: 이동 - 우클릭: 색 순환(중립 / 플레이어 A / B) - Shift+우클릭: 삭제" },
+            { "movement", "좌클릭: 배치 - 드래그: 이동 - 우클릭: 삭제" },
+            { "assault", "좌클릭: 배치 - 드래그: 이동 - 우클릭: 삭제" },
+            { "combat", "좌클릭: 배치 - 드래그: 이동 - 우클릭: 삭제" },
+            { "buff", "좌클릭: 배치 - 드래그: 이동 - 우클릭: 삭제" },
+            { "debuff", "좌클릭: 배치 - 드래그: 이동 - 우클릭: 삭제" },
         };
 
         private TextMeshProUGUI _markerHintLabel;
 
-        private Texture2D _activationTextureMovement;
-        private Texture2D _activationTextureAssault;
-        private Texture2D _activationTextureDone;
-        private Texture2D _captureTexture;
-        private Dictionary<string, Texture2D> _iconTextures;
+        private ActivationMarker _activationMarkerPrefab;
+        private CaptureMarker _captureMarkerPrefab;
+        private Dictionary<string, IconMarker> _iconMarkerPrefabsByKind;
 
         private string _placingMarkerKind = ""; // 비었으면 없음. MarkerBarEntries의 Kind 값 중 하나
         private MarkerBase _draggingMarker;
@@ -285,19 +283,22 @@ namespace TmgBoard
             measureLayer = measureLayerRef;
         }
 
-        /// <summary>마커(활성화/점령/아이콘) 배치용 텍스처와 레이어를 별도로
+        /// <summary>마커(활성화/점령/아이콘) 배치용 프리팹과 레이어를 별도로
         /// 주입한다 — Configure()가 이미 파라미터가 많아서 마커 쪽은 분리했다.
-        /// 마커바 UI는 다음 Start()에서 지어진다.</summary>
+        /// 마커바 UI는 다음 Start()에서 지어진다. 각 프리팹은 자기 텍스처/크기를
+        /// 이미 갖고 있으므로 여기선 kind별 조회용 딕셔너리만 만든다.</summary>
         public void ConfigureMarkers(RectTransform markerLayerRef,
-                Texture2D activationMovement, Texture2D activationAssault, Texture2D activationDone,
-                Texture2D captureTexture, Dictionary<string, Texture2D> iconTextures)
+                ActivationMarker activationMarkerPrefab, CaptureMarker captureMarkerPrefab,
+                IconMarker[] iconMarkerPrefabs)
         {
             markerLayer = markerLayerRef;
-            _activationTextureMovement = activationMovement;
-            _activationTextureAssault = activationAssault;
-            _activationTextureDone = activationDone;
-            _captureTexture = captureTexture;
-            _iconTextures = iconTextures;
+            _activationMarkerPrefab = activationMarkerPrefab;
+            _captureMarkerPrefab = captureMarkerPrefab;
+            _iconMarkerPrefabsByKind = new Dictionary<string, IconMarker>();
+            foreach (var prefab in iconMarkerPrefabs)
+            {
+                if (prefab != null) _iconMarkerPrefabsByKind[prefab.Kind] = prefab;
+            }
         }
 
         /// <summary>로스터 JSON 임포트용 파일 탐색기 다이얼로그를 주입한다.</summary>
@@ -450,8 +451,7 @@ namespace TmgBoard
         /// <summary>예비대 목록에 정의를 하나 등록한다(테스트/로스터 임포트용).</summary>
         public void AddPendingUnit(PendingUnitDef def)
         {
-            _pendingUnits.Add(def);
-            RefreshPendingList();
+            AddPendingUnitDef(def);
         }
 
         private Base CreatePieceObject(Unit unit, Vector2 sizeMm, Color fillColor, bool isDisplacement)
@@ -477,6 +477,8 @@ namespace TmgBoard
             UpdateHoveredUnit();
             UpdateUnitDetailPanel();
             UpdateScreenshotToast();
+            UpdateMarkerMoveTweens();
+            UpdatePieceMoveTweens();
 
             // 유닛 이동(리딩 모델)/팔로워 배치 중에만 적 인게이지 경고를
             // 켠다 — 일반 모델 드래그(유닛 이동 워크플로 밖)에는 적용하지
@@ -524,6 +526,10 @@ namespace TmgBoard
                 if (Input.GetMouseButtonUp(0))
                 {
                     _draggingFollower = null;
+                    // 팔로워를 하나 옮길 때마다 공유한다(마커 드래그와 같은
+                    // 패턴 — 끝난 시점 위치만, 실시간 아님). FinishLeadingMove의
+                    // 첫 공유와 이유는 같다.
+                    BroadcastUnitIfNetworked(_unitMoveUnit);
                     return;
                 }
                 if (TryGetLocalMouse(out var local))
@@ -648,9 +654,14 @@ namespace TmgBoard
             }
             else
             {
-                // 변위 처리도 없었고 유닛 이동도 아닌 일반 드래그 완료 — 여기서
-                // 바로 되돌리기 트랜잭션을 커밋한다.
+                // 변위 처리도 없었고 유닛 이동도 아닌 일반 드래그 완료(로스터
+                // 토큰 최초 배치 포함 — BeginRosterTokenPlacement도 이 경로로
+                // 커밋된다) — 여기서 바로 되돌리기 트랜잭션을 커밋한다.
                 CommitUndoTransaction();
+                if (movedPiece != null)
+                {
+                    BroadcastUnitIfNetworked(movedPiece.Unit);
+                }
             }
         }
 
@@ -879,6 +890,11 @@ namespace TmgBoard
                 Destroy(model.gameObject);
             }
             unit.Models.Clear();
+            // 이 유닛이 배치/이동 중 한 번이라도 방송된 적 있으면(NetworkUnitId
+            // 배정됨) 보드에서 사라졌다고 상대에게도 알린다 — 안 그러면 상대
+            // 화면엔 이 유닛이 계속 남아있는데 예비대에도 새로 나타나는
+            // 어긋난 상태가 된다.
+            BroadcastDeleteUnitIfNetworked(unit);
 
             // 되돌려진 유닛은 재배치 시 def.Ranges로 다시 등록되므로, 이 (곧
             // 버려질) Unit 객체에 대한 항목은 지운다 — 안 지우면 _unitRanges가
@@ -894,8 +910,7 @@ namespace TmgBoard
             }
             RefreshRangeOverlays();
 
-            _pendingUnits.Add(def);
-            RefreshPendingList();
+            AddPendingUnitDef(def);
             _menuTarget = null;
             CommitUndoTransaction();
         }

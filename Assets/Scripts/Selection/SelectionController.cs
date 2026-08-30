@@ -653,7 +653,7 @@ namespace TmgBoard
             label.fontStyle = style;
             label.color = Color.white;
             label.raycastTarget = false;
-            label.enableWordWrapping = true;
+            label.textWrappingMode = TextWrappingModes.Normal;
             return label;
         }
 

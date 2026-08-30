@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using TmgBoard;
+using Unity.Netcode;
+using Unity.Netcode.Transports.UTP;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.SceneManagement;
@@ -39,6 +41,7 @@ public static class GameFlowBootstrap
     private static void Init()
     {
         EnsureEventSystem();
+        EnsureNetworkManager();
         SceneManager.sceneLoaded += (scene, mode) => HandleSceneLoaded(scene);
         // sceneLoaded 이벤트는 앱 시작 시 최초로 로드된 씬에는 발생하지
         // 않으므로(Unity의 알려진 동작), 지금 이미 떠 있는 씬은 직접 처리한다.
@@ -56,6 +59,62 @@ public static class GameFlowBootstrap
         eventSystemGo.AddComponent<EventSystem>();
         eventSystemGo.AddComponent<StandaloneInputModule>();
         Object.DontDestroyOnLoad(eventSystemGo);
+    }
+
+    /// <summary>NGO는 씬을 넘나들며 살아있는 단일 NetworkManager를 필요로
+    /// 한다 — EventSystem과 같은 이유로 여기서 한 번만 만든다. 실제 전송은
+    /// Relay를 거치므로 UnityTransport를 붙여둔다(RelayConnectionTest가
+    /// SetHostRelayData/SetClientRelayData로 접속 직전에 채운다).</summary>
+    private static void EnsureNetworkManager()
+    {
+        if (Object.FindFirstObjectByType<NetworkManager>() != null)
+        {
+            return;
+        }
+
+        var networkManagerGo = new GameObject("NetworkManager");
+        var transport = networkManagerGo.AddComponent<UnityTransport>();
+        var networkManager = networkManagerGo.AddComponent<NetworkManager>();
+        // AddComponent로 방금 만든 인스턴스는 NetworkConfig가 아직 비어있다
+        // (씬/프리팹에서 역직렬화될 때만 자동으로 채워지는 필드) — 직접 만들어야 한다.
+        if (networkManager.NetworkConfig == null)
+        {
+            networkManager.NetworkConfig = new NetworkConfig();
+        }
+        networkManager.NetworkConfig.NetworkTransport = transport;
+        RegisterNetworkPrefabs(networkManager);
+        Object.DontDestroyOnLoad(networkManagerGo);
+    }
+
+    /// <summary>BoardNetworkSync(RPC 창구, Assets/Resources/Multiplayer/)는
+    /// 클라이언트에 복제되려면 스폰 시점에 이미 등록된 네트워크 프리팹이어야
+    /// 한다 — DefaultNetworkPrefabs.asset(에디터 자동 등록) 목록에 기대지
+    /// 않고 코드로 명시 등록한다. 마커(ActivationMarker 등)는 NetworkObject를
+    /// 갖고 있지만(향후를 위해 남겨둠) 실제로는 NGO 스폰을 안 쓰므로(NGO가
+    /// NetworkObject를 UI 마커 레이어 밑으로 재부모화하는 걸 막아서 —
+    /// BoardNetworkSync.cs 참고) 여기 등록할 필요가 없다.</summary>
+    private static void RegisterNetworkPrefabs(NetworkManager networkManager)
+    {
+        string[] networkResourcePaths =
+        {
+            "Multiplayer/BoardNetworkSync",
+        };
+
+        foreach (var path in networkResourcePaths)
+        {
+            var prefab = Resources.Load<GameObject>(path);
+            if (prefab == null)
+            {
+                Debug.LogError($"[GameFlowBootstrap] 네트워크 프리팹을 못 찾음: {path}");
+                continue;
+            }
+            if (prefab.GetComponent<NetworkObject>() == null)
+            {
+                Debug.LogError($"[GameFlowBootstrap] 네트워크 프리팹에 NetworkObject가 없음: {path}");
+                continue;
+            }
+            networkManager.AddNetworkPrefab(prefab);
+        }
     }
 
     private static void HandleSceneLoaded(Scene scene)
@@ -110,6 +169,12 @@ public static class GameFlowBootstrap
         entry.LoadGamePicked += () => SceneManager.LoadScene(LoadGameSceneName);
         entry.MapAuthoringPicked += () => SceneManager.LoadScene(MapAuthoringSceneName);
         entry.MissionAuthoringPicked += () => SceneManager.LoadScene(MissionAuthoringSceneName);
+
+        // 멀티 기능 설계 전 Relay 연결 배관만 검증하는 임시 패널(화면 왼쪽
+        // 아래 구석) — 실제 화면이 정해지면 걷어낼 것.
+        var relayTestGo = new GameObject("RelayConnectionTest", typeof(RectTransform));
+        relayTestGo.transform.SetParent(canvasGo.transform, false);
+        relayTestGo.AddComponent<RelayConnectionTest>();
     }
 
     /// <summary>"이어하기" 화면 — Saves/ 폴더의 저장 파일 목록. 고르면 그
@@ -355,23 +420,20 @@ public static class GameFlowBootstrap
         board.Configure(baseLayerRect, mapAreaRect, radialMenu, damageDialog, memoDialog, guideline, memoOverlay,
                 rangeInputDialog, rangeOutlineLayer, rangeFillLayer, measureLayer);
 
-        // 마커 텍스처는 Resources/Tokens/*.png(Godot의 Tokens/ 폴더에서 그대로
-        // 복사)에서 불러온다 — Resources.Load는 임포트 텍스처 타입(Sprite냐
-        // Default냐)을 안 가려서, 별도 임포트 설정을 손대지 않아도 된다.
-        var iconTextures = new Dictionary<string, Texture2D>
+        // 마커는 Resources/Markers/*.prefab에서 불러온다 — 텍스처/크기/kind는
+        // 프리팹에 이미 채워져 있으므로 여기선 인스턴스화용 참조만 가져온다.
+        var iconMarkerPrefabs = new[]
         {
-            { "movement", Resources.Load<Texture2D>("Tokens/movement") },
-            { "assault", Resources.Load<Texture2D>("Tokens/assault") },
-            { "combat", Resources.Load<Texture2D>("Tokens/combat") },
-            { "buff", Resources.Load<Texture2D>("Tokens/buff") },
-            { "debuff", Resources.Load<Texture2D>("Tokens/debuff") },
+            Resources.Load<IconMarker>("Markers/IconMarker_Movement"),
+            Resources.Load<IconMarker>("Markers/IconMarker_Assault"),
+            Resources.Load<IconMarker>("Markers/IconMarker_Combat"),
+            Resources.Load<IconMarker>("Markers/IconMarker_Buff"),
+            Resources.Load<IconMarker>("Markers/IconMarker_Debuff"),
         };
         board.ConfigureMarkers(markerLayerRect,
-                Resources.Load<Texture2D>("Tokens/activated-movement"),
-                Resources.Load<Texture2D>("Tokens/activated-assault"),
-                Resources.Load<Texture2D>("Tokens/activated-done"),
-                Resources.Load<Texture2D>("Tokens/flag"),
-                iconTextures);
+                Resources.Load<ActivationMarker>("Markers/ActivationMarker"),
+                Resources.Load<CaptureMarker>("Markers/CaptureMarker"),
+                iconMarkerPrefabs);
         board.ConfigureRoster(rosterFileDialog);
         board.ConfigureTerrain(terrainLayerRect);
         board.ConfigureDiceRoll(diceRollDialog);

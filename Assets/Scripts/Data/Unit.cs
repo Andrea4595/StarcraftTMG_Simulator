@@ -15,6 +15,13 @@ namespace TmgBoard
         public float MoveInch = GameConstants.DefaultMoveInch;
         public readonly List<Base> Models = new List<Base>();
 
+        /// <summary>멀티플레이어 중 이 유닛을 전체에 처음 방송할 때 발급되는
+        /// 식별자 — 이후 재이동(StartUnitMove를 다시 태워 옮기는 경우)을
+        /// 다시 방송할 때, 받는 쪽이 "새 유닛"이 아니라 "이미 있는 이 유닛의
+        /// 갱신"임을 알아보는 용도. 아직 한 번도 방송된 적 없으면(1인용,
+        /// 또는 멀티 연결 전에 만들어진 유닛) -1.</summary>
+        public int NetworkUnitId = -1;
+
         /// <summary>로스터 "tokens" 배열에서 온 토큰 유닛이면 true. 다이얼 메뉴에서
         /// 데미지 기록/유닛 되돌리기/유닛 이동 시작을 감춘다.</summary>
         public bool IsToken;

@@ -62,22 +62,33 @@ namespace TmgBoard
 
             if (Input.GetMouseButtonDown(0) && !IsPointerOverUi())
             {
+                // 방금 확정된 변위 베이스의 새 위치를 공유한다(사용자 요청,
+                // 2026-08-30) — 그 베이스가 속한 유닛은 지금 옮기는 중인
+                // 유닛(_unitMoveUnit)과 다를 수 있으므로 따로 방송한다.
+                var placedPiece = _displacementQueue[0];
                 _displacementQueue.RemoveAt(0);
+                BroadcastUnitIfNetworked(placedPiece.Unit);
                 if (_displacementQueue.Count == 0)
                 {
                     bool resume = _displacementResumeLeadingFinish;
+                    var anchor = _displacementAnchor;
                     _displacementAnchor = null;
                     _displacementResumeLeadingFinish = false;
                     if (resume)
                     {
-                        // 유닛 이동/배치 중에 변위를 통과한 경우 — 그 트랜잭션을 이어서 마무리한다.
+                        // 유닛 이동/배치 중에 변위를 통과한 경우 — 그 트랜잭션을 이어서
+                        // 마무리한다(anchor 자신의 공유는 FinishLeadingMove 이후
+                        // 이어지는 CompleteUnitMove 경로에서 자연히 일어난다).
                         FinishLeadingMove();
                     }
                     else
                     {
                         // 일반 드래그가 변위 베이스를 밀어낸 경우 — 원래 드래그부터 지금
-                        // 이 배치까지를 한 트랜잭션으로 커밋한다.
+                        // 이 배치까지를 한 트랜잭션으로 커밋한다. 이 경로는 EndPieceDrag의
+                        // "일반 드래그" 분기를 안 타서(변위 처리로 새 지점) anchor 자신의
+                        // 최종 위치가 아직 공유된 적 없다 — 여기서 같이 공유한다.
                         CommitUndoTransaction();
+                        BroadcastUnitIfNetworked(anchor.Unit);
                     }
                 }
             }

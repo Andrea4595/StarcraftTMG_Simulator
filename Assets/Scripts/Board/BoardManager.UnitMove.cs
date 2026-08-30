@@ -132,6 +132,12 @@ namespace TmgBoard
                 CompleteUnitMove();
                 return;
             }
+            // 팔로워 단계로 들어가는 시점(리딩 모델 확정 + 팔로워 자동 배치
+            // 직후)에 한 번 공유하고, 이후 팔로워를 하나씩 드래그해서 옮길
+            // 때마다(Update()의 _draggingFollower 마우스업 처리) 또 공유한다
+            // — 사용자 요청(2026-08-30): 전체 배치가 다 끝날 때까지 기다리지
+            // 말고 팔로워 단계 중간중간도 상대에게 보여달라.
+            BroadcastUnitIfNetworked(_unitMoveUnit);
             ShowUnitMovePanel(true);
         }
 
@@ -434,6 +440,11 @@ namespace TmgBoard
         private void CompleteUnitMove()
         {
             CommitUndoTransaction();
+            // 유닛 이동 워크플로우(배치든 재이동이든) 전체가 여기서 확정된다
+            // — 되돌리기 가능한 유일한 시점이라, 중간 드래그 과정 대신 이
+            // "완료됨" 순간의 최종 상태 하나만 상대에게 방송한다(마커와
+            // 같은 원칙 — BoardManager.UnitSync.cs 참고).
+            BroadcastUnitIfNetworked(_unitMoveUnit);
             EndUnitMove();
         }
 
@@ -449,10 +460,14 @@ namespace TmgBoard
                     Destroy(model.gameObject);
                 }
                 _unitMoveUnit.Models.Clear();
+                // 팔로워 단계 도중이었다면(2026-08-30 기능) 이미 상대에게
+                // 중간 상태가 방송돼있을 수 있다 — 그 쪽에도 지우라고
+                // 알려준다. 아직 한 번도 방송된 적 없으면(NetworkUnitId
+                // 미배정) 상대는 이 유닛을 아예 모르므로 알릴 것도 없다.
+                BroadcastDeleteUnitIfNetworked(_unitMoveUnit);
                 if (_deploymentDefSnapshot != null)
                 {
-                    _pendingUnits.Add(_deploymentDefSnapshot);
-                    RefreshPendingList();
+                    AddPendingUnitDef(_deploymentDefSnapshot);
                 }
             }
             else
@@ -464,6 +479,10 @@ namespace TmgBoard
                         kv.Key.Center = kv.Value;
                     }
                 }
+                // 재이동 취소 — 되돌린 원래 위치를 다시 방송한다. 상대는 이미
+                // 받았던 중간 상태에서 이 원래 위치로(같은 부드러운 트윈
+                // 경로로) 되돌아간다.
+                BroadcastUnitIfNetworked(_unitMoveUnit);
             }
             _draggingPiece = null;
             _draggingFollower = null;
@@ -558,7 +577,7 @@ namespace TmgBoard
             _unitMoveWarningLabel.text = "코헤런시를 벗어나는 모델이 있습니다.";
             _unitMoveWarningLabel.fontSize = 13f;
             _unitMoveWarningLabel.color = new Color(1f, 0.3f, 0.3f, 1f);
-            _unitMoveWarningLabel.enableWordWrapping = true;
+            _unitMoveWarningLabel.textWrappingMode = TextWrappingModes.Normal;
             warningGo.SetActive(false);
 
             var btnGo = new GameObject("CompleteButton", typeof(RectTransform));

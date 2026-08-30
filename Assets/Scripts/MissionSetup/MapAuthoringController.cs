@@ -645,7 +645,7 @@ namespace TmgBoard
             t.fontSize = 12f;
             t.color = Color.white;
             t.raycastTarget = false;
-            t.enableWordWrapping = true;
+            t.textWrappingMode = TextWrappingModes.Normal;
             return t;
         }
 
