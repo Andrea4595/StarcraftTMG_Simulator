@@ -240,6 +240,8 @@ public static class GameFlowBootstrap
         weaponProfileDialog.transform.SetParent(canvasGo.transform, false);
         var exitConfirmDialog = new GameObject("ExitConfirmDialog").AddComponent<ConfirmDialog>();
         exitConfirmDialog.transform.SetParent(canvasGo.transform, false);
+        var missionInfoDialog = new GameObject("MissionInfoDialog").AddComponent<MissionInfoDialog>();
+        missionInfoDialog.transform.SetParent(canvasGo.transform, false);
 
         var guideline = new GameObject("Guideline").AddComponent<GuidelineOverlay>();
         guideline.transform.SetParent(mapAreaRect, false);
@@ -295,6 +297,7 @@ public static class GameFlowBootstrap
         board.ConfigureWeaponProfile(weaponProfileDialog);
         board.ConfigureExit(exitConfirmDialog);
         scoreboard.SetBoardManager(board);
+        scoreboard.SetMissionInfoDialog(missionInfoDialog);
 
         if (MapData.HasData && GameConstants.MapSizePresets.TryGetValue(MapData.MapPreset, out var mapSize))
         {

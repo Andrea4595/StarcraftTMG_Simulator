@@ -8,6 +8,7 @@ namespace TmgBoard
     {
         public static bool HasData;
 
+        public static string MissionName = "";
         public static string MissionParameters = "";
         public static string ScoringConditions = "";
         public static string AdditionalConditions = "";
@@ -30,6 +31,7 @@ namespace TmgBoard
         public static void Clear()
         {
             HasData = false;
+            MissionName = "";
             MissionParameters = "";
             ScoringConditions = "";
             AdditionalConditions = "";

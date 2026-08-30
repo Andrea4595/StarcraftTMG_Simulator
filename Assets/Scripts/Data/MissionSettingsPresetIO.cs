@@ -12,11 +12,12 @@ namespace TmgBoard
     /// MapPresetIO의 Deployments/와 별개인 Missions/ 폴더.</summary>
     public static class MissionSettingsPresetIO
     {
-        public static void Save(string path, string missionParameters, string scoringConditions,
+        public static void Save(string path, string missionName, string missionParameters, string scoringConditions,
                 string additionalConditions, int baseSupply, int supplyPerRound, int roundLength, string engagementScale)
         {
             var sb = new StringBuilder();
             sb.Append("{\n");
+            sb.Append($"  \"mission_name\": \"{Escape(missionName)}\",\n");
             sb.Append($"  \"mission_parameters\": \"{Escape(missionParameters)}\",\n");
             sb.Append($"  \"scoring_conditions\": \"{Escape(scoringConditions)}\",\n");
             sb.Append($"  \"additional_conditions\": \"{Escape(additionalConditions)}\",\n");
@@ -29,10 +30,11 @@ namespace TmgBoard
             File.WriteAllText(path, sb.ToString());
         }
 
-        public static bool TryLoad(string jsonText, out string missionParameters, out string scoringConditions,
+        public static bool TryLoad(string jsonText, out string missionName, out string missionParameters, out string scoringConditions,
                 out string additionalConditions, out int baseSupply, out int supplyPerRound, out int roundLength,
                 out string engagementScale, out string error)
         {
+            missionName = "";
             missionParameters = "";
             scoringConditions = "";
             additionalConditions = "";
@@ -59,6 +61,7 @@ namespace TmgBoard
                 return false;
             }
 
+            missionName = GetString(root, "mission_name");
             missionParameters = GetString(root, "mission_parameters");
             scoringConditions = GetString(root, "scoring_conditions");
             additionalConditions = GetString(root, "additional_conditions");

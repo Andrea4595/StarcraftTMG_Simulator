@@ -32,6 +32,7 @@ namespace TmgBoard
 
         private RectTransform Root => (RectTransform)transform;
 
+        private TMP_InputField _missionNameField;
         private TMP_InputField _missionParametersField;
         private TMP_InputField _scoringConditionsField;
         private TMP_InputField _additionalConditionsField;
@@ -111,6 +112,11 @@ namespace TmgBoard
             // 참고).
             layout.childControlHeight = true;
             layout.childForceExpandHeight = false;
+
+            // 미션 이름은 한 줄짜리 입력칸 — 다른 3개(멀티라인)와 같은 이유로
+            // 한 번만 짓고 프리셋을 불러올 때도 계속 재사용한다(CreateSingleLineField
+            // 참고, 캐럿/IME 처리는 CreateMultilineField와 동일한 필요최소치).
+            _missionNameField = CreateSingleLineField(panelRect, "미션 이름");
 
             // 스탯 행 컨테이너는 여기서 한 번만 만든다 — 실제 채우기는
             // RefreshStatRow()가 한다(IntStepperField가 값을 나중에 바꿀
@@ -329,6 +335,78 @@ namespace TmgBoard
             return inputField;
         }
 
+        /// <summary>미션 이름 한 줄짜리 입력칸 — CreateMultilineField와 같은
+        /// 캐럿/IME 고정 절차(FlushImeComposition → enabled 껐다 켜기 →
+        /// FixCaretMaterial)를 그대로 거친다(이 프로젝트에서 bare
+        /// AddComponent&lt;TMP_InputField&gt;()는 항상 이 처리가 필요하다 —
+        /// 위 CreateMultilineField의 주석에 기록된 실제로 겪은 버그들 참고).
+        /// 스크롤바 없이 한 줄만 받으므로 그 부분만 뺐다.</summary>
+        private static TMP_InputField CreateSingleLineField(Transform parent, string labelText, float fieldHeight = 32f)
+        {
+            var groupGo = new GameObject($"Field_{labelText}", typeof(RectTransform));
+            groupGo.transform.SetParent(parent, false);
+            var groupLayout = groupGo.AddComponent<VerticalLayoutGroup>();
+            groupLayout.spacing = 4f;
+            groupLayout.childControlWidth = true;
+            groupLayout.childForceExpandWidth = true;
+            groupLayout.childControlHeight = true;
+            groupLayout.childForceExpandHeight = false;
+            var groupLe = groupGo.AddComponent<LayoutElement>();
+            groupLe.preferredHeight = fieldHeight + 24f;
+
+            var labelGo = new GameObject("Label", typeof(RectTransform));
+            labelGo.transform.SetParent(groupGo.transform, false);
+            var labelLe = labelGo.AddComponent<LayoutElement>();
+            labelLe.preferredHeight = 18f;
+            var label = labelGo.AddComponent<TextMeshProUGUI>();
+            label.text = labelText;
+            label.fontSize = 13f;
+            label.color = new Color(0.8f, 0.8f, 0.8f, 1f);
+            label.raycastTarget = false;
+
+            var fieldGo = new GameObject("InputField", typeof(RectTransform));
+            fieldGo.transform.SetParent(groupGo.transform, false);
+            var fieldLe = fieldGo.AddComponent<LayoutElement>();
+            fieldLe.preferredHeight = fieldHeight;
+            var bg = fieldGo.AddComponent<Image>();
+            bg.color = new Color(0.2f, 0.2f, 0.2f, 1f);
+            var inputField = fieldGo.AddComponent<TMP_InputField>();
+            inputField.lineType = TMP_InputField.LineType.SingleLine;
+
+            var textAreaGo = new GameObject("TextArea", typeof(RectTransform));
+            textAreaGo.transform.SetParent(fieldGo.transform, false);
+            var textAreaRect = (RectTransform)textAreaGo.transform;
+            textAreaRect.anchorMin = Vector2.zero;
+            textAreaRect.anchorMax = Vector2.one;
+            textAreaRect.offsetMin = new Vector2(8f, 4f);
+            textAreaRect.offsetMax = new Vector2(-8f, -4f);
+            textAreaGo.AddComponent<RectMask2D>();
+
+            var textGo = new GameObject("Text", typeof(RectTransform));
+            textGo.transform.SetParent(textAreaGo.transform, false);
+            var textRect = (RectTransform)textGo.transform;
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.offsetMin = Vector2.zero;
+            textRect.offsetMax = Vector2.zero;
+            var text = textGo.AddComponent<TextMeshProUGUI>();
+            text.fontSize = 14f;
+            text.color = Color.white;
+            text.enableWordWrapping = false;
+
+            inputField.textViewport = textAreaRect;
+            inputField.textComponent = text;
+            inputField.text = "";
+            inputField.onFocusSelectAll = false;
+            FlushImeComposition();
+            inputField.enabled = false;
+            inputField.enabled = true;
+            FixCaretMaterial(inputField);
+            inputField.onSelect.AddListener(_ => FixCaretMaterial(inputField));
+
+            return inputField;
+        }
+
         /// <summary>TMP_InputField가 필요할 때 내부적으로 만드는 "Caret"
         /// 자식(TMP_SelectionCaret)의 Material이 코드로 직접 컴포넌트를
         /// 붙였을 때는 비어 있어서 캐럿이 안 그려지던 문제 — 사용자가
@@ -403,6 +481,7 @@ namespace TmgBoard
         {
             MissionSettingsData.Clear();
             MissionSettingsData.HasData = true;
+            MissionSettingsData.MissionName = _missionNameField.text;
             MissionSettingsData.MissionParameters = _missionParametersField.text;
             MissionSettingsData.ScoringConditions = _scoringConditionsField.text;
             MissionSettingsData.AdditionalConditions = _additionalConditionsField.text;
@@ -448,7 +527,7 @@ namespace TmgBoard
 
             try
             {
-                MissionSettingsPresetIO.Save(path, _missionParametersField.text, _scoringConditionsField.text,
+                MissionSettingsPresetIO.Save(path, _missionNameField.text, _missionParametersField.text, _scoringConditionsField.text,
                         _additionalConditionsField.text, _baseSupply, _supplyPerRound, _roundLength, _engagementScale);
                 RefreshPresetList();
             }
@@ -550,7 +629,8 @@ namespace TmgBoard
             itemBtn.targetGraphic = itemBg;
             itemBtn.onClick.AddListener(() => LoadPreset(preset));
 
-            var nameLabel = CreateLabel((RectTransform)itemGo.transform, Path.GetFileNameWithoutExtension(path));
+            string displayName = string.IsNullOrEmpty(preset.MissionName) ? Path.GetFileNameWithoutExtension(path) : preset.MissionName;
+            var nameLabel = CreateLabel((RectTransform)itemGo.transform, displayName);
             nameLabel.fontSize = 13f;
             nameLabel.fontStyle = FontStyles.Bold;
             var nameLe = nameLabel.gameObject.AddComponent<LayoutElement>();
@@ -601,6 +681,7 @@ namespace TmgBoard
             // (FlushImeComposition 주석 참고) — .text 대입도 내부적으로
             // UpdateLabel()을 다시 태운다.
             FlushImeComposition();
+            SetTextResetCaret(_missionNameField, preset.MissionName);
             SetTextResetCaret(_missionParametersField, preset.MissionParameters);
             SetTextResetCaret(_scoringConditionsField, preset.ScoringConditions);
             SetTextResetCaret(_additionalConditionsField, preset.AdditionalConditions);
@@ -662,7 +743,7 @@ namespace TmgBoard
             {
                 return false;
             }
-            if (!MissionSettingsPresetIO.TryLoad(jsonText, out var missionParameters, out var scoringConditions,
+            if (!MissionSettingsPresetIO.TryLoad(jsonText, out var missionName, out var missionParameters, out var scoringConditions,
                     out var additionalConditions, out var baseSupply, out var supplyPerRound, out var roundLength,
                     out var engagementScale, out _))
             {
@@ -670,6 +751,7 @@ namespace TmgBoard
             }
             preset = new MissionPresetData
             {
+                MissionName = missionName,
                 MissionParameters = missionParameters,
                 ScoringConditions = scoringConditions,
                 AdditionalConditions = additionalConditions,
@@ -683,6 +765,7 @@ namespace TmgBoard
 
         private class MissionPresetData
         {
+            public string MissionName;
             public string MissionParameters;
             public string ScoringConditions;
             public string AdditionalConditions;

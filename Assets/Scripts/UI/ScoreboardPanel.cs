@@ -29,6 +29,7 @@ namespace TmgBoard
 
         private const float RoundPipSize = 16f;
         private const float RoundPipSpacing = 3f;
+        private const float MissionButtonWidth = 44f;
         private static readonly Color RoundActiveColor = new Color(1f, 0.85f, 0.1f, 1f);
         private static readonly Color RoundInactiveColor = new Color(0.45f, 0.45f, 0.45f, 1f);
 
@@ -51,6 +52,17 @@ namespace TmgBoard
         public void SetBoardManager(BoardManager board)
         {
             _board = board;
+        }
+
+        // ExitConfirmDialog 등 다른 다이얼로그처럼 부트스트랩이 따로 만들어서
+        // 나중에 넣어준다(Awake() 시점엔 아직 없을 수 있음) — 버튼 자체의
+        // 활성/비활성은 MissionSettingsData.HasData만 보면 되므로(이 static
+        // 데이터는 씬 로드 전에 이미 확정) 이 참조가 늦게 들어와도 문제없다.
+        private MissionInfoDialog _missionInfoDialog;
+
+        public void SetMissionInfoDialog(MissionInfoDialog dialog)
+        {
+            _missionInfoDialog = dialog;
         }
 
         private void Awake()
@@ -254,8 +266,20 @@ namespace TmgBoard
             centerRect.pivot = new Vector2(0.5f, 0.5f);
             centerRect.anchoredPosition = Vector2.zero;
 
-            var layout = centerGo.AddComponent<VerticalLayoutGroup>();
-            layout.spacing = 2f;
+            // 가로 배치로 바꿨다 — "라운드"(타이틀+체커) 블록 옆에 "미션"
+            // 버튼을 붙이되, 라운드 블록 자체는 계속 화면 상단 정중앙에
+            // 있어야 한다는 사용자 지정 때문에, 반대쪽에 버튼과 정확히
+            // 같은 폭의 투명 스페이서를 둬서 좌우 대칭을 맞춘다(아래 참고) —
+            // 이 Center 전체는 여전히 화면 정중앙(0.5,0.5)에 앵커돼 있으므로,
+            // 좌우가 대칭이면 가운데 자식(RoundColumn)의 중심도 자동으로
+            // 화면 정중앙과 일치한다.
+            var layout = centerGo.AddComponent<HorizontalLayoutGroup>();
+            // 스페이서-RoundColumn 간격과 RoundColumn-버튼 간격이 항상 같은
+            // 값을 쓴다(HorizontalLayoutGroup.spacing은 모든 자식 사이에
+            // 균일하게 적용됨) — 그래서 이 값을 키워도 RoundColumn이 화면
+            // 정중앙에서 벗어나지 않는다(사용자 요청으로 라운드-버튼 간격을
+            // 더 벌림).
+            layout.spacing = 28f;
             layout.childAlignment = TextAnchor.MiddleCenter;
             layout.childControlWidth = true;
             layout.childControlHeight = true;
@@ -265,10 +289,65 @@ namespace TmgBoard
             fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            var titleLabel = CreateLabel(centerRect, "라운드", 12f, 80f, new Color(0.7f, 0.7f, 0.7f, 1f), FontStyles.Normal);
+            var spacerGo = new GameObject("Spacer", typeof(RectTransform));
+            spacerGo.transform.SetParent(centerRect, false);
+            var spacerLe = spacerGo.AddComponent<LayoutElement>();
+            spacerLe.preferredWidth = MissionButtonWidth;
+            spacerLe.preferredHeight = 1f;
+
+            var roundColumnGo = new GameObject("RoundColumn", typeof(RectTransform));
+            roundColumnGo.transform.SetParent(centerRect, false);
+            var roundColumnLayout = roundColumnGo.AddComponent<VerticalLayoutGroup>();
+            roundColumnLayout.spacing = 2f;
+            roundColumnLayout.childAlignment = TextAnchor.MiddleCenter;
+            roundColumnLayout.childControlWidth = true;
+            roundColumnLayout.childControlHeight = true;
+            roundColumnLayout.childForceExpandWidth = false;
+            roundColumnLayout.childForceExpandHeight = false;
+            var roundColumnRect = (RectTransform)roundColumnGo.transform;
+
+            var titleLabel = CreateLabel(roundColumnRect, "라운드", 12f, 80f, new Color(0.7f, 0.7f, 0.7f, 1f), FontStyles.Normal);
             titleLabel.alignment = TextAlignmentOptions.Center;
 
-            BuildRoundIndicator(centerRect);
+            BuildRoundIndicator(roundColumnRect);
+
+            BuildMissionButton(centerRect);
+        }
+
+        /// <summary>"라운드"(타이틀+체커) 블록 옆에 붙는 작은 "미션" 버튼 —
+        /// 누르면 MissionInfoDialog가 미션 셋업에서 정한 값(미션 파라미터/
+        /// 점수 획득 조건/추가 조건 등)을 읽기 전용 모달로 보여준다. 미션
+        /// 셋업을 거치지 않고 게임판에 들어온 경우(MissionSettingsData.HasData
+        /// == false)엔 보여줄 내용이 없다는 걸 명확히 하려고 버튼 자체를
+        /// 비활성화한다(사용자 지정). 폭은 BuildCenter의 반대쪽 스페이서와
+        /// 반드시 같아야 한다(MissionButtonWidth 상수 공유 — 좌우 대칭 유지).</summary>
+        private void BuildMissionButton(Transform parent)
+        {
+            var go = new GameObject("MissionButton", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var le = go.AddComponent<LayoutElement>();
+            le.preferredWidth = MissionButtonWidth;
+            le.preferredHeight = 20f;
+            var img = go.AddComponent<Image>();
+            bool enabled = MissionSettingsData.HasData;
+            img.color = enabled ? new Color(0.3f, 0.3f, 0.3f, 1f) : new Color(0.2f, 0.2f, 0.2f, 1f);
+            var btn = go.AddComponent<Button>();
+            btn.interactable = enabled;
+            btn.onClick.AddListener(() => _missionInfoDialog?.Open());
+
+            var labelGo = new GameObject("Label", typeof(RectTransform));
+            labelGo.transform.SetParent(go.transform, false);
+            var labelRect = (RectTransform)labelGo.transform;
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+            var label = labelGo.AddComponent<TextMeshProUGUI>();
+            label.text = "미션";
+            label.fontSize = 12f;
+            label.alignment = TextAlignmentOptions.Center;
+            label.color = enabled ? Color.white : new Color(0.5f, 0.5f, 0.5f, 1f);
+            label.raycastTarget = false;
         }
 
         /// <summary>'최대 라운드 수'(미션 설정에서 정한 값)만큼 네모를 늘어놓고,
