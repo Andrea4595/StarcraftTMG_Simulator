@@ -39,6 +39,7 @@ namespace TmgBoard
         [SerializeField] private DiceRollDialog diceRollDialog;
         [SerializeField] private WeaponProfileDialog weaponProfileDialog;
         [SerializeField] private ConfirmDialog exitConfirmDialog;
+        [SerializeField] private InputDialog saveNameDialog;
         [SerializeField] private Vector2 mapSizeMm = new Vector2(36f * GameConstants.MmPerInch, 36f * GameConstants.MmPerInch);
 
         private const float DuplicateGapMm = 4f;
@@ -247,6 +248,20 @@ namespace TmgBoard
             BuildMissionObjectiveVisuals();
             BuildDeploymentZoneVisuals();
             BuildTerrainVisuals();
+
+            // 저장된 게임을 불러오는 중이면(GameLoadRequest, Entry의 "이어하기"
+            // 화면에서 세팅됨) — 위 세 줄이 지형/배치구역/미션 마커를 이미
+            // MapData 기준으로 지어놓은 뒤라야 라이브 상태(유닛/마커/미션
+            // 마커 순환 상태 등)를 안전하게 덮어씌울 수 있다. 정적 부분
+            // (MapData/MissionSettingsData/MatchState/TeamColors)은
+            // GameFlowBootstrap이 이 씬을 짓기 전에 이미 채워뒀다. 반드시
+            // 마지막에 비워야 다음에 "새 게임"으로 이 씬에 다시 들어왔을 때
+            // 이전 저장을 다시 불러오지 않는다.
+            if (GameLoadRequest.PendingData != null)
+            {
+                ApplyLoadedLiveState(GameLoadRequest.PendingData);
+                GameLoadRequest.PendingData = null;
+            }
         }
 
         /// <summary>씬을 코드로 구성할 때(부트스트랩 등) 인스펙터 대신 쓰는 초기화.</summary>
@@ -320,6 +335,53 @@ namespace TmgBoard
         {
             exitConfirmDialog = exitConfirmDialogRef;
             exitConfirmDialog.Confirmed += OnExitConfirmed;
+        }
+
+        /// <summary>마커바 "저장" 버튼(BoardManager.Markers.cs의
+        /// CreateSaveButton)이 여는 이름 입력 창을 주입한다 — 확인하면
+        /// 그 이름으로 Saves/ 폴더에 저장한다(BoardManager.Save.cs의
+        /// SaveGame).</summary>
+        public void ConfigureSave(InputDialog saveNameDialogRef)
+        {
+            saveNameDialog = saveNameDialogRef;
+            saveNameDialog.Confirmed += OnSaveNameConfirmed;
+        }
+
+        private void OnSaveNameConfirmed(string name)
+        {
+            name = name.Trim();
+            if (string.IsNullOrEmpty(name))
+            {
+                return;
+            }
+            string path;
+            try
+            {
+                path = System.IO.Path.Combine(GameSaveIO.ResolveSavesDirectory(), $"{SanitizeSaveFileName(name)}.json");
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"저장 경로를 만들 수 없습니다: {e.Message}");
+                return;
+            }
+            try
+            {
+                SaveGame(path);
+                ShowScreenshotToast($"{SanitizeSaveFileName(name)}.json", GameSaveIO.ResolveSavesDirectory());
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"게임을 저장하지 못했습니다: {path} ({e.Message})");
+            }
+        }
+
+        private static string SanitizeSaveFileName(string name)
+        {
+            foreach (char c in System.IO.Path.GetInvalidFileNameChars())
+            {
+                name = name.Replace(c, '_');
+            }
+            return name;
         }
 
         /// <summary>2026-08-30 재구성 이후로는 Entry→Selection→TerrainSetup→

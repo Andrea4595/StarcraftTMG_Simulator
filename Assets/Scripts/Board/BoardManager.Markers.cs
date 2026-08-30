@@ -71,6 +71,7 @@ namespace TmgBoard
             CreateFitButton(barRect);
             CreateDiceButton(barRect);
             CreateExitButton(barRect);
+            CreateSaveButton(barRect);
         }
 
         /// <summary>바 맨 왼쪽 — 처음 화면(Entry)으로 돌아가기(사용자 요청).
@@ -98,6 +99,35 @@ namespace TmgBoard
                 if (exitConfirmDialog != null)
                 {
                     exitConfirmDialog.Open("진행 중인 게임을 종료하고\n처음 화면으로 돌아갈까요?\n(현재 진행 상황은 저장되지 않습니다)");
+                }
+            });
+        }
+
+        /// <summary>"나가기" 버튼 바로 오른쪽 — 진행 중인 게임을 이름을 물어본
+        /// 뒤 Saves/ 폴더에 저장한다(사용자 요청, BoardManager.Save.cs의
+        /// SaveGame). 프리셋 저장(SaveButton.png)과 같은 아이콘을 재사용해
+        /// "저장"이라는 시각 언어를 통일했다.</summary>
+        private void CreateSaveButton(Transform parent)
+        {
+            var go = new GameObject("SaveButton", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(0f, 0.5f);
+            rect.anchorMax = new Vector2(0f, 0.5f);
+            rect.pivot = new Vector2(0f, 0.5f);
+            rect.anchoredPosition = new Vector2(10f + GameConstants.MarkerBarHeight, 0f);
+            rect.sizeDelta = new Vector2(GameConstants.MarkerBarHeight - 8f, GameConstants.MarkerBarHeight - 8f);
+
+            var img = go.AddComponent<RawImage>();
+            img.texture = Resources.Load<Texture2D>("UI/SaveButton");
+
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() =>
+            {
+                if (saveNameDialog != null)
+                {
+                    saveNameDialog.Open("저장 이름", "");
                 }
             });
         }

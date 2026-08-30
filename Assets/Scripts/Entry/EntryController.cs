@@ -5,20 +5,23 @@ using UnityEngine.UI;
 
 namespace TmgBoard
 {
-    /// <summary>맨 처음 뜨는 화면(2026-08-30 재구성) — 화면 중앙에 큰
-    /// "게임 시작" 버튼 하나(실제 게임 흐름: Selection → TerrainSetup →
-    /// GameBoard로 이어짐), 화면 오른쪽 아래 구석에 작은 "배치 프리셋 제작"/
-    /// "미션 프리셋 제작" 버튼 두 개(각각 MapAuthoring/MissionAuthoring
-    /// 화면으로 — 프리셋을 미리 만들어두는 편집기, 게임 흐름과 무관하고
-    /// 완료하면 다시 여기로 돌아온다)가 사용자 지정. 예전엔 "맵"/"미션" 두
-    /// 큰 버튼이 곧 그 게임의 라이브 셋업 화면으로 이어졌지만, 이제 셋업
-    /// 화면 자체가 "제작" 전용으로 바뀌면서 이 화면의 역할도 같이 바뀌었다.
-    /// 실제 씬 전환은 이 컴포넌트를 만든 쪽(GameFlowBootstrap)이 담당한다 —
-    /// 이 컴포넌트는 클릭 이벤트만 올린다.</summary>
+    /// <summary>맨 처음 뜨는 화면(2026-08-30 재구성, 2026-08-31에 "이어하기"
+    /// 추가) — 화면 중앙에 큰 "게임 시작" 버튼 하나(실제 게임 흐름:
+    /// Selection → TerrainSetup → GameBoard로 이어짐), 화면 오른쪽 아래
+    /// 구석에 작은 "이어하기"/"배치 프리셋 제작"/"미션 프리셋 제작" 버튼
+    /// 세 개가 사용자 지정. "이어하기"는 LoadGame 화면(저장 파일 목록)으로,
+    /// 나머지 둘은 각각 MapAuthoring/MissionAuthoring 화면으로 간다(프리셋을
+    /// 미리 만들어두는 편집기, 게임 흐름과 무관하고 완료하면 다시 여기로
+    /// 돌아온다). 예전엔 "맵"/"미션" 두 큰 버튼이 곧 그 게임의 라이브 셋업
+    /// 화면으로 이어졌지만, 이제 셋업 화면 자체가 "제작" 전용으로 바뀌면서
+    /// 이 화면의 역할도 같이 바뀌었다. 실제 씬 전환은 이 컴포넌트를 만든
+    /// 쪽(GameFlowBootstrap)이 담당한다 — 이 컴포넌트는 클릭 이벤트만
+    /// 올린다.</summary>
     [RequireComponent(typeof(RectTransform))]
     public class EntryController : MonoBehaviour
     {
         public event Action StartGamePicked;
+        public event Action LoadGamePicked;
         public event Action MapAuthoringPicked;
         public event Action MissionAuthoringPicked;
 
@@ -76,6 +79,7 @@ namespace TmgBoard
             cornerFitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             cornerFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
+            CreateCornerButton(cornerRect, "이어하기", () => LoadGamePicked?.Invoke());
             CreateCornerButton(cornerRect, "배치 프리셋 제작", () => MapAuthoringPicked?.Invoke());
             CreateCornerButton(cornerRect, "미션 프리셋 제작", () => MissionAuthoringPicked?.Invoke());
         }

@@ -32,6 +32,7 @@ public static class GameFlowBootstrap
     private const string MissionAuthoringSceneName = GameConstants.MissionAuthoringSceneName;
     private const string SelectionSceneName = GameConstants.SelectionSceneName;
     private const string TerrainSetupSceneName = GameConstants.TerrainSetupSceneName;
+    private const string LoadGameSceneName = GameConstants.LoadGameSceneName;
     private const string GameBoardSceneName = GameConstants.GameBoardSceneName;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -84,6 +85,9 @@ public static class GameFlowBootstrap
             case TerrainSetupSceneName:
                 BuildTerrainSetup();
                 break;
+            case LoadGameSceneName:
+                BuildLoadGame();
+                break;
             case GameBoardSceneName:
                 BuildGameBoard();
                 break;
@@ -103,8 +107,30 @@ public static class GameFlowBootstrap
 
         var entry = canvasGo.AddComponent<EntryController>();
         entry.StartGamePicked += () => SceneManager.LoadScene(SelectionSceneName);
+        entry.LoadGamePicked += () => SceneManager.LoadScene(LoadGameSceneName);
         entry.MapAuthoringPicked += () => SceneManager.LoadScene(MapAuthoringSceneName);
         entry.MissionAuthoringPicked += () => SceneManager.LoadScene(MissionAuthoringSceneName);
+    }
+
+    /// <summary>"이어하기" 화면 — Saves/ 폴더의 저장 파일 목록. 고르면 그
+    /// 파싱된 내용을 GameLoadRequest에 담아두고 곧바로 GameBoard로 간다
+    /// (Selection/TerrainSetup을 건너뛴다 — 저장 파일 자체가 지도/미션/
+    /// 라이브 상태를 전부 담고 있다).</summary>
+    private static void BuildLoadGame()
+    {
+        var canvasGo = new GameObject("LoadGame_Canvas");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvasGo.AddComponent<CanvasScaler>();
+        canvasGo.AddComponent<GraphicRaycaster>();
+
+        var loadGame = canvasGo.AddComponent<LoadGameController>();
+        loadGame.SaveGamePicked += tree =>
+        {
+            GameLoadRequest.PendingData = tree;
+            SceneManager.LoadScene(GameBoardSceneName);
+        };
+        loadGame.BackRequested += () => SceneManager.LoadScene(EntrySceneName);
     }
 
     /// <summary>배치 프리셋 제작 화면(예전 "맵 셋업") — 지도 크기/배치구역/
@@ -172,6 +198,20 @@ public static class GameFlowBootstrap
 
     private static void BuildGameBoard()
     {
+        // 저장된 게임을 불러오는 중이면(GameLoadRequest, LoadGame 화면에서
+        // 세팅됨) — 아래에서 짓는 스코어보드/페이즈바 등이 전부 자기 build
+        // 시점에 MapData/MissionSettingsData/MatchState/TeamColors를 읽으므로,
+        // 반드시 그것들보다 먼저 채워야 한다(Selection→TerrainSetup 흐름이
+        // MapData를 미리 채워두는 것과 완전히 같은 원리). 라이브 상태(유닛/
+        // 마커/예비대/택티컬 카드)는 이 씬의 BoardManager 자신이 Start() 맨
+        // 끝에서 마저 채운다(BoardManager.Load.cs) — 그건 baseLayer 등
+        // BoardManager 자신의 Start()가 지어야 할 것들이 다 지어진 뒤라야
+        // 안전해서 여기서 할 수 없다.
+        if (GameLoadRequest.PendingData != null)
+        {
+            GameSaveIO.ApplyLoadedStaticState(GameLoadRequest.PendingData);
+        }
+
         var canvasGo = new GameObject("Base_Test_Canvas");
         var canvas = canvasGo.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
@@ -279,6 +319,8 @@ public static class GameFlowBootstrap
         exitConfirmDialog.transform.SetParent(canvasGo.transform, false);
         var missionInfoDialog = new GameObject("MissionInfoDialog").AddComponent<MissionInfoDialog>();
         missionInfoDialog.transform.SetParent(canvasGo.transform, false);
+        var saveNameDialog = new GameObject("SaveNameDialog").AddComponent<InputDialog>();
+        saveNameDialog.transform.SetParent(canvasGo.transform, false);
 
         var guideline = new GameObject("Guideline").AddComponent<GuidelineOverlay>();
         guideline.transform.SetParent(mapAreaRect, false);
@@ -333,6 +375,7 @@ public static class GameFlowBootstrap
         board.ConfigureDiceRoll(diceRollDialog);
         board.ConfigureWeaponProfile(weaponProfileDialog);
         board.ConfigureExit(exitConfirmDialog);
+        board.ConfigureSave(saveNameDialog);
         scoreboard.SetBoardManager(board);
         scoreboard.SetMissionInfoDialog(missionInfoDialog);
 

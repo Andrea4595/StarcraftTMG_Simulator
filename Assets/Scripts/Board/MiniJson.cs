@@ -211,5 +211,113 @@ namespace TmgBoard
                 i++;
             }
         }
+
+        /// <summary>Parse()의 반대 방향 — Dictionary&lt;string,object&gt;/List&lt;object&gt;/
+        /// string/bool/null/숫자(int/float/double)로 이루어진 트리를 표준 JSON
+        /// 문자열로 직렬화한다. 게임 저장 기능(GameSaveIO)처럼 중첩이 깊고
+        /// 필드가 많은 스키마를, 필드마다 손으로 문자열을 이어붙이는 대신
+        /// 제네릭 트리(Dictionary/List)로 조립한 뒤 한 번에 쓰기 위해 새로
+        /// 추가했다 — 이 프로젝트의 기존 IO 클래스(MapPresetIO 등)는 필드
+        /// 수가 적어 손으로 문자열을 이었지만, 그 방식은 이 정도 규모에서는
+        /// 유지보수가 안 된다. 들여쓰기 없이 압축해서 쓴다(용량/속도, 사람이
+        /// 직접 읽을 필요는 없음).</summary>
+        public static string Write(object value)
+        {
+            var sb = new StringBuilder();
+            WriteValue(sb, value);
+            return sb.ToString();
+        }
+
+        private static void WriteValue(StringBuilder sb, object value)
+        {
+            switch (value)
+            {
+                case null:
+                    sb.Append("null");
+                    break;
+                case bool b:
+                    sb.Append(b ? "true" : "false");
+                    break;
+                case string s:
+                    WriteString(sb, s);
+                    break;
+                case int i:
+                    sb.Append(i.ToString(CultureInfo.InvariantCulture));
+                    break;
+                case float f:
+                    sb.Append(((double)f).ToString("R", CultureInfo.InvariantCulture));
+                    break;
+                case double d:
+                    sb.Append(d.ToString("R", CultureInfo.InvariantCulture));
+                    break;
+                case Dictionary<string, object> dict:
+                    WriteObject(sb, dict);
+                    break;
+                case List<object> list:
+                    WriteArray(sb, list);
+                    break;
+                default:
+                    throw new ArgumentException($"MiniJson.Write가 다룰 수 없는 타입입니다: {value.GetType()}");
+            }
+        }
+
+        private static void WriteObject(StringBuilder sb, Dictionary<string, object> dict)
+        {
+            sb.Append('{');
+            bool first = true;
+            foreach (var kv in dict)
+            {
+                if (!first)
+                {
+                    sb.Append(',');
+                }
+                first = false;
+                WriteString(sb, kv.Key);
+                sb.Append(':');
+                WriteValue(sb, kv.Value);
+            }
+            sb.Append('}');
+        }
+
+        private static void WriteArray(StringBuilder sb, List<object> list)
+        {
+            sb.Append('[');
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(',');
+                }
+                WriteValue(sb, list[i]);
+            }
+            sb.Append(']');
+        }
+
+        private static void WriteString(StringBuilder sb, string s)
+        {
+            sb.Append('"');
+            foreach (char c in s)
+            {
+                switch (c)
+                {
+                    case '"': sb.Append("\\\""); break;
+                    case '\\': sb.Append("\\\\"); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    default:
+                        if (c < ' ')
+                        {
+                            sb.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
+                        }
+                        else
+                        {
+                            sb.Append(c);
+                        }
+                        break;
+                }
+            }
+            sb.Append('"');
+        }
     }
 }

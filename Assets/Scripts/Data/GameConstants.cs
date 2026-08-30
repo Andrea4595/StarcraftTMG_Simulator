@@ -24,12 +24,17 @@ namespace TmgBoard
         // MapAuthoring/MissionAuthoring은 이 흐름에 안 낀다 — Entry 한쪽
         // 구석의 별도 버튼으로 들어가는 "프리셋 제작" 전용 화면(옛 MapSetup/
         // MissionSetup, 예전엔 라이브 셋업 화면이었다가 지금은 편집기로만
-        // 쓰인다)이고, 완료하면 그냥 Entry로 돌아간다.
+        // 쓰인다)이고, 완료하면 그냥 Entry로 돌아간다. LoadGame도 같은
+        // 자리(Entry 구석)에서 들어가는 별도 화면(2026-08-31 신설, 저장된
+        // 게임 불러오기) — 고르면 GameLoadRequest에 파싱된 내용을 담아두고
+        // 곧바로 GameBoard로 간다(Selection/TerrainSetup을 거치지 않는다 —
+        // 저장 파일 자체가 지도/미션/라이브 상태를 전부 담고 있어서 필요 없음).
         public const string EntrySceneName = "Entry";
         public const string MapAuthoringSceneName = "MapAuthoring";
         public const string MissionAuthoringSceneName = "MissionAuthoring";
         public const string SelectionSceneName = "Selection";
         public const string TerrainSetupSceneName = "TerrainSetup";
+        public const string LoadGameSceneName = "LoadGame";
         public const string GameBoardSceneName = "GameBoard";
 
         public const float ScoreboardHeight = 56f;

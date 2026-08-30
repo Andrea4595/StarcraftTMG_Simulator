@@ -52,6 +52,19 @@ namespace TmgBoard
             SetVerticesDirty();
         }
 
+        /// <summary>저장된 게임을 불러올 때 링 상태를 순환이 아니라 곧바로
+        /// 특정 값으로 되돌리는 용도(GameSaveIO) — 알 수 없는 값이면 조용히
+        /// 무시한다(구버전 세이브 파일 호환).</summary>
+        public void SetRingColorState(string state)
+        {
+            if (Array.IndexOf(RingColorSequence, state) < 0)
+            {
+                return;
+            }
+            RingColorState = state;
+            SetVerticesDirty();
+        }
+
         /// <summary>CaptureMarker.ResolveColor와 같은 이유로 "red"/"blue"는
         /// 고정 색이 아니라 A/B팀의 현재 색을 그대로 따라간다. "inactive"는
         /// 어느 팀과도 무관한 고정 회색(사용자 지정).</summary>
