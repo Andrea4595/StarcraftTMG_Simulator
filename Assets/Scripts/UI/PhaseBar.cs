@@ -93,31 +93,44 @@ namespace TmgBoard
             RefreshHighlight();
         }
 
+        private const string PhaseCompositeKey = "phase";
+        // 연속 클릭 합치기(Composite, 2026-09-04 추가, 사용자 요청 —
+        // "서클형 조작기들도 숫자 조작기 처럼 {초기값} -> {최종값} 형태로
+        // 기록해줘") 용 — ScoreboardPanel._roundStreakBase와 같은 이유/역할.
+        private int _phaseStreakBase = -1;
+
         /// <summary>클릭하면 부른다(사용자 조작) — 멀티 연결 중이면 다음
         /// 인덱스를 절대값으로 방송 요청만 한다(휠 회전 절대각 동기화와
         /// 같은 이유 — "한 칸 전진" 액션 자체를 보내면 메시지가 하나
         /// 유실됐을 때 양쪽이 서로 다른 페이즈로 어긋난 채 못 돌아온다).
         /// 되돌리기(2026-09-04 추가, 사용자 요청) — 마커 배치와 같은 자리에
-        /// Begin/CommitUndoTransaction을 건다.</summary>
+        /// Begin/CommitUndoTransaction을 건다. 연속으로 눌러도(사용자 요청 —
+        /// Composite) 되돌리기 목록엔 한 항목만 남는다 — ScoreboardPanel.
+        /// OnRoundPipClicked와 같은 방식.</summary>
         private void AdvancePhase()
         {
             int nextIndex = (MatchState.PhaseIndex + 1) % MatchState.PhaseNames.Length;
-            string label = $"[점수판] 페이즈 {MatchState.PhaseNames[MatchState.PhaseIndex]} -> {MatchState.PhaseNames[nextIndex]}";
-            Board()?.BeginUndoTransaction(label);
+            var board = Board();
+            bool composite = board != null && board.IsTopUndoEntryComposite(PhaseCompositeKey);
+            int baseIndex = composite ? _phaseStreakBase : MatchState.PhaseIndex;
+            _phaseStreakBase = baseIndex;
+
+            string label = $"[점수판] 페이즈 {MatchState.PhaseNames[baseIndex]} -> {MatchState.PhaseNames[nextIndex]}";
+            board?.BeginUndoTransaction(label, "", PhaseCompositeKey);
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 if (BoardNetworkSync.Instance == null)
                 {
                     Debug.LogError("[PhaseBar] BoardNetworkSync.Instance가 없음 — 페이즈 변경 요청을 못 보냄");
-                    Board()?.DiscardUndoTransaction();
+                    board?.DiscardUndoTransaction();
                     return;
                 }
                 BoardNetworkSync.Instance.RequestSetPhaseServerRpc(nextIndex);
-                Board()?.CommitUndoTransaction();
+                board?.CommitUndoTransaction();
                 return;
             }
             SetPhaseIndex(nextIndex);
-            Board()?.CommitUndoTransaction();
+            board?.CommitUndoTransaction();
         }
 
         private void SetPhaseIndex(int index)

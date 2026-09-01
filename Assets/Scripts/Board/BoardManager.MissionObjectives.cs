@@ -22,6 +22,12 @@ namespace TmgBoard
         // 그대로 방송 대상 지목에 쓸 수 있다.
         private readonly Dictionary<int, MissionObjectivePiece> _missionObjectivePiecesByNumber = new Dictionary<int, MissionObjectivePiece>();
 
+        // 연속 클릭 합치기(Composite, 2026-09-04 추가, 사용자 요청 — "서클형
+        // 조작기들도 숫자 조작기 처럼 {초기값} -> {최종값} 형태로 기록해줘")
+        // 용 — 마커 번호별로 "그 연속 편집이 시작되기 전" 상태를 따로
+        // 기억해둔다. ScoreboardPanel._roundStreakBase 등과 같은 역할.
+        private readonly Dictionary<int, string> _missionObjectiveStreakBase = new Dictionary<int, string>();
+
         private void BuildMissionObjectiveVisuals()
         {
             if (!MapData.HasData)
@@ -57,12 +63,20 @@ namespace TmgBoard
         /// 실제 반영은 그 방송이 되돌아오는 걸 거친다. 되돌리기(2026-09-04
         /// 추가, 사용자 요청) — 마커 배치와 같은 자리에 Begin/
         /// CommitUndoTransaction을 건다(BoardSnapshot.MissionObjectiveStates
-        /// 참고 — 마커 자신은 파괴/재생성 대상이 아니라 상태만 복원됨).</summary>
+        /// 참고 — 마커 자신은 파괴/재생성 대상이 아니라 상태만 복원됨). 같은
+        /// 마커를 연속으로 우클릭해도(사용자 요청 — Composite) 되돌리기
+        /// 목록엔 한 항목만 남는다 — ScoreboardPanel.OnRoundPipClicked와
+        /// 같은 방식, 마커 번호별로 compositeKey를 나눈다(마커마다 독립).</summary>
         private void OnMissionObjectiveColorCycleRequested(MissionObjectivePiece piece)
         {
             int idx = Array.IndexOf(MissionObjectivePiece.RingColorSequence, piece.RingColorState);
             string nextState = MissionObjectivePiece.RingColorSequence[(idx + 1) % MissionObjectivePiece.RingColorSequence.Length];
-            BeginUndoTransaction($"미션 마커 {piece.Number} {DescribeRingColorState(piece.RingColorState)} -> {DescribeRingColorState(nextState)}");
+            string compositeKey = $"missionMarker:{piece.Number}";
+            bool composite = IsTopUndoEntryComposite(compositeKey);
+            string baseState = composite && _missionObjectiveStreakBase.TryGetValue(piece.Number, out var b) ? b : piece.RingColorState;
+            _missionObjectiveStreakBase[piece.Number] = baseState;
+
+            BeginUndoTransaction($"미션 마커 {piece.Number} {DescribeRingColorState(baseState)} -> {DescribeRingColorState(nextState)}", "", compositeKey);
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 if (BoardNetworkSync.Instance == null)

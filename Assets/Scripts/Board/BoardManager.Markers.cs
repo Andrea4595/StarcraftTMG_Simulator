@@ -15,6 +15,16 @@ namespace TmgBoard
         // 발급) — 삭제/이동 방송이 도착했을 때 어느 GameObject인지 찾는 용도.
         private readonly Dictionary<int, MarkerBase> _networkedMarkersById = new();
 
+        // 활성화/점령 마커 상태 순환의 연속 클릭 합치기(Composite, 2026-09-04
+        // 추가, 사용자 요청) 용 — 마커별 "그 연속 편집이 시작되기 전" 상태를
+        // 기억해둔다. NetworkMarkerId는 솔로 플레이 중엔 모든 마커가 -1로
+        // 겹치므로 쓸 수 없어(ScoreboardPanel._roundStreakBase 등과 달리
+        // 팀/키가 아니라 마커 인스턴스 자체를 구분해야 함), 대신 마커
+        // GameObject의 Unity 인스턴스 id(GetInstanceID, 이 세션 동안은 마커가
+        // 파괴/재생성되지 않는 한 안정적)를 키로 쓴다 — 활성화/점령 마커
+        // 공용(인스턴스 id는 전역에서 겹치지 않으므로 하나로 충분).
+        private readonly Dictionary<int, string> _markerStateStreakBase = new();
+
         // 드래그를 끝낸 쪽이 아닌 다른 클라이언트가 이동 방송을 받았을 때,
         // 순간이동 대신 부드럽게 그 자리로 움직이게 하는 진행 중 트윈 목록.
         private const float MarkerMoveTweenDuration = 0.2f;
@@ -865,10 +875,17 @@ namespace TmgBoard
                 CommitUndoTransaction();
                 return;
             }
-            // 우클릭은 이동 → 돌격 → 완료를 계속 순환한다.
+            // 우클릭은 이동 → 돌격 → 완료를 계속 순환한다. 연속으로
+            // 눌러도(사용자 요청 — Composite) 되돌리기 목록엔 한 항목만
+            // 남는다.
             int idx = System.Array.IndexOf(ActivationMarker.StateSequence, marker.State);
             string nextState = ActivationMarker.StateSequence[(idx + 1) % ActivationMarker.StateSequence.Length];
-            BeginUndoTransaction($"{DescribeMarkerKind(marker)} {DescribeActivationState(marker.State)} -> {DescribeActivationState(nextState)}");
+            string compositeKey = $"activationMarker:{marker.GetInstanceID()}";
+            bool composite = IsTopUndoEntryComposite(compositeKey);
+            string baseState = composite && _markerStateStreakBase.TryGetValue(marker.GetInstanceID(), out var b) ? b : marker.State;
+            _markerStateStreakBase[marker.GetInstanceID()] = baseState;
+
+            BeginUndoTransaction($"{DescribeMarkerKind(marker)} {DescribeActivationState(baseState)} -> {DescribeActivationState(nextState)}", "", compositeKey);
             if (TryRequestNetworkMarkerStateChange(marker, nextState))
             {
                 CommitUndoTransaction();
@@ -895,10 +912,16 @@ namespace TmgBoard
             }
             // 우클릭은 흰색 → 빨간색 → 파란색을 계속 순환한다. 색 순환에
             // 종료 지점이 없어서(활성화 마커처럼 마지막에 사라지는 게 아님)
-            // 삭제는 별도 입력으로 뺐다.
+            // 삭제는 별도 입력으로 뺐다. 연속으로 눌러도(사용자 요청 —
+            // Composite) 되돌리기 목록엔 한 항목만 남는다.
             int idx = System.Array.IndexOf(CaptureMarker.ColorSequence, marker.ColorState);
             string nextState = CaptureMarker.ColorSequence[(idx + 1) % CaptureMarker.ColorSequence.Length];
-            BeginUndoTransaction($"{DescribeMarkerKind(marker)} {DescribeCaptureColorState(marker.ColorState)} -> {DescribeCaptureColorState(nextState)}");
+            string compositeKey = $"captureMarker:{marker.GetInstanceID()}";
+            bool composite = IsTopUndoEntryComposite(compositeKey);
+            string baseState = composite && _markerStateStreakBase.TryGetValue(marker.GetInstanceID(), out var b) ? b : marker.ColorState;
+            _markerStateStreakBase[marker.GetInstanceID()] = baseState;
+
+            BeginUndoTransaction($"{DescribeMarkerKind(marker)} {DescribeCaptureColorState(baseState)} -> {DescribeCaptureColorState(nextState)}", "", compositeKey);
             if (TryRequestNetworkMarkerStateChange(marker, nextState))
             {
                 CommitUndoTransaction();
