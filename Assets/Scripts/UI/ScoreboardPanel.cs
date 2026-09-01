@@ -171,6 +171,24 @@ namespace TmgBoard
             RefreshSupplyRow("A");
             RefreshSupplyRow("B");
             RefreshTeamNameColors();
+            RefreshFromMatchState();
+        }
+
+        /// <summary>MatchState(라운드/VP)를 매 프레임 그대로 반영한다
+        /// (2026-09-04 추가) — RefreshSupplyRow/RefreshTeamNameColors와 같은
+        /// "매 프레임 재조회" 관례. 되돌리기/다시실행(BoardManager.
+        /// RestoreBoardSnapshot)이 MatchState를 직접 값만 바꿔놓기 때문에
+        /// 필요해졌다 — 그쪽은 이 화면에 대한 참조가 없어서 직접 갱신을 못
+        /// 시키므로, 여기서 매 프레임 다시 읽어 스스로 따라간다. ApplyRemote*
+        /// 메서드를 그대로 재사용해서 새 표시 로직을 만들지 않는다(내부에서
+        /// MatchState를 같은 값으로 다시 쓰는 건 무해함).</summary>
+        private void RefreshFromMatchState()
+        {
+            SetRoundNumber(MatchState.RoundNumber);
+            ApplyRemoteMissionVp("A", MatchState.MissionVp["A"]);
+            ApplyRemoteMissionVp("B", MatchState.MissionVp["B"]);
+            ApplyRemoteKillVp("A", MatchState.KillVp["A"]);
+            ApplyRemoteKillVp("B", MatchState.KillVp["B"]);
         }
 
         /// <summary>팀 이름 라벨 색을 GameConstants.TeamColors에서 매 프레임
@@ -427,20 +445,28 @@ namespace TmgBoard
         /// 연결 중이면 로컬에서 바로 바꾸지 않고 방송 요청만 한다(마커
         /// 배치와 같은 "방송 후 로컬 반영" 패턴). BuildRoundIndicator가
         /// 화면을 처음 지을 때 하는 초기 페인트 호출(SetRoundNumber 직접
-        /// 호출)은 사용자 조작이 아니므로 이 경로를 타지 않는다.</summary>
+        /// 호출)은 사용자 조작이 아니므로 이 경로를 타지 않는다.
+        /// 되돌리기(2026-09-04 추가, 사용자 요청 — "리플레이가 의미를
+        /// 가지려면 점수판 조작도 기록돼야 한다") — 마커 배치와 같은 자리에
+        /// Begin/CommitUndoTransaction을 건다(방송 요청을 보내는 시점에
+        /// 커밋, 실제 반영은 그 방송이 돌아오는 걸 거친다).</summary>
         private void OnRoundPipClicked(int roundNumber)
         {
+            _board?.BeginUndoTransaction($"[점수판] 라운드 {roundNumber}");
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 if (BoardNetworkSync.Instance == null)
                 {
                     Debug.LogError("[ScoreboardPanel] BoardNetworkSync.Instance가 없음 — 라운드 변경 요청을 못 보냄");
+                    _board?.DiscardUndoTransaction();
                     return;
                 }
                 BoardNetworkSync.Instance.RequestSetRoundServerRpc(roundNumber);
+                _board?.CommitUndoTransaction();
                 return;
             }
             SetRoundNumber(roundNumber);
+            _board?.CommitUndoTransaction();
         }
 
         /// <summary>BoardNetworkSync.SetRoundRpc가 방송을 받았을 때(누른 쪽
@@ -450,36 +476,46 @@ namespace TmgBoard
             SetRoundNumber(roundNumber);
         }
 
+        /// <summary>되돌리기(2026-09-04 추가) — OnRoundPipClicked과 같은
+        /// 이유/자리.</summary>
         private void OnMissionVpChanged(string team, int value)
         {
+            _board?.BeginUndoTransaction($"[점수판] {team} 미션VP {value}", team);
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 if (BoardNetworkSync.Instance == null)
                 {
                     Debug.LogError("[ScoreboardPanel] BoardNetworkSync.Instance가 없음 — 미션VP 변경 요청을 못 보냄");
+                    _board?.DiscardUndoTransaction();
                     return;
                 }
                 BoardNetworkSync.Instance.RequestSetMissionVpServerRpc(team, value);
+                _board?.CommitUndoTransaction();
                 return;
             }
             MatchState.MissionVp[team] = value;
             RefreshTotalLabel(team);
+            _board?.CommitUndoTransaction();
         }
 
         private void OnKillVpChanged(string team, int value)
         {
+            _board?.BeginUndoTransaction($"[점수판] {team} 파괴VP {value}", team);
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 if (BoardNetworkSync.Instance == null)
                 {
                     Debug.LogError("[ScoreboardPanel] BoardNetworkSync.Instance가 없음 — 파괴VP 변경 요청을 못 보냄");
+                    _board?.DiscardUndoTransaction();
                     return;
                 }
                 BoardNetworkSync.Instance.RequestSetKillVpServerRpc(team, value);
+                _board?.CommitUndoTransaction();
                 return;
             }
             MatchState.KillVp[team] = value;
             RefreshTotalLabel(team);
+            _board?.CommitUndoTransaction();
         }
 
         /// <summary>BoardNetworkSync.SetMissionVpRpc/SetKillVpRpc가 방송을

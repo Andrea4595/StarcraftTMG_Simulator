@@ -55,7 +55,11 @@ namespace TmgBoard
 
         internal int UndoHistoryVersion => _undoHistoryVersion;
 
-        private void BeginUndoTransaction(string label, string team = "")
+        // 2026-09-04부터 internal — 스코어보드(ScoreboardPanel.cs)가 라운드/VP
+        // 조작을 되돌리기에 편입시키면서, BoardManager 밖에서 처음으로 이
+        // 트랜잭션 메서드들을 직접 부를 필요가 생겼다(그 전까진 전부
+        // BoardManager 자신의 파셜 클래스 파일 안에서만 쓰였다).
+        internal void BeginUndoTransaction(string label, string team = "")
         {
             if (_undoPendingActive)
             {
@@ -67,7 +71,7 @@ namespace TmgBoard
             _undoPendingActive = true;
         }
 
-        private void CommitUndoTransaction()
+        internal void CommitUndoTransaction()
         {
             if (!_undoPendingActive)
             {
@@ -91,7 +95,7 @@ namespace TmgBoard
             _undoPendingTeam = "";
         }
 
-        private void DiscardUndoTransaction()
+        internal void DiscardUndoTransaction()
         {
             _undoPendingActive = false;
             _undoPendingSnapshot = null;
@@ -395,10 +399,25 @@ namespace TmgBoard
                 });
             }
 
-            var tacticalCardRemaining = new List<object>();
-            foreach (var r in snapshot.TacticalCardRemaining)
+            // 2026-09-04부터 정의 전체(Remaining만이 아니라)를 담는다 —
+            // BoardSnapshot.TacticalCards 주석 참고. BuildTacticalCardsTree
+            // (BoardManager.Save.cs)와 똑같은 모양으로 직렬화해서, 읽는 쪽도
+            // 그 파싱기(ParseTacticalCardDefTree, BoardManager.Load.cs)를
+            // 그대로 재사용할 수 있게 맞췄다.
+            var tacticalCards = new List<object>();
+            foreach (var def in snapshot.TacticalCards)
             {
-                tacticalCardRemaining.Add(r);
+                var abilities = new List<object>();
+                foreach (var a in def.Abilities)
+                {
+                    abilities.Add(GameSaveIO.AbilityToTree(a));
+                }
+                tacticalCards.Add(new Dictionary<string, object>
+                {
+                    { "name", def.Name }, { "team", def.Team }, { "count", def.Count }, { "remaining", def.Remaining },
+                    { "resource_abbr", def.ResourceAbbr }, { "resource_amount", def.ResourceAmount },
+                    { "abilities", abilities },
+                });
             }
 
             return new Dictionary<string, object>
@@ -407,7 +426,11 @@ namespace TmgBoard
                 { "pending_units", pendingUnits },
                 { "pending_tokens", pendingTokens },
                 { "markers", markers },
-                { "tactical_card_remaining", tacticalCardRemaining },
+                { "tactical_cards", tacticalCards },
+                // 점수판(2026-09-04 추가) — BoardSnapshot.RoundNumber 등 주석 참고.
+                { "round_number", snapshot.RoundNumber },
+                { "mission_vp_a", snapshot.MissionVpA }, { "mission_vp_b", snapshot.MissionVpB },
+                { "kill_vp_a", snapshot.KillVpA }, { "kill_vp_b", snapshot.KillVpB },
             };
         }
 
@@ -505,13 +528,23 @@ namespace TmgBoard
                 }
             }
 
-            foreach (var raw in GameSaveIO.GetList(root, "tactical_card_remaining"))
+            // ParseTacticalCardDefTree(BoardManager.Load.cs)를 그대로
+            // 재사용한다 — BuildTacticalCardsTree(파일 저장)가 쓰는 것과
+            // 완전히 같은 트리 모양이라(위 BuildSnapshotTree 참고) 파서도
+            // 공유할 수 있다.
+            foreach (var raw in GameSaveIO.GetList(root, "tactical_cards"))
             {
-                if (raw is double d)
+                if (raw is Dictionary<string, object> c)
                 {
-                    snapshot.TacticalCardRemaining.Add((int)d);
+                    snapshot.TacticalCards.Add(ParseTacticalCardDefTree(c));
                 }
             }
+
+            snapshot.RoundNumber = GameSaveIO.GetInt(root, "round_number", 1);
+            snapshot.MissionVpA = GameSaveIO.GetInt(root, "mission_vp_a");
+            snapshot.MissionVpB = GameSaveIO.GetInt(root, "mission_vp_b");
+            snapshot.KillVpA = GameSaveIO.GetInt(root, "kill_vp_a");
+            snapshot.KillVpB = GameSaveIO.GetInt(root, "kill_vp_b");
 
             return snapshot;
         }
@@ -679,10 +712,23 @@ namespace TmgBoard
                 snapshot.PendingRosterTokens.Add(ClonePendingTokenDef(def));
             }
 
+            // 2026-09-04부터 정의 전체를 복제한다(전엔 Remaining만 인덱스로
+            // 짝지어 담았는데, 그건 "카드 정의 자체는 임포트 때만 바뀐다"는
+            // 가정 위에서만 안전했다 — 로스터 불러오기 자체가 되돌리기
+            // 대상이 되면서 그 가정이 깨졌으므로 PendingUnits/
+            // PendingRosterTokens와 같은 방식으로 맞춘다).
             foreach (var def in _pendingTacticalCards)
             {
-                snapshot.TacticalCardRemaining.Add(def.Remaining);
+                snapshot.TacticalCards.Add(CloneTacticalCardDef(def));
             }
+
+            // 라운드/서플라이/VP(2026-09-04 추가) — 점수판 조작(ScoreboardPanel.cs)
+            // 도 이제 되돌리기 대상이라 보드 상태와 함께 캡처해야 한다.
+            snapshot.RoundNumber = MatchState.RoundNumber;
+            snapshot.MissionVpA = MatchState.MissionVp["A"];
+            snapshot.MissionVpB = MatchState.MissionVp["B"];
+            snapshot.KillVpA = MatchState.KillVp["A"];
+            snapshot.KillVpB = MatchState.KillVp["B"];
 
             if (markerLayer != null)
             {
@@ -847,15 +893,30 @@ namespace TmgBoard
             }
             RefreshRosterTokenList();
 
-            // 카드 정의 자체(_pendingTacticalCards)는 임포트 때만 바뀌므로 다시
-            // 만들지 않는다 — Remaining만 스냅샷 순서 그대로 되돌리고 패널을
-            // 다시 그린다(핍 색은 RefreshTacticalCardList 안에서 갱신됨).
-            int tacticalCardCount = Mathf.Min(snapshot.TacticalCardRemaining.Count, _pendingTacticalCards.Count);
-            for (int i = 0; i < tacticalCardCount; i++)
+            // 2026-09-04부터 목록 자체를 통째로 되살린다(PendingUnits/
+            // PendingRosterTokens와 같은 방식) — 로스터 불러오기가 되돌리기
+            // 대상이 되면서, 그 액션이 추가한 카드까지 되돌아가야 하므로
+            // "정의는 안 바뀐다"는 예전 가정(Remaining만 인덱스로 복원)이 더
+            // 이상 안전하지 않다.
+            _pendingTacticalCards.Clear();
+            foreach (var def in snapshot.TacticalCards)
             {
-                _pendingTacticalCards[i].Remaining = snapshot.TacticalCardRemaining[i];
+                _pendingTacticalCards.Add(CloneTacticalCardDef(def));
             }
             RefreshTacticalCardList();
+
+            // 라운드/서플라이/VP(2026-09-04 추가) — ScoreboardPanel.Update()가
+            // 매 프레임 MatchState를 다시 읽어 화면(라운드 네모/VP 스테퍼)을
+            // 그리므로, 여기서는 값만 되돌리면 된다(별도 갱신 호출 불필요 —
+            // 서플라이 네모/팀색과 같은 이미 있던 관례). 서플라이 상한
+            // (MatchState.Supply)은 라운드+미션 설정으로 항상 결정적으로
+            // 재계산되므로(ScoreboardPanel.SetRoundNumber) 따로 스냅샷/복원할
+            // 필요가 없다.
+            MatchState.RoundNumber = snapshot.RoundNumber;
+            MatchState.MissionVp["A"] = snapshot.MissionVpA;
+            MatchState.MissionVp["B"] = snapshot.MissionVpB;
+            MatchState.KillVp["A"] = snapshot.KillVpA;
+            MatchState.KillVp["B"] = snapshot.KillVpB;
 
             if (markerLayer != null)
             {
@@ -984,12 +1045,37 @@ namespace TmgBoard
             public readonly List<PendingUnitDef> PendingUnits = new List<PendingUnitDef>();
             public readonly List<PendingTokenDef> PendingRosterTokens = new List<PendingTokenDef>();
             public readonly List<MarkerSnapshot> Markers = new List<MarkerSnapshot>();
-            // 전술 카드 사용/복구도 되돌리기 대상이 됐다(2026-09-04, 사용자
-            // 요청) — _pendingTacticalCards는 임포트 때만 추가/삭제되고
-            // 그 뒤엔 순서가 안 바뀌므로, 인덱스로 짝지어 Remaining만 담는다
-            // (PendingUnits/PendingRosterTokens처럼 정의 자체를 통째로
-            // 복제할 필요 없음 — 안 바뀌는 필드까지 들고 다닐 이유가 없다).
-            public readonly List<int> TacticalCardRemaining = new List<int>();
+            // 전술 카드 사용/복구도 되돌리기 대상이다(2026-09-04, 사용자
+            // 요청). 처음엔 "_pendingTacticalCards는 임포트 때만 추가/삭제
+            // 되고 그 뒤엔 순서가 안 바뀐다"는 가정으로 Remaining만 인덱스로
+            // 짝지어 담았는데, 같은 날 로스터 불러오기 자체도 되돌리기
+            // 대상이 되면서(ApplyRosterImport) 그 가정이 깨져서 PendingUnits/
+            // PendingRosterTokens와 같은 방식(정의 전체 복제)으로 바꿨다.
+            public readonly List<TacticalCardDef> TacticalCards = new List<TacticalCardDef>();
+            // 점수판(라운드/미션·파괴 VP)도 되돌리기 대상이다(2026-09-04,
+            // 사용자 요청 — "리플레이가 의미를 가지려면 점수판 조작도
+            // 기록돼야 한다"). 서플라이 상한(MatchState.Supply)은 라운드+
+            // 미션 설정으로 항상 결정적으로 재계산되므로(ScoreboardPanel.
+            // SetRoundNumber) 따로 담지 않는다.
+            public int RoundNumber;
+            public int MissionVpA;
+            public int MissionVpB;
+            public int KillVpA;
+            public int KillVpB;
+        }
+
+        private static TacticalCardDef CloneTacticalCardDef(TacticalCardDef def)
+        {
+            return new TacticalCardDef
+            {
+                Name = def.Name,
+                Team = def.Team,
+                Count = def.Count,
+                Remaining = def.Remaining,
+                ResourceAbbr = def.ResourceAbbr,
+                ResourceAmount = def.ResourceAmount,
+                Abilities = new List<RosterAbilityEntry>(def.Abilities),
+            };
         }
 
         // ── 되돌리기 토스트(2026-09-02 신설, 사용자 요청) ────────────────
