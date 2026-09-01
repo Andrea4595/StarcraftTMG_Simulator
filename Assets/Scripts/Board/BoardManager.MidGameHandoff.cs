@@ -21,10 +21,13 @@ namespace TmgBoard
         /// <summary>MultiplayerConnectDialog.OnClientConnected가 호스트
         /// 쪽에서만 부른다(호출부에서 이미 IsServer/씬 확인함). 보내기 전에
         /// 아직 네트워크 id가 없는(솔로 플레이 중 놓인) 유닛/마커들에 id를
-        /// 새로 발급해 등록해두고, 합류 이전 되돌리기 히스토리는 통째로
-        /// 지운다(ClearUndoHistoryForMidGameJoin, 2026-09-02, 사용자 지정
-        /// — 그 히스토리 안에 박제된 옛 네트워크 id 때문에 생기던 중복 버그를
-        /// 실제로 재현해본 뒤 "애초에 문제가 생기지 않게" 하기로 결정).</summary>
+        /// 새로 발급해두고, 합류 이전 되돌리기 히스토리는 지우지 않고 그대로
+        /// 둔 채 Locked만 표시한다(LockExistingUndoHistoryForMidGameJoin,
+        /// 2026-09-04 재구성, 사용자 요청 — "되돌리기 리스트를 지울 필욘
+        /// 없어, 조작만 불가능해 보이게"). 그 히스토리 안엔 백필 이전(옛)
+        /// 네트워크 id가 박제돼 있어 되돌리면 유닛/마커 중복 생성 버그로
+        /// 이어지는데, 예전엔(2026-09-02) 히스토리 자체를 지워서 막았었지만
+        /// 지금은 데이터는 보존하고 그 항목들만 조작 불가로 잠근다.</summary>
         public void BroadcastFullStateForMidGameJoin()
         {
             if (BoardNetworkSync.Instance == null)
@@ -34,17 +37,15 @@ namespace TmgBoard
             }
             BackfillUnitNetworkIds();
             BackfillMarkerNetworkIds();
-            ClearUndoHistoryForMidGameJoin();
+            LockExistingUndoHistoryForMidGameJoin();
             // full_state/undo_history를 한 봉투에 같이 담아 보낸다 —
             // BuildFullStateTree()를 인자 없이(기본값 includeUndoHistory=false)
             // 부르므로 그 안엔 히스토리가 안 실린다. SaveGame은 2026-09-04
             // 부터 항상 true로 불러 저장 파일엔 히스토리가 실리지만
             // (BoardManager.Save.cs), 여기(게임 도중 멀티 시작)는 일부러
-            // 계속 false로 둔다 — 합류 이전 히스토리는 통째로 지우는 게
-            // 별도의 명시적 결정(ClearUndoHistoryForMidGameJoin, 유닛 중복
-            // 버그 재발 방지)이라 저장 파일과 같은 값을 따라갈 이유가 없다.
-            // 대신 여기서는 undo_history를 그 트리 밖에 별도 키로 담는다 —
-            // 방금 위에서 비웠으니 사실상 항상 빈 트리다.
+            // 계속 false로 둔다 — undo_history는 그 트리 밖에 별도 키로,
+            // 지금 실제 히스토리 전체(합류 이전 항목은 Locked=true인 채로)를
+            // 그대로 담아 보낸다(BuildUndoHistoryTree 참고).
             var wrapper = new Dictionary<string, object>
             {
                 { "full_state", BuildFullStateTree() },

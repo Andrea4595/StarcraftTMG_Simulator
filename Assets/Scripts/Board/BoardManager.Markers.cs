@@ -185,13 +185,23 @@ namespace TmgBoard
 
         /// <summary>"저장" 버튼 바로 오른쪽(사용자 요청, 2026-09-02 — 처음엔
         /// 맨 왼쪽에 뒀다가 이 자리로 재배치) — 진행 중인 게임을 그대로 둔 채
-        /// (씬 이동 없이) Entry의 "같이 하기"와 같은 모달을 연다
+        /// (씬 이동 없이) 곧장 호스팅을 시작하고 참가 코드를 띄운다
         /// (MultiplayerConnectDialog.Instance, GameFlowBootstrap이 영구
         /// 컴포넌트로 승격해둔 것 — 그 인스턴스 하나를 어느 씬에서든 그대로
         /// 재사용한다). 상대가 접속해 2명이 되면 CardPrep으로 보내지 않고
         /// 지금 보드 상태를 그대로 넘겨받아 둘 다 GameBoard에서 합류한다
         /// (MultiplayerConnectDialog.OnClientConnected/BoardManager.
-        /// BroadcastFullStateForMidGameJoin 참고).</summary>
+        /// BroadcastFullStateForMidGameJoin 참고). 2026-09-04까지는 Open()으로
+        /// Choice("호스트로 시작"/"참가 코드로 접속")→HostChoice("새 게임"/
+        /// "이어하기")를 다 거치게 했는데, 이미 진행 중인 게임에서 누르는
+        /// 버튼이라 "새 게임을 할지 참가할지"를 되묻는 게 무의미했다(사용자
+        /// 지적) — OpenAndStartHosting()(원래 "이어하기"로 저장 불러온 뒤
+        /// BoardManager.Start()가 자동으로 부르던 것과 같은 메서드)을 직접
+        /// 불러 그 두 단계를 건너뛴다. 이 버튼은 이미 연결 중일 땐
+        /// interactable=false로 막히므로(UpdateMultiplayerButtonState) 항상
+        /// "아직 미연결" 상태에서만 눌린다 — "참가 코드로 접속" 경로는 이
+        /// 버튼으로는 애초에 의미가 없다(진행 중인 보드를 버리고 남의
+        /// 게임에 들어가는 셈이라).</summary>
         private RawImage _multiplayerButtonIcon;
         private Image _multiplayerButtonBorder;
         private Button _multiplayerButton;
@@ -237,7 +247,7 @@ namespace TmgBoard
             // 계속 덧칠해서, 매 프레임 직접 칠하는 UpdateMultiplayerButtonState
             // 의 초록/투명 색과 서로 다퉈 깜빡이거나 잘못된 색으로 보일 수 있다.
             btn.transition = Selectable.Transition.None;
-            btn.onClick.AddListener(() => MultiplayerConnectDialog.Instance?.Open());
+            btn.onClick.AddListener(() => MultiplayerConnectDialog.Instance?.OpenAndStartHosting());
             _multiplayerButton = btn;
 
             UpdateMultiplayerButtonState();

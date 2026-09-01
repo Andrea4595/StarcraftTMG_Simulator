@@ -15,10 +15,11 @@ namespace TmgBoard
         // "불러왔을 때 되돌리기가 남아있지 않을 이유가 없다, 일부러 지울
         // 기획적 이유가 없으면 굳이 날릴 필요 없다"(사용자 판단). 그래서
         // SaveGame은 이제 항상 히스토리를 포함해서 저장한다. 게임 도중 멀티
-        // 시작(BoardManager.MidGameHandoff.cs)은 이 변경과 무관하게 그대로
-        // 둔다 — 그쪽은 되돌리기 히스토리를 합류 시점에 통째로 지우는 게
-        // (ClearUndoHistoryForMidGameJoin) 별도의 명시적 결정(유닛 중복 버그
-        // 재발 방지)이라, 저장 파일과는 다른 이유로 다른 값을 유지해야 한다.
+        // 시작(BoardManager.MidGameHandoff.cs)은 여전히 includeUndoHistory:
+        // false를 쓴다 — 그쪽은 undo_history를 그 트리 밖 별도 키로 담아
+        // 보내고(BuildUndoHistoryTree), 합류 이전 항목은 지우지 않는 대신
+        // Locked로 표시해 조작만 막는다(LockExistingUndoHistoryForMidGameJoin,
+        // 유닛 중복 버그 재발 방지 — 2026-09-04, 예전엔 통째로 지웠었다).
 
         public void SaveGame(string path)
         {

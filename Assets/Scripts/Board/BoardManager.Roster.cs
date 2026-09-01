@@ -80,7 +80,16 @@ namespace TmgBoard
         /// 이 임포트 자체를 되돌리면 그 전 상태로 정확히 돌아간다 —
         /// 배치로 예비대가 그냥 비는 것과는 별개로 이 스위치는 여전히
         /// RefreshPanelLayout에서 단방향으로 유지된다(임포트를 되돌리지
-        /// 않는 한).</summary>
+        /// 않는 한).
+        ///
+        /// CommitUndoTransaction(broadcast: false) — 마커/유닛 되돌리기와
+        /// 달리, 이 메서드 자체가 이미 "방송을 받았을 때 모든 클라이언트가
+        /// 각자 부르는" 공유 적용 지점이다(위 문단 — 호스트 자신도, 파일을
+        /// 고른 쪽도 이 방송을 거쳐서 적용한다). 그래서 A/B 모두 각자
+        /// 독립적으로 이미 자기 스택에 동등한 항목을 쌓는데, 평소처럼 그걸
+        /// 또 상대에게 방송(BroadcastUndoPushIfNetworked)까지 하면 상대가
+        /// 자기 것에 더해 한 번 더 받아 쌓아 "로스터 불러오기"가 되돌리기
+        /// 목록에 두 번 뜬다(사용자 보고, 2026-09-04 수정).</summary>
         internal void ApplyRosterImport(string team, string jsonText)
         {
             if (!RosterImporter.TryImport(jsonText, team, out var units, out var tokens, out var tacticalCards, out var error))
@@ -101,7 +110,7 @@ namespace TmgBoard
             RefreshPendingList();
             RefreshRosterTokenList();
             RefreshTacticalCardList();
-            CommitUndoTransaction();
+            CommitUndoTransaction(broadcast: false);
         }
 
         // transferId별로 도착한 조각을 모은다 — BoardNetworkSync가 로스터

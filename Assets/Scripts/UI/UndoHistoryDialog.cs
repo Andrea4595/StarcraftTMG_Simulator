@@ -31,6 +31,10 @@ namespace TmgBoard
     {
         private static readonly Color RowColor = new Color(0.22f, 0.22f, 0.22f, 1f);
         private static readonly Color UndoneRowColor = new Color(0.14f, 0.14f, 0.14f, 1f);
+        // 잠긴(게임 도중 합류 이전) 항목 전용 — 조작 불가라는 게 한눈에
+        // 보이도록 기존 두 배경색보다 더 어둡게 뺀다(사용자 요청, 2026-09-04
+        // — "히스토리에 있는 모든 항목을 보여주되, 조작만 불가능해 보이게").
+        private static readonly Color LockedRowColor = new Color(0.10f, 0.10f, 0.10f, 1f);
 
         private BoardManager _board;
         private RectTransform _listContent;
@@ -172,29 +176,40 @@ namespace TmgBoard
             {
                 int capturedIndex = row.StackIndex;
                 bool isUndone = row.IsUndone;
+                bool locked = row.Locked;
 
                 var itemGo = new GameObject("Row", typeof(RectTransform));
                 itemGo.transform.SetParent(_listContent, false);
                 var itemLe = itemGo.AddComponent<LayoutElement>();
                 itemLe.preferredHeight = 30f;
                 var itemBg = itemGo.AddComponent<Image>();
-                itemBg.color = isUndone ? UndoneRowColor : RowColor;
+                itemBg.color = locked ? LockedRowColor : (isUndone ? UndoneRowColor : RowColor);
                 var itemBtn = itemGo.AddComponent<Button>();
                 itemBtn.targetGraphic = itemBg;
-                itemBtn.onClick.AddListener(() =>
+                // 잠긴(게임 도중 합류 이전) 항목은 데이터는 보여주되 조작은
+                // 막는다(사용자 요청, 2026-09-04) — 지우는 대신 눌러도 아무
+                // 반응이 없게(interactable=false) 만 한다. 실제 안전장치는
+                // BoardManager.CancelOperationsDownTo/RestoreOperationsDownTo
+                // 쪽에도 방어적으로 한 번 더 있다.
+                itemBtn.interactable = !locked;
+                if (!locked)
                 {
-                    if (isUndone)
+                    itemBtn.onClick.AddListener(() =>
                     {
-                        _board.RestoreOperationsDownTo(capturedIndex);
-                    }
-                    else
-                    {
-                        _board.CancelOperationsDownTo(capturedIndex);
-                    }
-                    SyncAndRefresh();
-                });
+                        if (isUndone)
+                        {
+                            _board.RestoreOperationsDownTo(capturedIndex);
+                        }
+                        else
+                        {
+                            _board.CancelOperationsDownTo(capturedIndex);
+                        }
+                        SyncAndRefresh();
+                    });
+                }
 
-                var label = CreateLabel(itemGo.transform, row.Label, 13f, FontStyles.Normal, ResolveRowLabelColor(row.Team, isUndone));
+                string labelText = locked ? $"{row.Label} (참가 전 — 조작 불가)" : row.Label;
+                var label = CreateLabel(itemGo.transform, labelText, 13f, FontStyles.Normal, ResolveRowLabelColor(row.Team, isUndone, locked));
                 var labelRect = (RectTransform)label.transform;
                 labelRect.anchorMin = Vector2.zero;
                 labelRect.anchorMax = Vector2.one;
@@ -210,10 +225,15 @@ namespace TmgBoard
         /// 팀이 없으면 흰색)을 기본으로 쓰되, 이미 취소된(어두운 배경) 행은
         /// 그 색을 절반만큼 어둡게 낮춘다 — "이미 취소됨"이라는 기존 시각
         /// 신호(밝기 차이)는 유지하면서 팀 색 구분도 같이 보이게 한다
-        /// (2026-09-04, 사용자 요청).</summary>
-        private static Color ResolveRowLabelColor(string team, bool isUndone)
+        /// (2026-09-04, 사용자 요청). 잠긴 행은 그보다 더(1/4로) 어둡게
+        /// 낮춰서 조작 불가라는 게 색으로도 드러난다(2026-09-04 추가).</summary>
+        private static Color ResolveRowLabelColor(string team, bool isUndone, bool locked)
         {
             Color c = GameConstants.ResolveTeamTextColor(team);
+            if (locked)
+            {
+                return new Color(c.r * 0.25f, c.g * 0.25f, c.b * 0.25f, 1f);
+            }
             return isUndone ? new Color(c.r * 0.5f, c.g * 0.5f, c.b * 0.5f, 1f) : c;
         }
 

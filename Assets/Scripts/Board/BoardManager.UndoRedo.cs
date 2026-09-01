@@ -44,6 +44,16 @@ namespace TmgBoard
             // 편집 시작 전" 상태 그대로 고정된다 — CommitUndoTransaction
             // 참고. 빈 문자열이면 합치기 대상이 아님(대부분의 행동).
             public string CompositeKey = "";
+            // 게임 도중 멀티 합류(2026-09-04 재구성, 사용자 요청 — "되돌리기
+            // 리스트를 지울 필욘 없어, 조작만 불가능해 보이게") 시점에 이미
+            // 쌓여있던 항목은 전부 이걸 true로 세운다. 그 Snapshot 안엔
+            // 합류 전(백필 이전) 네트워크 id가 그대로 박제돼 있어서, 되돌려
+            // 보면 유닛/마커 중복 생성 버그로 이어진다(사용자가 실제로
+            // 재현) — 그래서 데이터는 보존하되(리플레이/기록 목적)
+            // CancelOperationsDownTo/RestoreOperationsDownTo/UndoHistoryDialog
+            // 양쪽에서 이 항목을 대상으로 한 조작 자체를 막는다.
+            // LockExistingUndoHistoryForMidGameJoin 참고.
+            public bool Locked;
         }
 
         private readonly List<UndoEntry> _undoStack = new List<UndoEntry>();
@@ -93,7 +103,19 @@ namespace TmgBoard
                     && _undoStack[_undoStack.Count - 1].CompositeKey == compositeKey;
         }
 
-        internal void CommitUndoTransaction()
+        /// <summary>broadcast=false는 로스터 임포트처럼 이 메서드 자체가 이미
+        /// "방송을 받았을 때 모든 클라이언트가 각자 부르는" 공유 적용
+        /// 지점 안에서 호출되는 경우 전용이다(2026-09-04 버그 수정, 사용자
+        /// 보고 — "멀티에서 로스터 불러오면 되돌리기 목록에 중복으로 두 번
+        /// 뜬다"). 마커/유닛 이동 등 대부분의 액션은 "누른 쪽만" Begin/
+        /// Commit을 부르고(방송을 받아 시각 요소만 그리는 쪽은 따로 손대지
+        /// 않음) 그래서 상대 스택엔 이 커밋 내용이 방송(BroadcastUndoPushIfNetworked)
+        /// 으로만 전달돼야 한다. 반면 ApplyRosterImport는 임포트 자체를
+        /// 방송받은 모든 클라이언트(호스트 자신 포함)가 각자 그 안에서
+        /// Begin/Commit을 부르므로, 이미 양쪽 다 자기 스택에 동등한 항목을
+        /// 갖는다 — 거기에 더해 평소처럼 방송까지 하면 상대가 한 번 더
+        /// 받아 쌓아서 중복이 생긴다.</summary>
+        internal void CommitUndoTransaction(bool broadcast = true)
         {
             if (!_undoPendingActive)
             {
@@ -133,13 +155,16 @@ namespace TmgBoard
             // 합치는 중이면 스냅샷 전체를 다시 보낼 필요가 없다 —
             // 상대에게도 "이미 있는 맨 위 항목의 라벨만 바꿔라"는 훨씬 작은
             // 메시지만 보낸다(BroadcastUndoRelabelIfNetworked).
-            if (isComposite)
+            if (broadcast)
             {
-                BroadcastUndoRelabelIfNetworked(_undoPendingLabel, _undoPendingTeam);
-            }
-            else
-            {
-                BroadcastUndoPushIfNetworked(_undoPendingSnapshot, _undoPendingLabel, _undoPendingTeam, _undoPendingCompositeKey);
+                if (isComposite)
+                {
+                    BroadcastUndoRelabelIfNetworked(_undoPendingLabel, _undoPendingTeam);
+                }
+                else
+                {
+                    BroadcastUndoPushIfNetworked(_undoPendingSnapshot, _undoPendingLabel, _undoPendingTeam, _undoPendingCompositeKey);
+                }
             }
             _undoPendingActive = false;
             _undoPendingSnapshot = null;
@@ -198,7 +223,7 @@ namespace TmgBoard
             var current = CaptureBoardSnapshot();
             var entry = _undoStack[_undoStack.Count - 1];
             _undoStack.RemoveAt(_undoStack.Count - 1);
-            _redoStack.Add(new UndoEntry { Snapshot = current, Label = entry.Label, Team = entry.Team, CompositeKey = entry.CompositeKey });
+            _redoStack.Add(new UndoEntry { Snapshot = current, Label = entry.Label, Team = entry.Team, CompositeKey = entry.CompositeKey, Locked = entry.Locked });
             RestoreBoardSnapshot(entry.Snapshot);
             _undoHistoryVersion++;
         }
@@ -212,7 +237,7 @@ namespace TmgBoard
             var current = CaptureBoardSnapshot();
             var entry = _redoStack[_redoStack.Count - 1];
             _redoStack.RemoveAt(_redoStack.Count - 1);
-            _undoStack.Add(new UndoEntry { Snapshot = current, Label = entry.Label, Team = entry.Team, CompositeKey = entry.CompositeKey });
+            _undoStack.Add(new UndoEntry { Snapshot = current, Label = entry.Label, Team = entry.Team, CompositeKey = entry.CompositeKey, Locked = entry.Locked });
             RestoreBoardSnapshot(entry.Snapshot);
             _undoHistoryVersion++;
         }
@@ -224,6 +249,15 @@ namespace TmgBoard
         internal void CancelOperationsDownTo(int stackIndex)
         {
             if (IsUndoBlocked())
+            {
+                return;
+            }
+            // 잠긴(게임 도중 합류 이전) 항목은 조작 대상이 될 수 없다 —
+            // UndoHistoryDialog가 이미 그 행을 클릭 못 하게 막아두지만, 방어적으로
+            // 여기서도 한 번 더 막는다. 잠긴 항목은 항상 스택 맨 아래(가장 오래된
+            // 쪽)에만 있으므로, 대상 자신만 확인하면 그보다 위(더 최근)는 전부
+            // 안전하다고 보장된다(잠긴 항목보다 아래로는 취소가 내려가지 않으므로).
+            if (stackIndex < 0 || stackIndex >= _undoStack.Count || _undoStack[stackIndex].Locked)
             {
                 return;
             }
@@ -248,6 +282,13 @@ namespace TmgBoard
         internal void RestoreOperationsDownTo(int stackIndex)
         {
             if (IsUndoBlocked())
+            {
+                return;
+            }
+            // CancelOperationsDownTo와 같은 방어적 잠금 확인 — 잠긴 항목은
+            // CancelOperationsDownTo 쪽에서 이미 막혀 _redoStack으로 넘어올 수
+            // 없으므로 실제로는 항상 통과하지만, 혹시 모를 경로를 위해 남겨둔다.
+            if (stackIndex < 0 || stackIndex >= _redoStack.Count || _redoStack[stackIndex].Locked)
             {
                 return;
             }
@@ -686,41 +727,38 @@ namespace TmgBoard
         /// 이 조합이 정확히 시간 역순이 된다. IsUndone인 항목은 StackIndex가
         /// _redoStack 기준(RestoreOperationsDownTo로), 아니면 _undoStack
         /// 기준(CancelOperationsDownTo로) 이다.</summary>
-        internal List<(string Label, int StackIndex, bool IsUndone, string Team)> GetCombinedHistoryForDisplay()
+        internal List<(string Label, int StackIndex, bool IsUndone, string Team, bool Locked)> GetCombinedHistoryForDisplay()
         {
-            var list = new List<(string, int, bool, string)>();
+            var list = new List<(string, int, bool, string, bool)>();
             for (int i = 0; i < _redoStack.Count; i++)
             {
-                list.Add((_redoStack[i].Label, i, true, _redoStack[i].Team));
+                list.Add((_redoStack[i].Label, i, true, _redoStack[i].Team, _redoStack[i].Locked));
             }
             for (int i = _undoStack.Count - 1; i >= 0; i--)
             {
-                list.Add((_undoStack[i].Label, i, false, _undoStack[i].Team));
+                list.Add((_undoStack[i].Label, i, false, _undoStack[i].Team, _undoStack[i].Locked));
             }
             return list;
         }
 
         /// <summary>게임 도중 멀티 합류(BoardManager.MidGameHandoff.cs) 전용 —
-        /// 지금 내 되돌리기 스택 전체(라벨+스냅샷, 순서 그대로)를 상대에게
-        /// 그대로 넘겨준다. 2026-09-02: 실제로는 호출부(BroadcastFullStateForMidGameJoin)가
-        /// 이 메서드를 부르기 *직전에* ClearUndoHistoryForMidGameJoin으로
-        /// 두 스택을 이미 비워버리므로, 지금은 사실상 항상 빈 트리를
-        /// 만든다 — 그래도 명시적으로 "히스토리를 이렇게 세팅해라"라고
-        /// 보내는 편이, 클라이언트 쪽에서 "값이 없으면 손대지 않는다"는
-        /// 암묵적 규칙에 기대는 것보다 명확하다. 두 스택을 굳이 비우지 않는
-        /// 경로가 나중에 또 생기면 이 메서드 자체는 그대로 재사용할 수
-        /// 있게 남겨둔다.</summary>
+        /// 지금 내 되돌리기 스택 전체(라벨+스냅샷+Locked, 순서 그대로)를
+        /// 상대에게 그대로 넘겨준다. 2026-09-04부터(사용자 요청 — "되돌리기
+        /// 리스트를 지울 필욘 없어") 호출부(BroadcastFullStateForMidGameJoin)가
+        /// 이 메서드를 부르기 *직전에* 하던 일이 "통째로 비우기"에서 "합류
+        /// 이전 항목을 Locked로 표시"로 바뀌었다 — 그래서 이제 이 트리는
+        /// 실제 히스토리 전체(과거분은 Locked=true인 채로)를 담아 보낸다.</summary>
         internal Dictionary<string, object> BuildUndoHistoryTree()
         {
             var undoList = new List<object>();
             foreach (var entry in _undoStack)
             {
-                undoList.Add(new Dictionary<string, object> { { "label", entry.Label }, { "team", entry.Team }, { "snapshot", BuildSnapshotTree(entry.Snapshot) } });
+                undoList.Add(new Dictionary<string, object> { { "label", entry.Label }, { "team", entry.Team }, { "locked", entry.Locked }, { "snapshot", BuildSnapshotTree(entry.Snapshot) } });
             }
             var redoList = new List<object>();
             foreach (var entry in _redoStack)
             {
-                redoList.Add(new Dictionary<string, object> { { "label", entry.Label }, { "team", entry.Team }, { "snapshot", BuildSnapshotTree(entry.Snapshot) } });
+                redoList.Add(new Dictionary<string, object> { { "label", entry.Label }, { "team", entry.Team }, { "locked", entry.Locked }, { "snapshot", BuildSnapshotTree(entry.Snapshot) } });
             }
             return new Dictionary<string, object> { { "undo_stack", undoList }, { "redo_stack", redoList } };
         }
@@ -728,18 +766,17 @@ namespace TmgBoard
         /// <summary>BuildUndoHistoryTree의 역과정 — 게임 도중 멀티 합류로 막
         /// 만들어진(텅 빈) 내 스택을 호스트가 보내준 내용으로 그대로
         /// 채운다. 배열 순서 자체가 이미 스택 순서라 그대로 옮기기만 하면
-        /// 된다.
+        /// 된다. `locked` 플래그도 그대로 옮겨서, 합류 이전 항목은 호스트와
+        /// 똑같이 이 클라이언트에서도 조작 대상이 될 수 없게 막힌다
+        /// (LockExistingUndoHistoryForMidGameJoin/UndoEntry.Locked 참고).
         ///
-        /// 예전엔 여기서 "합류 이전 스냅샷에 박제된 옛 NetworkUnitId(백필
-        /// 이전 값, -1)로 되돌리면 유닛/마커가 중복 생성될 수 있다"는 한계를
-        /// 그냥 감수했었는데, 사용자가 그 시나리오를 실제로 몇 단계만에
-        /// 재현해 보이면서("발견하기 어려운 버그라더니 엄청 쉽게 재현되네")
-        /// 사용자 판단으로 근본적으로 다르게 고쳤다: 애초에 위험한 옛
-        /// 히스토리 자체를 합류 시점에 통째로 지워버린다
-        /// (ClearUndoHistoryForMidGameJoin) — "문제가 생기지 않게 해버리는
-        /// 거지." 그래서 지금은 root가 사실상 항상 빈 트리이고, 이 메서드는
-        /// 실질적으로 "합류 시 되돌리기 스택을 확실히 비운다"는 의미만
-        /// 갖는다.</summary>
+        /// 예전엔(2026-09-02) "합류 이전 스냅샷에 박제된 옛 NetworkUnitId
+        /// (백필 이전 값, -1)로 되돌리면 유닛/마커가 중복 생성될 수 있다"는
+        /// 문제를 히스토리 자체를 합류 시점에 통째로 지워버리는 걸로
+        /// 해결했었다(ClearUndoHistoryForMidGameJoin, 사용자가 실제로 버그를
+        /// 재현해 보인 뒤 내린 판단). 2026-09-04, 사용자가 "지울 필요
+        /// 없다, 리스트는 다 보여주고 조작만 막아달라"고 재요청 — 데이터는
+        /// 보존하고 조작만 잠그는 쪽으로 다시 바꿨다.</summary>
         internal void ApplySeededUndoHistory(Dictionary<string, object> root)
         {
             _undoStack.Clear();
@@ -748,31 +785,43 @@ namespace TmgBoard
             {
                 if (raw is Dictionary<string, object> e)
                 {
-                    _undoStack.Add(new UndoEntry { Label = GameSaveIO.GetString(e, "label"), Team = GameSaveIO.GetString(e, "team"), Snapshot = ParseSnapshotTree(GameSaveIO.GetDict(e, "snapshot")) });
+                    _undoStack.Add(new UndoEntry { Label = GameSaveIO.GetString(e, "label"), Team = GameSaveIO.GetString(e, "team"), Locked = GameSaveIO.GetBool(e, "locked"), Snapshot = ParseSnapshotTree(GameSaveIO.GetDict(e, "snapshot")) });
                 }
             }
             foreach (var raw in GameSaveIO.GetList(root, "redo_stack"))
             {
                 if (raw is Dictionary<string, object> e)
                 {
-                    _redoStack.Add(new UndoEntry { Label = GameSaveIO.GetString(e, "label"), Team = GameSaveIO.GetString(e, "team"), Snapshot = ParseSnapshotTree(GameSaveIO.GetDict(e, "snapshot")) });
+                    _redoStack.Add(new UndoEntry { Label = GameSaveIO.GetString(e, "label"), Team = GameSaveIO.GetString(e, "team"), Locked = GameSaveIO.GetBool(e, "locked"), Snapshot = ParseSnapshotTree(GameSaveIO.GetDict(e, "snapshot")) });
                 }
             }
             _undoHistoryVersion++; // 되돌리기 모달이 열려 있었다면 다시 그리도록.
         }
 
         /// <summary>BroadcastFullStateForMidGameJoin이 상태를 내보내기 직전에
-        /// 부른다(2026-09-02, 사용자 지정) — 합류 이전에 쌓여있던 되돌리기
-        /// 히스토리를 통째로 지운다. 그 안에 박제된 옛(백필 이전) 네트워크
-        /// id 때문에 생기던 유닛/마커 중복 버그를 "고치는" 대신 애초에
-        /// 그 히스토리 자체를 없애버려서 문제 조건 자체가 성립하지 않게
-        /// 한다 — 사용자가 직접 재현해 보인 뒤 내린 판단. 합류 시점부터
-        /// 새로 쌓이는 항목은 전부 이미 backfill된 살아있는 상태를 기준으로
-        /// 캡처되므로 안전하다.</summary>
-        internal void ClearUndoHistoryForMidGameJoin()
+        /// 부른다 — 합류 이전에 쌓여있던 되돌리기 히스토리를 지우지 않고
+        /// 그대로 둔 채, 그 안의 기존 항목 전부(양쪽 스택 다)에
+        /// Locked=true만 표시한다(2026-09-04 재구성, 사용자 요청 — "되돌리기
+        /// 리스트를 지울 필욘 없어. 히스토리에 있는 모든 항목을 보여주되,
+        /// 조작만 불가능해 보이게 처리해줘"). 원래(2026-09-02)는 통째로
+        /// 지워버리는 방식이었다 — 그 안에 박제된 옛(백필 이전) 네트워크 id로
+        /// 되돌리면 유닛/마커가 중복 생성되는 버그를, 사용자가 직접 재현해
+        /// 보인 뒤 "히스토리 자체를 없애서" 막기로 했던 결정. 지금은 데이터를
+        /// 지우는 대신 CancelOperationsDownTo/RestoreOperationsDownTo와
+        /// UndoHistoryDialog 양쪽에서 Locked 항목을 대상으로 한 조작 자체를
+        /// 막아 같은 안전성을 유지한다(UndoEntry.Locked 참고). 합류 시점부터
+        /// 새로 쌓이는 항목은 Locked=false로, 이미 backfill된 살아있는 상태를
+        /// 기준으로 캡처되므로 안전하게 조작할 수 있다.</summary>
+        internal void LockExistingUndoHistoryForMidGameJoin()
         {
-            _undoStack.Clear();
-            _redoStack.Clear();
+            foreach (var entry in _undoStack)
+            {
+                entry.Locked = true;
+            }
+            foreach (var entry in _redoStack)
+            {
+                entry.Locked = true;
+            }
             _undoHistoryVersion++;
         }
 
