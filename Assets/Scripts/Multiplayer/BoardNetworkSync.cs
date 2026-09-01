@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace TmgBoard
 {
@@ -16,7 +17,7 @@ namespace TmgBoard
     /// 존재해야 클라이언트 쪽에도 복제되므로(Assets/Resources/Multiplayer/
     /// BoardNetworkSync 프리팹, NetworkObject+이 스크립트만 붙은 빈
     /// 오브젝트), 호스트가 StartHost() 성공 직후 한 번 스폰한다
-    /// (RelayConnectionTest 참고).</summary>
+    /// (MultiplayerConnectDialog 참고).</summary>
     public class BoardNetworkSync : NetworkBehaviour
     {
         public static BoardNetworkSync Instance { get; private set; }
@@ -25,6 +26,17 @@ namespace TmgBoard
         // 아니라 각자 로컬로 만들어지므로, 삭제할 때 "어느 마커인지"
         // 지목하려면 배치 시점에 호스트가 발급한 id가 있어야 한다.
         private int _nextMarkerId;
+
+        /// <summary>RequestPlaceMarkerServerRpc가 실제 배치할 때 쓰는 것과
+        /// 같은 카운터를 직접 하나 꺼내 쓴다 — 2026-09-02, 게임 도중 멀티
+        /// 시작(BoardManager.MidGameHandoff.cs)이 이미 솔로로 놓여있던
+        /// 마커(아직 네트워크 id가 없는, NetworkMarkerId==-1)에 새로 방송
+        /// 없이 하나씩 발급할 때 쓴다 — 오직 호스트만 부른다(호출부에서
+        /// 이미 확인함).</summary>
+        public int AllocateNextMarkerId()
+        {
+            return ++_nextMarkerId;
+        }
 
         // 지형 조각도 마커와 같은 이유로 NetworkObject가 아니라 로컬 생성 —
         // 배치 시 호스트가 발급하는 id로 이동/회전/삭제를 지목한다.
@@ -46,7 +58,7 @@ namespace TmgBoard
         public override void OnNetworkSpawn()
         {
             Instance = this;
-            // Entry 화면에서 스폰되는데(RelayConnectionTest), 이후
+            // Entry 화면에서 스폰되는데(MultiplayerConnectDialog), 이후
             // Selection/TerrainSetup/GameBoard로 넘어가는 씬 전환은 NGO의
             // NetworkSceneManager가 아니라 일반 SceneManager.LoadScene이라 —
             // DontDestroyOnLoad를 안 걸면 씬 전환 때 파괴돼버린다(호스트/
@@ -286,6 +298,41 @@ namespace TmgBoard
                 return;
             }
             board.ReceivePendingUnitsChunk(transferId, chunkIndex, totalChunks, chunk);
+        }
+
+        // ── 택티컬 카드(_pendingTacticalCards) 동기화(2026-09-02 신설) ─────
+        // 예비대 목록과 완전히 같은 모양(목록 전체를 다시 보냄) — 사용자
+        // 보고: 멀티 게임 화면에서 카드 좌/우클릭이 상대에게 전혀 안 보였다.
+
+        public void RequestBroadcastTacticalCards(string tacticalCardsJson)
+        {
+            int transferId = System.Guid.NewGuid().GetHashCode();
+            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(tacticalCardsJson.Length / (float)TextChunkSize));
+            for (int i = 0; i < totalChunks; i++)
+            {
+                int start = i * TextChunkSize;
+                int length = Mathf.Min(TextChunkSize, tacticalCardsJson.Length - start);
+                string chunk = tacticalCardsJson.Substring(start, length);
+                RequestBroadcastTacticalCardsChunkServerRpc(transferId, i, totalChunks, chunk);
+            }
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        private void RequestBroadcastTacticalCardsChunkServerRpc(int transferId, int chunkIndex, int totalChunks, string chunk)
+        {
+            BroadcastTacticalCardsChunkRpc(transferId, chunkIndex, totalChunks, chunk);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void BroadcastTacticalCardsChunkRpc(int transferId, int chunkIndex, int totalChunks, string chunk)
+        {
+            var board = Object.FindFirstObjectByType<BoardManager>();
+            if (board == null)
+            {
+                Debug.LogError("[BoardNetworkSync] BoardManager를 못 찾음 — 택티컬 카드 조각을 못 받음");
+                return;
+            }
+            board.ReceiveTacticalCardsChunk(transferId, chunkIndex, totalChunks, chunk);
         }
 
         // ── 범위 표시 동기화(2026-08-31 신설) ─────────────────────────────
@@ -931,6 +978,133 @@ namespace TmgBoard
                 return;
             }
             board.ApplyRemoteUndoCascade(isRedo, targetIndex);
+        }
+
+        // ── 게임 도중 멀티 시작(2026-09-02 신설) ───────────────────────────
+        // MultiplayerConnectDialog를 GameBoard 마커바에서도 열 수 있게 되면서
+        // (사용자 요청) 생긴 새 경로 — 호스트가 이미 GameBoard에서 혼자
+        // 플레이 중일 때 상대가 접속하면, 예전처럼 무조건 CardPrep으로
+        // 보내지 않고 지금 보드 상태를 그대로 넘겨받아 둘 다 같은 GameBoard로
+        // 합류한다. 다음 화면 결정 자체를 호스트만 내리고 방송한다 —
+        // MultiplayerConnectDialog.OnClientConnected 참고(예전엔 호스트/
+        // 클라이언트 양쪽이 "2명이면 CardPrep"을 각자 독립적으로 계산했는데,
+        // 그 방식은 호스트가 GameBoard 중일 수 있는 지금은 더 이상 안전하지
+        // 않다 — 호스트만 결정해서 방송하고, 클라이언트는 그 방송을 받을
+        // 때까지 스스로 씬을 넘어가지 않는다).
+
+        /// <summary>기존 CardPrep 흐름(Entry에서 새로 시작하는 경우)으로
+        /// 보낼 때 부른다 — 값이 없어 청크가 필요 없다. ProceedToTerrainRpc와
+        /// 같은 모양이지만 대상이 다르다(그건 CardDraftController, 이건
+        /// 씬 전환 자체).</summary>
+        public void RequestBroadcastProceedToCardPrep()
+        {
+            RequestBroadcastProceedToCardPrepServerRpc();
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        private void RequestBroadcastProceedToCardPrepServerRpc()
+        {
+            ProceedToCardPrepRpc();
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void ProceedToCardPrepRpc()
+        {
+            SceneManager.LoadScene(GameConstants.CardPrepSceneName);
+        }
+
+        private readonly Dictionary<int, TextChunkBuffer> _midGameStateChunkBuffers = new();
+
+        /// <summary>BoardManager.BroadcastFullStateForMidGameJoin이 부른다 —
+        /// fullStateJson은 BoardManager.BuildFullStateTree()(저장 파일과
+        /// 완전히 같은 스키마, SaveGame이 쓰는 것 그대로)를 MiniJson으로
+        /// 직렬화한 것. 호스트만 이걸 부른다(그 호출부에서 이미 IsServer를
+        /// 확인함).</summary>
+        public void RequestBroadcastMidGameState(string fullStateJson)
+        {
+            int transferId = System.Guid.NewGuid().GetHashCode();
+            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(fullStateJson.Length / (float)TextChunkSize));
+            for (int i = 0; i < totalChunks; i++)
+            {
+                int start = i * TextChunkSize;
+                int length = Mathf.Min(TextChunkSize, fullStateJson.Length - start);
+                string chunk = fullStateJson.Substring(start, length);
+                RequestBroadcastMidGameStateChunkServerRpc(transferId, i, totalChunks, chunk);
+            }
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        private void RequestBroadcastMidGameStateChunkServerRpc(int transferId, int chunkIndex, int totalChunks, string chunk)
+        {
+            BroadcastMidGameStateChunkRpc(transferId, chunkIndex, totalChunks, chunk);
+        }
+
+        /// <summary>호스트 자신에게도 루프백되지만, 호스트는 이미 이 상태
+        /// 그대로이므로(자기 자신의 보드에서 막 만든 스냅샷) IsServer 확인
+        /// 하나로 무시한다 — 클라이언트만 실제로 GameLoadRequest.PendingData에
+        /// 담아 GameBoard로 이동한다(LoadGame 화면이 저장 파일을 불러올 때와
+        /// 완전히 같은 경로 — GameFlowBootstrap.BuildGameBoard가
+        /// GameSaveIO.ApplyLoadedStaticState를, BoardManager.Start()가
+        /// ApplyLoadedLiveState를 그대로 처리해준다).</summary>
+        [Rpc(SendTo.ClientsAndHost)]
+        private void BroadcastMidGameStateChunkRpc(int transferId, int chunkIndex, int totalChunks, string chunk)
+        {
+            if (!_midGameStateChunkBuffers.TryGetValue(transferId, out var buf))
+            {
+                buf = new TextChunkBuffer { Parts = new string[totalChunks] };
+                _midGameStateChunkBuffers[transferId] = buf;
+            }
+            if (buf.Parts[chunkIndex] == null)
+            {
+                buf.ReceivedCount++;
+            }
+            buf.Parts[chunkIndex] = chunk;
+            if (buf.ReceivedCount < totalChunks)
+            {
+                return;
+            }
+            _midGameStateChunkBuffers.Remove(transferId);
+
+            if (NetworkManager.Singleton.IsServer)
+            {
+                return; // 호스트 자신의 루프백 — 이미 이 상태 그대로다.
+            }
+
+            if (!(MiniJson.Parse(string.Concat(buf.Parts)) is Dictionary<string, object> wrapper))
+            {
+                Debug.LogError("[BoardNetworkSync] 게임 도중 상태 JSON 파싱 실패");
+                return;
+            }
+            // full_state(저장 파일과 같은 스키마)와 undo_history(되돌리기
+            // 스택 시딩, 2026-09-02 추가 — 사용자가 발견한 "합류한 쪽 되돌리기가
+            // 안 맞는" 버그 수정)를 한 봉투에 같이 담아 보냈다.
+            GameLoadRequest.PendingData = GameSaveIO.GetDict(wrapper, "full_state");
+            GameLoadRequest.PendingUndoHistory = GameSaveIO.GetDict(wrapper, "undo_history");
+            SceneManager.LoadScene(GameConstants.GameBoardSceneName);
+        }
+
+        // ── 맵 이모트(2026-09-02 신설) ──────────────────────────────────
+        // 마커와 같은 "요청→방송→각자 로컬로 완전히 새로 만들기" 패턴이지만
+        // 훨씬 더 단순하다 — id 발급도, 삭제/이동 방송도 필요 없다(잠깐 떴다
+        // 스스로 사라지는 순수 시각 효과라 나중에 다시 지목할 일이 없음).
+        // 값이 작아(스프라이트 번호 + 좌표) 청크도 필요 없다.
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestPlaceEmoteServerRpc(int spriteIndex, Vector2 point)
+        {
+            PlaceEmoteRpc(spriteIndex, point);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void PlaceEmoteRpc(int spriteIndex, Vector2 point)
+        {
+            var board = Object.FindFirstObjectByType<BoardManager>();
+            if (board == null)
+            {
+                Debug.LogError("[BoardNetworkSync] BoardManager를 못 찾음 — 이모트를 못 그림");
+                return;
+            }
+            board.SpawnLocalEmote(spriteIndex, point);
         }
     }
 }

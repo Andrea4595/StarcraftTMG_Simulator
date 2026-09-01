@@ -122,6 +122,7 @@ namespace TmgBoard
             CreateUndoHistoryButton(barRect);
             CreateExitButton(barRect);
             CreateSaveButton(barRect);
+            CreateMultiplayerButton(barRect);
         }
 
         /// <summary>바 맨 왼쪽 — 처음 화면(Entry)으로 돌아가기(사용자 요청).
@@ -180,6 +181,34 @@ namespace TmgBoard
                     saveNameDialog.Open("저장 이름", "");
                 }
             });
+        }
+
+        /// <summary>"저장" 버튼 바로 오른쪽(사용자 요청, 2026-09-02 — 처음엔
+        /// 맨 왼쪽에 뒀다가 이 자리로 재배치) — 진행 중인 게임을 그대로 둔 채
+        /// (씬 이동 없이) Entry의 "같이 하기"와 같은 모달을 연다
+        /// (MultiplayerConnectDialog.Instance, GameFlowBootstrap이 영구
+        /// 컴포넌트로 승격해둔 것 — 그 인스턴스 하나를 어느 씬에서든 그대로
+        /// 재사용한다). 상대가 접속해 2명이 되면 CardPrep으로 보내지 않고
+        /// 지금 보드 상태를 그대로 넘겨받아 둘 다 GameBoard에서 합류한다
+        /// (MultiplayerConnectDialog.OnClientConnected/BoardManager.
+        /// BroadcastFullStateForMidGameJoin 참고).</summary>
+        private void CreateMultiplayerButton(Transform parent)
+        {
+            var go = new GameObject("MultiplayerButton", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(0f, 0.5f);
+            rect.anchorMax = new Vector2(0f, 0.5f);
+            rect.pivot = new Vector2(0f, 0.5f);
+            rect.anchoredPosition = new Vector2(10f + GameConstants.MarkerBarHeight * 2f, 0f);
+            rect.sizeDelta = new Vector2(GameConstants.MarkerBarHeight - 8f, GameConstants.MarkerBarHeight - 8f);
+
+            var img = go.AddComponent<RawImage>();
+            img.texture = Resources.Load<Texture2D>("UI/MultiplayButton");
+
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => MultiplayerConnectDialog.Instance?.Open());
         }
 
         /// <summary>마커 아이콘 오른쪽에 조작법을 띄워주는 라벨(사용자 요청) —
@@ -451,7 +480,12 @@ namespace TmgBoard
         /// 취소돼버린다.</summary>
         private void HandleMarkerPlacementInput()
         {
-            if (!IsPointerOverUi() && (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1) || Input.GetMouseButtonDown(2)))
+            // IsOverMissionObjective() 예외: 미션 목표 마커의 3인치 점령 링
+            // 전체가 raycastTarget이라 그 위 클릭이 전부 "UI 위"로 잡혀서,
+            // 마커가 놓인 자리에는 다른 마커를 배치할 수조차 없던 버그(사용자
+            // 보고, 2026-09-02) — HandlePendingDeploymentInput의 같은 수정과
+            // 동일한 패턴.
+            if ((!IsPointerOverUi() || IsOverMissionObjective()) && (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1) || Input.GetMouseButtonDown(2)))
             {
                 if (Input.GetMouseButtonDown(0) && TryGetLocalMouse(out var mouseLocal))
                 {

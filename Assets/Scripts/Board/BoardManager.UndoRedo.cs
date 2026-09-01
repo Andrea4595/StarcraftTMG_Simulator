@@ -40,6 +40,15 @@ namespace TmgBoard
         private BoardSnapshot _undoPendingSnapshot;
         private string _undoPendingLabel;
 
+        // 두 스택 중 하나라도 바뀔 때마다 올라간다 — UndoHistoryDialog가 열려
+        // 있는 동안 이 값을 매 프레임 폴링해서(코루틴 없이) 바뀌었으면 목록을
+        // 다시 그린다. 로컬 커밋/카스케이드는 물론 상대에게서 받은
+        // ApplyRemoteUndoPush/ApplyRemoteUndoCascade도 UndoOneStep/RedoOneStep을
+        // 그대로 타므로 여기 한 곳만 올리면 전부 커버된다.
+        private int _undoHistoryVersion;
+
+        internal int UndoHistoryVersion => _undoHistoryVersion;
+
         private void BeginUndoTransaction(string label)
         {
             if (_undoPendingActive)
@@ -59,6 +68,8 @@ namespace TmgBoard
             }
             _undoStack.Add(new UndoEntry { Snapshot = _undoPendingSnapshot, Label = _undoPendingLabel });
             _redoStack.Clear();
+            _undoHistoryVersion++;
+            ShowUndoToast(_undoPendingLabel);
             // 멀티 연결 중이면 상대의 되돌리기 스택에도 똑같은 항목을
             // 쌓아달라고 방송한다 — 이게 없으면 상대가 한 조작은 내
             // 스택에, 내가 한 조작은 상대 스택에 전혀 안 남아서, 나중에
@@ -122,6 +133,7 @@ namespace TmgBoard
             _undoStack.RemoveAt(_undoStack.Count - 1);
             _redoStack.Add(new UndoEntry { Snapshot = current, Label = entry.Label });
             RestoreBoardSnapshot(entry.Snapshot);
+            _undoHistoryVersion++;
         }
 
         private void RedoOneStep()
@@ -135,6 +147,7 @@ namespace TmgBoard
             _redoStack.RemoveAt(_redoStack.Count - 1);
             _undoStack.Add(new UndoEntry { Snapshot = current, Label = entry.Label });
             RestoreBoardSnapshot(entry.Snapshot);
+            _undoHistoryVersion++;
         }
 
         /// <summary>UndoHistoryDialog의 "조작 리스트" 항목을 클릭했을 때
@@ -147,11 +160,17 @@ namespace TmgBoard
             {
                 return;
             }
+            int stepCount = _undoStack.Count - stackIndex;
+            string topLabel = stepCount > 0 ? _undoStack[_undoStack.Count - 1].Label : null;
             while (_undoStack.Count > stackIndex)
             {
                 UndoOneStep();
             }
             BroadcastUndoCascadeIfNetworked(false, stackIndex);
+            if (stepCount > 0)
+            {
+                ShowUndoCascadeToast(isRedo: false, stepCount, topLabel);
+            }
         }
 
         /// <summary>UndoHistoryDialog의 "Undo 리스트" 항목을 클릭했을 때
@@ -164,11 +183,17 @@ namespace TmgBoard
             {
                 return;
             }
+            int stepCount = _redoStack.Count - stackIndex;
+            string topLabel = stepCount > 0 ? _redoStack[_redoStack.Count - 1].Label : null;
             while (_redoStack.Count > stackIndex)
             {
                 RedoOneStep();
             }
             BroadcastUndoCascadeIfNetworked(true, stackIndex);
+            if (stepCount > 0)
+            {
+                ShowUndoCascadeToast(isRedo: true, stepCount, topLabel);
+            }
         }
 
         /// <summary>커밋된 되돌리기 항목 하나를 상대에게도 알린다 — 상대는
@@ -207,6 +232,8 @@ namespace TmgBoard
             }
             _undoStack.Add(new UndoEntry { Snapshot = ParseSnapshotTree(root), Label = label });
             _redoStack.Clear();
+            _undoHistoryVersion++;
+            ShowUndoToast(label);
         }
 
         /// <summary>되돌리기 카스케이드(CancelOperationsDownTo/
@@ -237,18 +264,34 @@ namespace TmgBoard
         /// 결과 보드도 상대와 같아진다.</summary>
         internal void ApplyRemoteUndoCascade(bool isRedo, int targetIndex)
         {
+            // BroadcastUndoPushIfNetworked 덕에 이 시점엔 내 스택 내용이 상대와
+            // 이미 같으므로, CancelOperationsDownTo/RestoreOperationsDownTo가
+            // 로컬에서 하던 stepCount/topLabel 계산을 여기서도 그대로 반복해
+            // 토스트를 똑같이 띄울 수 있다.
             if (isRedo)
             {
+                int stepCount = _redoStack.Count - targetIndex;
+                string topLabel = stepCount > 0 ? _redoStack[_redoStack.Count - 1].Label : null;
                 while (_redoStack.Count > targetIndex)
                 {
                     RedoOneStep();
                 }
+                if (stepCount > 0)
+                {
+                    ShowUndoCascadeToast(isRedo: true, stepCount, topLabel);
+                }
             }
             else
             {
+                int stepCount = _undoStack.Count - targetIndex;
+                string topLabel = stepCount > 0 ? _undoStack[_undoStack.Count - 1].Label : null;
                 while (_undoStack.Count > targetIndex)
                 {
                     UndoOneStep();
+                }
+                if (stepCount > 0)
+                {
+                    ShowUndoCascadeToast(isRedo: false, stepCount, topLabel);
                 }
             }
         }
@@ -335,6 +378,7 @@ namespace TmgBoard
                 markers.Add(new Dictionary<string, object>
                 {
                     { "kind", m.Kind }, { "center", GameSaveIO.Vec2ToTree(m.Center) }, { "state", m.State },
+                    { "network_marker_id", m.NetworkMarkerId },
                 });
             }
 
@@ -436,6 +480,7 @@ namespace TmgBoard
                         Kind = GameSaveIO.GetString(m, "kind"),
                         Center = GameSaveIO.TreeToVec2(GameSaveIO.GetDict(m, "center")),
                         State = GameSaveIO.GetString(m, "state"),
+                        NetworkMarkerId = GameSaveIO.GetInt(m, "network_marker_id", -1),
                     });
                 }
             }
@@ -465,6 +510,82 @@ namespace TmgBoard
                 list.Add((_undoStack[i].Label, i, false));
             }
             return list;
+        }
+
+        /// <summary>게임 도중 멀티 합류(BoardManager.MidGameHandoff.cs) 전용 —
+        /// 지금 내 되돌리기 스택 전체(라벨+스냅샷, 순서 그대로)를 상대에게
+        /// 그대로 넘겨준다. 2026-09-02: 실제로는 호출부(BroadcastFullStateForMidGameJoin)가
+        /// 이 메서드를 부르기 *직전에* ClearUndoHistoryForMidGameJoin으로
+        /// 두 스택을 이미 비워버리므로, 지금은 사실상 항상 빈 트리를
+        /// 만든다 — 그래도 명시적으로 "히스토리를 이렇게 세팅해라"라고
+        /// 보내는 편이, 클라이언트 쪽에서 "값이 없으면 손대지 않는다"는
+        /// 암묵적 규칙에 기대는 것보다 명확하다. 두 스택을 굳이 비우지 않는
+        /// 경로가 나중에 또 생기면 이 메서드 자체는 그대로 재사용할 수
+        /// 있게 남겨둔다.</summary>
+        internal Dictionary<string, object> BuildUndoHistoryTree()
+        {
+            var undoList = new List<object>();
+            foreach (var entry in _undoStack)
+            {
+                undoList.Add(new Dictionary<string, object> { { "label", entry.Label }, { "snapshot", BuildSnapshotTree(entry.Snapshot) } });
+            }
+            var redoList = new List<object>();
+            foreach (var entry in _redoStack)
+            {
+                redoList.Add(new Dictionary<string, object> { { "label", entry.Label }, { "snapshot", BuildSnapshotTree(entry.Snapshot) } });
+            }
+            return new Dictionary<string, object> { { "undo_stack", undoList }, { "redo_stack", redoList } };
+        }
+
+        /// <summary>BuildUndoHistoryTree의 역과정 — 게임 도중 멀티 합류로 막
+        /// 만들어진(텅 빈) 내 스택을 호스트가 보내준 내용으로 그대로
+        /// 채운다. 배열 순서 자체가 이미 스택 순서라 그대로 옮기기만 하면
+        /// 된다.
+        ///
+        /// 예전엔 여기서 "합류 이전 스냅샷에 박제된 옛 NetworkUnitId(백필
+        /// 이전 값, -1)로 되돌리면 유닛/마커가 중복 생성될 수 있다"는 한계를
+        /// 그냥 감수했었는데, 사용자가 그 시나리오를 실제로 몇 단계만에
+        /// 재현해 보이면서("발견하기 어려운 버그라더니 엄청 쉽게 재현되네")
+        /// 사용자 판단으로 근본적으로 다르게 고쳤다: 애초에 위험한 옛
+        /// 히스토리 자체를 합류 시점에 통째로 지워버린다
+        /// (ClearUndoHistoryForMidGameJoin) — "문제가 생기지 않게 해버리는
+        /// 거지." 그래서 지금은 root가 사실상 항상 빈 트리이고, 이 메서드는
+        /// 실질적으로 "합류 시 되돌리기 스택을 확실히 비운다"는 의미만
+        /// 갖는다.</summary>
+        internal void ApplySeededUndoHistory(Dictionary<string, object> root)
+        {
+            _undoStack.Clear();
+            _redoStack.Clear();
+            foreach (var raw in GameSaveIO.GetList(root, "undo_stack"))
+            {
+                if (raw is Dictionary<string, object> e)
+                {
+                    _undoStack.Add(new UndoEntry { Label = GameSaveIO.GetString(e, "label"), Snapshot = ParseSnapshotTree(GameSaveIO.GetDict(e, "snapshot")) });
+                }
+            }
+            foreach (var raw in GameSaveIO.GetList(root, "redo_stack"))
+            {
+                if (raw is Dictionary<string, object> e)
+                {
+                    _redoStack.Add(new UndoEntry { Label = GameSaveIO.GetString(e, "label"), Snapshot = ParseSnapshotTree(GameSaveIO.GetDict(e, "snapshot")) });
+                }
+            }
+            _undoHistoryVersion++; // 되돌리기 모달이 열려 있었다면 다시 그리도록.
+        }
+
+        /// <summary>BroadcastFullStateForMidGameJoin이 상태를 내보내기 직전에
+        /// 부른다(2026-09-02, 사용자 지정) — 합류 이전에 쌓여있던 되돌리기
+        /// 히스토리를 통째로 지운다. 그 안에 박제된 옛(백필 이전) 네트워크
+        /// id 때문에 생기던 유닛/마커 중복 버그를 "고치는" 대신 애초에
+        /// 그 히스토리 자체를 없애버려서 문제 조건 자체가 성립하지 않게
+        /// 한다 — 사용자가 직접 재현해 보인 뒤 내린 판단. 합류 시점부터
+        /// 새로 쌓이는 항목은 전부 이미 backfill된 살아있는 상태를 기준으로
+        /// 캡처되므로 안전하다.</summary>
+        internal void ClearUndoHistoryForMidGameJoin()
+        {
+            _undoStack.Clear();
+            _redoStack.Clear();
+            _undoHistoryVersion++;
         }
 
         private BoardSnapshot CaptureBoardSnapshot()
@@ -542,15 +663,15 @@ namespace TmgBoard
                     }
                     if (markerGo.TryGetComponent<ActivationMarker>(out var act))
                     {
-                        snapshot.Markers.Add(new MarkerSnapshot { Kind = "activation", Center = act.Center, State = act.State });
+                        snapshot.Markers.Add(new MarkerSnapshot { Kind = "activation", Center = act.Center, State = act.State, NetworkMarkerId = act.NetworkMarkerId });
                     }
                     else if (markerGo.TryGetComponent<CaptureMarker>(out var cap))
                     {
-                        snapshot.Markers.Add(new MarkerSnapshot { Kind = "capture", Center = cap.Center, State = cap.ColorState });
+                        snapshot.Markers.Add(new MarkerSnapshot { Kind = "capture", Center = cap.Center, State = cap.ColorState, NetworkMarkerId = cap.NetworkMarkerId });
                     }
                     else if (markerGo.TryGetComponent<IconMarker>(out var icon))
                     {
-                        snapshot.Markers.Add(new MarkerSnapshot { Kind = icon.Kind, Center = icon.Center, State = "" });
+                        snapshot.Markers.Add(new MarkerSnapshot { Kind = icon.Kind, Center = icon.Center, State = "", NetworkMarkerId = icon.NetworkMarkerId });
                     }
                 }
             }
@@ -620,6 +741,11 @@ namespace TmgBoard
             _draggingFollower = null;
             _draggingMarker = null;
             _networkedUnitsById.Clear();
+            // 2026-09-02 추가 — 마커도 유닛과 같은 이유로 비워야 한다. 지워지는
+            // 마커들을 가리키던 항목을 그대로 두면 파괴된 인스턴스를 참조하게
+            // 되고(유닛 쪽과 같은 문제), MarkerSnapshot.NetworkMarkerId를 이제
+            // 그대로 되살려서 바로 아래에서 다시 채운다.
+            _networkedMarkersById.Clear();
         }
 
         private void RestoreBoardSnapshot(BoardSnapshot snapshot)
@@ -709,6 +835,15 @@ namespace TmgBoard
                     }
                     marker.Center = markerSnap.Center;
                     marker.DragRequested += OnMarkerDragRequested;
+
+                    // 2026-09-02 추가 — 이게 없으면 되돌리기/다시실행을 한 번만
+                    // 해도 이 마커가 네트워크 id를 잃어서(항상 -1로 새로 만들어짐)
+                    // 이후 삭제/상태변경 방송이 아무 대상도 못 찾고 씹혔다.
+                    if (markerSnap.NetworkMarkerId >= 0)
+                    {
+                        marker.NetworkMarkerId = markerSnap.NetworkMarkerId;
+                        _networkedMarkersById[markerSnap.NetworkMarkerId] = marker;
+                    }
                 }
             }
 
@@ -791,6 +926,12 @@ namespace TmgBoard
             public string Kind; // "activation" / "capture" / 그 외(아이콘 kind 문자열)
             public Vector2 Center;
             public string State; // activation: State 문자열, capture: ColorState 문자열, icon: 안 씀("")
+            // 2026-09-02 추가 — 이게 없어서 멀티 중 되돌리기/다시실행을 한 번만
+            // 해도 마커 전체가 네트워크 id를 잃어버려(RestoreBoardSnapshot이
+            // 마커를 통째로 새로 만들면서 id를 안 이어받았음) 그 뒤 삭제/상태
+            // 순환 방송이 전부 씹히는 버그가 있었다(사용자 보고로 발견) —
+            // UnitSnapshot.NetworkUnitId와 완전히 같은 이유로 같은 자리에 추가.
+            public int NetworkMarkerId = -1;
         }
 
         private class BoardSnapshot
@@ -800,6 +941,115 @@ namespace TmgBoard
             public readonly List<PendingUnitDef> PendingUnits = new List<PendingUnitDef>();
             public readonly List<PendingTokenDef> PendingRosterTokens = new List<PendingTokenDef>();
             public readonly List<MarkerSnapshot> Markers = new List<MarkerSnapshot>();
+        }
+
+        // ── 되돌리기 토스트(2026-09-02 신설, 사용자 요청) ────────────────
+        // 조작이 하나 기록되거나(CommitUndoTransaction) 되돌리기/복원
+        // 카스케이드가 일어날 때마다 화면 좌측 하단(팀 A 패널 바로 오른쪽,
+        // 마커바 위 구석)에 잠깐 띄운다. BoardManager.Screenshot.cs의
+        // ScreenshotToast와 완전히 같은 모양(Time.time 폴링 페이드 — 이
+        // 프로젝트는 코루틴을 안 쓰는 관례)이지만, 화면 반대쪽 구석에 별도
+        // 인스턴스로 띄운다(안 겹치게, 그리고 이 프로젝트의 "합치기보다는
+        // 나란히 중복" 관례 그대로). 멀티 연결 중이면 상대 화면에도 똑같이
+        // 뜬다(2026-09-02, 사용자 요청으로 확장) — 새 RPC 없이, 이미 스택
+        // 동기화를 위해 흐르고 있던 데이터를 재사용한다: 커밋은
+        // ApplyRemoteUndoPush가 받은 label을, 카스케이드는
+        // ApplyRemoteUndoCascade가 (두 스택이 이미 상대와 같은 내용이므로)
+        // CancelOperationsDownTo/RestoreOperationsDownTo와 똑같은 방식으로
+        // 직접 계산한 stepCount/topLabel을 그대로 써서 로컬에서 한 번 더
+        // ShowUndoToast/ShowUndoCascadeToast를 부른다.
+        private const float UndoToastVisibleDurationSeconds = 2.5f;
+        private const float UndoToastFadeDurationSeconds = 1f;
+        private GameObject _undoToastGo;
+        private CanvasGroup _undoToastCanvasGroup;
+        private TextMeshProUGUI _undoToastLabel;
+        private float _undoToastHideTime = -1f;
+
+        /// <summary>매 프레임 폴링 — BoardManager.cs의 Update()가 부른다.</summary>
+        private void UpdateUndoToast()
+        {
+            if (_undoToastHideTime < 0f || _undoToastGo == null)
+            {
+                return;
+            }
+            float fadeElapsed = Time.time - _undoToastHideTime;
+            if (fadeElapsed <= 0f)
+            {
+                return;
+            }
+            if (fadeElapsed >= UndoToastFadeDurationSeconds)
+            {
+                _undoToastGo.SetActive(false);
+                _undoToastHideTime = -1f;
+                return;
+            }
+            _undoToastCanvasGroup.alpha = 1f - fadeElapsed / UndoToastFadeDurationSeconds;
+        }
+
+        private void ShowUndoToast(string message)
+        {
+            EnsureUndoToast();
+            _undoToastLabel.text = message;
+            _undoToastCanvasGroup.alpha = 1f;
+            _undoToastGo.SetActive(true);
+            _undoToastGo.transform.SetAsLastSibling();
+            _undoToastHideTime = Time.time + UndoToastVisibleDurationSeconds;
+        }
+
+        private void ShowUndoCascadeToast(bool isRedo, int stepCount, string topLabel)
+        {
+            string verb = isRedo ? "복원" : "되돌림";
+            string message = stepCount > 1 ? $"{verb}: {topLabel} 외 {stepCount - 1}건" : $"{verb}: {topLabel}";
+            ShowUndoToast(message);
+        }
+
+        /// <summary>팀 A 패널(화면 좌측 가장자리) 바로 오른쪽, 마커바 위
+        /// 구석에 붙인다 — ScreenshotToast가 팀 B 패널 왼쪽(화면 우측 하단)에
+        /// 붙는 것과 좌우 대칭.</summary>
+        private void EnsureUndoToast()
+        {
+            if (_undoToastGo != null)
+            {
+                return;
+            }
+
+            var canvasParent = GetCanvasParent();
+
+            var go = new GameObject("UndoToast", typeof(RectTransform));
+            go.transform.SetParent(canvasParent, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(0f, 0f);
+            rect.anchorMax = new Vector2(0f, 0f);
+            rect.pivot = new Vector2(0f, 0f);
+            rect.anchoredPosition = new Vector2(GameConstants.PendingPanelWidth + 16f, GameConstants.MarkerBarHeight + 16f);
+
+            var img = go.AddComponent<Image>();
+            img.color = new Color(0.15f, 0.15f, 0.15f, 0.95f);
+
+            // 배경/라벨 색을 각각 건드리지 않고 통째로 페이드시키려고
+            // CanvasGroup.alpha 하나로 처리한다(ScreenshotToast와 동일한 이유).
+            _undoToastCanvasGroup = go.AddComponent<CanvasGroup>();
+
+            var layout = go.AddComponent<HorizontalLayoutGroup>();
+            layout.padding = new RectOffset(12, 12, 8, 8);
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = false;
+            layout.childForceExpandHeight = false;
+            var fitter = go.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            var labelGo = new GameObject("Label", typeof(RectTransform));
+            labelGo.transform.SetParent(go.transform, false);
+            _undoToastLabel = labelGo.AddComponent<TextMeshProUGUI>();
+            _undoToastLabel.fontSize = 13f;
+            _undoToastLabel.color = Color.white;
+            _undoToastLabel.textWrappingMode = TextWrappingModes.NoWrap;
+            _undoToastLabel.raycastTarget = false;
+
+            _undoToastGo = go;
+            _undoToastGo.SetActive(false);
         }
     }
 }

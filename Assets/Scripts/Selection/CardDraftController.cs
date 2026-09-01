@@ -101,7 +101,10 @@ namespace TmgBoard
             titleRect.anchoredPosition = new Vector2(0f, -MarginPx);
             titleRect.sizeDelta = new Vector2(700f, 32f);
             var titleLabel = titleGo.AddComponent<TextMeshProUGUI>();
-            titleLabel.text = "좌클릭: 선택(미션·배치 각 1장)   우클릭: 밴 — 자유롭게 진행하세요";
+            // "·"(U+00B7)/"—"(U+2014)는 이 프로젝트가 쓰는 PretendardVariable SDF
+            // 폰트 아틀라스에 없는 글리프라 안 보인다(기존에 이미 겪은 문제,
+            // ASCII로 대체하는 게 이 프로젝트 관례) — "/"와 "-"로 대체.
+            titleLabel.text = "좌클릭: 선택(미션/배치 각 1장)   우클릭: 밴 - 자유롭게 진행하세요";
             titleLabel.fontSize = 16f;
             titleLabel.color = new Color(0.85f, 0.85f, 0.85f, 1f);
             titleLabel.alignment = TextAlignmentOptions.Center;
@@ -118,7 +121,7 @@ namespace TmgBoard
             rect.pivot = new Vector2(0.5f, 0.5f);
             rect.sizeDelta = new Vector2(500f, 60f);
             var label = go.AddComponent<TextMeshProUGUI>();
-            label.text = "카드 데이터가 없습니다 — Entry에서 다시 시작해주세요.";
+            label.text = "카드 데이터가 없습니다 - Entry에서 다시 시작해주세요.";
             label.fontSize = 16f;
             label.color = new Color(0.8f, 0.5f, 0.5f, 1f);
             label.alignment = TextAlignmentOptions.Center;

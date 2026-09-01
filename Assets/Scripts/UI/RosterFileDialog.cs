@@ -13,9 +13,9 @@ namespace TmgBoard
     /// 파일을 고른다. Godot판은 OS 네이티브 FileDialog를 썼지만, Unity
     /// 스탠드얼론에는 그런 게 기본으로 없어서(플러그인 없이는) 직접 만든
     /// 목록형 탐색기로 대신한다 — 폴더 목록 → (더블)클릭으로 들어가기, 파일
-    /// 클릭으로 선택+확정, "위로" 버튼으로 상위 폴더. 시작 폴더는 이 저장소의
-    /// Document/ 폴더(로스터 JSON이 실제로 있는 곳)를 우선 찾고, 없으면
-    /// Application.dataPath로 대체한다. 패널 바깥을 클릭하면 취소된다.
+    /// 클릭으로 선택+확정, "위로" 버튼으로 상위 폴더. 시작 폴더는 실행 파일
+    /// 옆 Rosters/ 폴더다(ResolveInitialDirectory 참고, 없으면 만든다).
+    /// 패널 바깥을 클릭하면 취소된다.
     /// </summary>
     [RequireComponent(typeof(RectTransform))]
     public class RosterFileDialog : MonoBehaviour, IPointerDownHandler
@@ -198,9 +198,26 @@ namespace TmgBoard
             return Application.dataPath;
         }
 
+        /// <summary>기본 시작 폴더는 실행 파일 옆 Rosters/ 폴더다(사용자 요청,
+        /// 2026-09-01 백로그 → 2026-09-02 적용) — 예전엔 저장소의 Document/
+        /// 폴더(ResolveDocumentDirectory, 에디터 개발 중 로스터 JSON이 있던
+        /// 자리)를 기본값으로 썼는데, 빌드된 실행 파일 기준으론 그 폴더가
+        /// 존재하지 않는다. AppPaths.ExeDirectory()는 스크린샷 저장 위치
+        /// 계산과 같은 방식(에디터에서는 저장소 루트, 빌드에서는 실행 파일
+        /// 옆)이라 그대로 재사용한다. 폴더가 없으면 스크린샷 폴더처럼 처음
+        /// 열 때 만들어준다 — 없으면 빈 목록/에러 대신 그냥 빈 폴더가 뜬다.</summary>
         private static string ResolveInitialDirectory()
         {
-            return ResolveDocumentDirectory();
+            string rostersDir = Path.Combine(AppPaths.ExeDirectory(), "Rosters");
+            try
+            {
+                Directory.CreateDirectory(rostersDir);
+                return rostersDir;
+            }
+            catch (Exception)
+            {
+                return ResolveDocumentDirectory(); // 실행 파일 옆에 폴더를 못 만들면(권한 등) 예전 기본값으로 폴백.
+            }
         }
 
         private void GoUp()
@@ -258,11 +275,15 @@ namespace TmgBoard
             foreach (var dir in dirs)
             {
                 string capturedDir = dir;
-                CreateEntry("📁 " + Path.GetFileName(dir), FolderColor, () =>
+                // "📁"(U+1F4C1)는 이 프로젝트가 쓰는 PretendardVariable SDF
+                // 폰트 아틀라스에 없는 글리프(이모지)라 안 보인다 — 대신
+                // 사용자가 추가한 Resources/UI/Forder.png 아이콘을 쓴다
+                // (showFolderIcon).
+                CreateEntry(Path.GetFileName(dir), FolderColor, () =>
                 {
                     _currentDir = capturedDir;
                     RefreshList();
-                });
+                }, showFolderIcon: true);
             }
             foreach (var file in files)
             {
@@ -280,7 +301,7 @@ namespace TmgBoard
             }
         }
 
-        private void CreateEntry(string label, Color color, UnityEngine.Events.UnityAction onClick, string hoverFilePath = null)
+        private void CreateEntry(string label, Color color, UnityEngine.Events.UnityAction onClick, string hoverFilePath = null, bool showFolderIcon = false)
         {
             var go = new GameObject($"Entry_{label}", typeof(RectTransform));
             go.transform.SetParent(_listContent, false);
@@ -298,12 +319,32 @@ namespace TmgBoard
                 hover.OnExit = () => FileHighlightCleared?.Invoke();
             }
 
+            // 폴더 항목은 사용자가 추가한 Resources/UI/Forder.png 아이콘을
+            // 라벨 왼쪽에 붙인다(2026-09-02) — 그만큼 라벨 시작 x를 밀어낸다.
+            float labelStartX = 8f;
+            if (showFolderIcon)
+            {
+                const float IconSize = 18f;
+                var iconGo = new GameObject("Icon", typeof(RectTransform));
+                iconGo.transform.SetParent(go.transform, false);
+                var iconRect = (RectTransform)iconGo.transform;
+                iconRect.anchorMin = new Vector2(0f, 0.5f);
+                iconRect.anchorMax = new Vector2(0f, 0.5f);
+                iconRect.pivot = new Vector2(0f, 0.5f);
+                iconRect.anchoredPosition = new Vector2(8f, 0f);
+                iconRect.sizeDelta = new Vector2(IconSize, IconSize);
+                var iconImg = iconGo.AddComponent<RawImage>();
+                iconImg.texture = Resources.Load<Texture2D>("UI/Forder");
+                iconImg.raycastTarget = false;
+                labelStartX = 8f + IconSize + 6f;
+            }
+
             var labelGo = new GameObject("Label", typeof(RectTransform));
             labelGo.transform.SetParent(go.transform, false);
             var labelRect = (RectTransform)labelGo.transform;
             labelRect.anchorMin = Vector2.zero;
             labelRect.anchorMax = Vector2.one;
-            labelRect.offsetMin = new Vector2(8f, 0f);
+            labelRect.offsetMin = new Vector2(labelStartX, 0f);
             labelRect.offsetMax = Vector2.zero;
             var labelText = labelGo.AddComponent<TextMeshProUGUI>();
             labelText.text = label;

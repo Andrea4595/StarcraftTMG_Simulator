@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using TMPro;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -42,6 +43,7 @@ namespace TmgBoard
         [SerializeField] private WeaponProfileDialog weaponProfileDialog;
         [SerializeField] private ConfirmDialog exitConfirmDialog;
         [SerializeField] private InputDialog saveNameDialog;
+        [SerializeField] private EmotePickerPanel emotePickerPanel;
         [SerializeField] private Vector2 mapSizeMm = new Vector2(36f * GameConstants.MmPerInch, 36f * GameConstants.MmPerInch);
 
         private const float DuplicateGapMm = 4f;
@@ -262,6 +264,16 @@ namespace TmgBoard
                 ApplyLoadedLiveState(GameLoadRequest.PendingData);
                 GameLoadRequest.PendingData = null;
             }
+
+            // 게임 도중 멀티 합류로 들어온 경우에만 채워져 있다(저장 파일
+            // 불러오기는 되돌리기 히스토리를 안 담으므로 이 값이 없다) —
+            // 호스트의 되돌리기 스택을 그대로 이어받는다(BoardManager.
+            // UndoRedo.cs의 ApplySeededUndoHistory).
+            if (GameLoadRequest.PendingUndoHistory != null)
+            {
+                ApplySeededUndoHistory(GameLoadRequest.PendingUndoHistory);
+                GameLoadRequest.PendingUndoHistory = null;
+            }
         }
 
         /// <summary>씬을 코드로 구성할 때(부트스트랩 등) 인스펙터 대신 쓰는 초기화.</summary>
@@ -339,6 +351,14 @@ namespace TmgBoard
             undoHistoryDialog = undoHistoryDialogRef;
         }
 
+        /// <summary>빈 땅 우클릭으로 여는 이모트 선택 팝업을 주입한다(BoardManager.Emote.cs
+        /// 참고) — 롤오프/되돌리기 창과 같은 이유로 독립 컴포넌트다.</summary>
+        public void ConfigureEmote(EmotePickerPanel emotePickerPanelRef)
+        {
+            emotePickerPanel = emotePickerPanelRef;
+            emotePickerPanel.EmoteChosen += OnEmoteChosen;
+        }
+
         /// <summary>유닛 상세 패널의 무기 능력 항목 "무기 프로필 보기" 버튼이 여는
         /// 팝업을 주입한다 — 다이스 롤 창과 같은 이유로 독립 컴포넌트다.</summary>
         public void ConfigureWeaponProfile(WeaponProfileDialog weaponProfileDialogRef)
@@ -364,6 +384,26 @@ namespace TmgBoard
         {
             saveNameDialog = saveNameDialogRef;
             saveNameDialog.Confirmed += OnSaveNameConfirmed;
+            saveNameDialog.Confirmed += _ => SaveDialogClosed?.Invoke();
+            saveNameDialog.Cancelled += () => SaveDialogClosed?.Invoke();
+        }
+
+        /// <summary>저장 이름 입력창이 확인/취소 어느 쪽으로든 닫히면 올라간다
+        /// (RequestSave로 이 창을 연 바깥 컴포넌트가 그 뒤에 할 일이 있을 때
+        /// 쓴다 — DisconnectNoticeController가 "저장" 후 자기 알림 모달을
+        /// 다시 띄우는 데 쓴다).</summary>
+        public event System.Action SaveDialogClosed;
+
+        /// <summary>마커바 "저장" 버튼(BoardManager.Markers.cs의 CreateSaveButton)과
+        /// 똑같이 이름 입력 창을 연다 — DisconnectNoticeController처럼 이 씬
+        /// 바깥의 컴포넌트가 저장을 트리거해야 할 때 쓴다(상대방과의 연결이
+        /// 끊겼을 때 뜨는 "저장" 버튼).</summary>
+        public void RequestSave()
+        {
+            if (saveNameDialog != null)
+            {
+                saveNameDialog.Open("저장 이름", "");
+            }
         }
 
         private void OnSaveNameConfirmed(string name)
@@ -414,6 +454,17 @@ namespace TmgBoard
         /// 리셋한다.</summary>
         private void OnExitConfirmed()
         {
+            // 멀티 연결 중이었다면 여기서 확실히 끊는다(사용자 보고, 2026-09-02
+            // — 예전엔 이 버튼이 씬만 옮기고 NetworkManager는 그대로 둬서,
+            // 나가고 나서도 호스트/클라이언트 세션이 계속 살아있었다). 내가
+            // 스스로 나가는 것이므로 DisconnectNoticeController의 알림이 나
+            // 자신에게는 뜨면 안 된다(사용자 요청, 같은 날) — Shutdown() 전에
+            // 미리 표시해둔다.
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                DisconnectNoticeController.SuppressNextNotice = true;
+                NetworkManager.Singleton.Shutdown();
+            }
             MatchState.Reset();
             GameConstants.ResetTeamColors();
             UnityEngine.SceneManagement.SceneManager.LoadScene(GameConstants.EntrySceneName);
@@ -486,8 +537,10 @@ namespace TmgBoard
             UpdateHoveredUnit();
             UpdateUnitDetailPanel();
             UpdateScreenshotToast();
+            UpdateUndoToast();
             UpdateMarkerMoveTweens();
             UpdatePieceMoveTweens();
+            UpdateEmoteFades();
 
             // 유닛 이동(리딩 모델)/팔로워 배치 중에만 적 인게이지 경고를
             // 켠다 — 일반 모델 드래그(유닛 이동 워크플로 밖)에는 적용하지
@@ -589,6 +642,16 @@ namespace TmgBoard
             if (Input.GetMouseButtonDown(0) && !IsPointerOverUi())
             {
                 _selectedUnitForDetailByTeam.Clear();
+            }
+
+            // 같은 논리로 빈 땅 우클릭 — 유닛/마커/미션 목표물 위였다면 그
+            // 자신의 OnPointerDown이 이미 처리했을 것이므로(다이얼 메뉴,
+            // 마커 삭제, 미션 마커 색 순환 등), 여기까지 내려온 우클릭은
+            // 진짜 빈 땅이다. 이모트 선택 팝업을 연다(사용자 요청,
+            // BoardManager.Emote.cs 참고).
+            if (Input.GetMouseButtonDown(1) && !IsPointerOverUi() && TryGetLocalMouse(out var emoteBoardPoint))
+            {
+                OpenEmotePicker(emoteBoardPoint);
             }
         }
 

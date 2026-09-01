@@ -99,10 +99,10 @@ namespace TmgBoard
 
         private float EffectiveMoveInch(Unit unit)
         {
-            if (unit.Models.Count <= 1)
-            {
-                return unit.MoveInch + unit.CoherencyInch;
-            }
+            // 1모델 유닛은 결속(coherency) 이동 보너스를 받으면 안 된다(사용자
+            // 지적, 2026-09-01 백로그 → 2026-09-02 수정) — 예전엔 오히려
+            // 1모델일 때만 보너스를 더해줬는데(다모델 유닛은 안 받음), 실제
+            // 규칙은 정반대라 항상 MoveInch만 반환한다.
             return unit.MoveInch;
         }
 

@@ -70,6 +70,8 @@ namespace TmgBoard
 
         private readonly Dictionary<string, Button> _tabButtons = new Dictionary<string, Button>();
 
+        private MissionInfoDialog _missionInfoDialog;
+
         private void Start()
         {
             BuildBackButton();
@@ -78,6 +80,14 @@ namespace TmgBoard
             BuildMapPanel();
             BuildMissionPanel();
             BuildConfirmButton();
+
+            // 별도 자식 오브젝트에 붙인다 — CardPrepController/CardDraftController와
+            // 같은 이유(Awake()가 자기 GameObject에 화면 전체를 덮는 반투명
+            // 배경을 직접 추가하므로, 이 화면의 루트에 바로 붙이면 그 배경이
+            // 목록 클릭을 항상 가로막는다).
+            var missionInfoGo = new GameObject("MissionInfoDialog", typeof(RectTransform));
+            missionInfoGo.transform.SetParent(Root, false);
+            _missionInfoDialog = missionInfoGo.AddComponent<MissionInfoDialog>();
         }
 
         /// <summary>전투 규모 탭이 정하는 지도 크기 — STANDARD ENGAGEMENT는
@@ -116,7 +126,7 @@ namespace TmgBoard
             titleRect.anchoredPosition = new Vector2(0f, -MarginPx);
             titleRect.sizeDelta = new Vector2(700f, TitleHeight);
             var titleLabel = titleGo.AddComponent<TextMeshProUGUI>();
-            titleLabel.text = "배치 프리셋과 미션 프리셋을 골라주세요 (순서 무관)";
+            titleLabel.text = "배치 카드와 미션 카드를 골라주세요 (순서 무관)";
             titleLabel.fontSize = 18f;
             titleLabel.color = new Color(0.85f, 0.85f, 0.85f, 1f);
             titleLabel.alignment = TextAlignmentOptions.Center;
@@ -213,7 +223,7 @@ namespace TmgBoard
             layout.childControlHeight = true;
             layout.childForceExpandHeight = false;
 
-            var titleLabel = CreateLabel(panelRect, "배치 프리셋", 16f, FontStyles.Bold);
+            var titleLabel = CreateLabel(panelRect, "배치 카드", 16f, FontStyles.Bold);
             titleLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 24f;
 
             _mapStatusLabel = CreateLabel(panelRect, string.IsNullOrEmpty(s_pickedMapName) ? "선택되지 않음" : $"선택됨: {s_pickedMapName}", 13f, FontStyles.Normal);
@@ -384,7 +394,7 @@ namespace TmgBoard
             layout.childControlHeight = true;
             layout.childForceExpandHeight = false;
 
-            var titleLabel = CreateLabel(panelRect, "미션 프리셋", 16f, FontStyles.Bold);
+            var titleLabel = CreateLabel(panelRect, "미션 카드", 16f, FontStyles.Bold);
             titleLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 24f;
 
             _missionStatusLabel = CreateLabel(panelRect, string.IsNullOrEmpty(s_pickedMissionName) ? "선택되지 않음" : $"선택됨: {s_pickedMissionName}", 13f, FontStyles.Normal);
@@ -474,13 +484,16 @@ namespace TmgBoard
 
             var itemGo = new GameObject("Item", typeof(RectTransform));
             itemGo.transform.SetParent(_missionListContent, false);
-            var itemLayout = itemGo.AddComponent<VerticalLayoutGroup>();
+            // 세로(이름+규모)였던 걸 가로로 바꿔서, 텍스트 칸(왼쪽, 가변폭)과
+            // "정보" 버튼(오른쪽, 고정폭)을 나란히 배치한다(사용자 요청,
+            // 2026-09-02 — 정보 버튼이 카드/항목 아래 대신 오른쪽에 오길 원함).
+            var itemLayout = itemGo.AddComponent<HorizontalLayoutGroup>();
             itemLayout.padding = new RectOffset(6, 6, 6, 6);
-            itemLayout.spacing = 2f;
+            itemLayout.spacing = 6f;
             itemLayout.childControlWidth = true;
-            itemLayout.childForceExpandWidth = true;
+            itemLayout.childForceExpandWidth = false;
             itemLayout.childControlHeight = true;
-            itemLayout.childForceExpandHeight = false;
+            itemLayout.childForceExpandHeight = true;
 
             var itemBg = itemGo.AddComponent<Image>();
             itemBg.color = new Color(0.22f, 0.22f, 0.22f, 1f);
@@ -488,12 +501,57 @@ namespace TmgBoard
             itemBtn.targetGraphic = itemBg;
             itemBtn.onClick.AddListener(() => PickMission(displayName, preset, itemBg));
 
-            var nameLabel = CreateLabel((RectTransform)itemGo.transform, displayName, 13f, FontStyles.Bold);
+            var textColGo = new GameObject("TextColumn", typeof(RectTransform));
+            textColGo.transform.SetParent(itemGo.transform, false);
+            var textColLayout = textColGo.AddComponent<VerticalLayoutGroup>();
+            textColLayout.spacing = 2f;
+            textColLayout.childControlWidth = true;
+            textColLayout.childForceExpandWidth = true;
+            textColLayout.childControlHeight = true;
+            textColLayout.childForceExpandHeight = false;
+            textColGo.AddComponent<LayoutElement>().flexibleWidth = 1f;
+
+            var nameLabel = CreateLabel((RectTransform)textColGo.transform, displayName, 13f, FontStyles.Bold);
             nameLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 18f;
 
-            var scaleLabel = CreateLabel((RectTransform)itemGo.transform, preset.EngagementScale, 11f, FontStyles.Normal);
+            var scaleLabel = CreateLabel((RectTransform)textColGo.transform, preset.EngagementScale, 11f, FontStyles.Normal);
             scaleLabel.color = new Color(0.7f, 0.75f, 0.85f, 1f);
             scaleLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 16f;
+
+            CreateMissionInfoButton((RectTransform)itemGo.transform, displayName, preset);
+        }
+
+        /// <summary>미션 카드마다 붙는 작은 "정보" 버튼 — CardPrepController/
+        /// CardDraftController의 것과 같은 모양(2026-09-02, 사용자 요청으로
+        /// 솔로 플레이 화면까지 확장. 같은 날 사용자 요청으로 항목 오른쪽에
+        /// 고정폭 버튼으로 재배치). 목록 항목 자체의 선택
+        /// (PickMission)과 겹치지 않도록 별도 버튼으로 뺀다.</summary>
+        private void CreateMissionInfoButton(Transform parent, string displayName, MissionPresetData preset)
+        {
+            var go = new GameObject("InfoButton", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            go.AddComponent<LayoutElement>().preferredWidth = 56f;
+
+            var img = go.AddComponent<Image>();
+            img.color = new Color(0.3f, 0.3f, 0.35f, 1f);
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => _missionInfoDialog.Open(displayName, preset.MissionParameters, preset.ScoringConditions,
+                    preset.AdditionalConditions, preset.BaseSupply, preset.SupplyPerRound, preset.RoundLength, preset.EngagementScale));
+
+            var labelGo = new GameObject("Label", typeof(RectTransform));
+            labelGo.transform.SetParent(go.transform, false);
+            var labelRect = (RectTransform)labelGo.transform;
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+            var text = labelGo.AddComponent<TextMeshProUGUI>();
+            text.text = "정보";
+            text.alignment = TextAlignmentOptions.Center;
+            text.fontSize = 12f;
+            text.color = Color.white;
+            text.raycastTarget = false;
         }
 
         private void PickMission(string name, MissionPresetData preset, Image chosenBg)

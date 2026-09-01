@@ -415,11 +415,13 @@ namespace TmgBoard
             {
                 def.Remaining = def.Remaining > 0 ? def.Remaining - 1 : def.Count;
                 RefreshTacticalCardVisual(btnImg, nameLabel, pips, def);
+                BroadcastTacticalCardsIfNetworked();
             };
             handler.OnRightClick = () =>
             {
                 def.Remaining = def.Remaining < def.Count ? def.Remaining + 1 : 0;
                 RefreshTacticalCardVisual(btnImg, nameLabel, pips, def);
+                BroadcastTacticalCardsIfNetworked();
             };
         }
 
@@ -574,7 +576,13 @@ namespace TmgBoard
                 return;
             }
 
-            if (Input.GetMouseButtonDown(0) && !IsPointerOverUi())
+            // IsOverMissionObjective() 예외: 미션 목표 마커의 3인치 점령 링
+            // 전체가 raycastTarget이라 그 위 클릭이 전부 "UI 위"로 잡혀서,
+            // 마커가 놓인 자리엔 리딩 모델을 배치할 수조차 없던 버그(사용자
+            // 보고, 2026-09-01) — FindMissionObjectiveAtPoint로 직접 다시
+            // 확인해 그 경우만 예외로 통과시킨다(HandlePanAndZoom의 overBase와
+            // 같은 패턴).
+            if (Input.GetMouseButtonDown(0) && (!IsPointerOverUi() || IsOverMissionObjective()))
             {
                 if (TryGetLocalMouse(out var clickPoint))
                 {

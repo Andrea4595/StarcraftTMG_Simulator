@@ -59,28 +59,10 @@ namespace TmgBoard
 
             foreach (var raw in GameSaveIO.GetList(root, "tactical_cards"))
             {
-                if (!(raw is Dictionary<string, object> c))
+                if (raw is Dictionary<string, object> c)
                 {
-                    continue;
+                    _pendingTacticalCards.Add(ParseTacticalCardDefTree(c));
                 }
-                var abilities = new List<RosterAbilityEntry>();
-                foreach (var rawAbility in GameSaveIO.GetList(c, "abilities"))
-                {
-                    if (rawAbility is Dictionary<string, object> a)
-                    {
-                        abilities.Add(GameSaveIO.TreeToAbility(a));
-                    }
-                }
-                _pendingTacticalCards.Add(new TacticalCardDef
-                {
-                    Name = GameSaveIO.GetString(c, "name"),
-                    Team = GameSaveIO.GetString(c, "team", "neutral"),
-                    Count = GameSaveIO.GetInt(c, "count", 1),
-                    Remaining = GameSaveIO.GetInt(c, "remaining", 1),
-                    ResourceAbbr = GameSaveIO.GetString(c, "resource_abbr"),
-                    ResourceAmount = GameSaveIO.GetInt(c, "resource_amount"),
-                    Abilities = abilities,
-                });
             }
 
             if (markerLayer != null)
@@ -110,6 +92,20 @@ namespace TmgBoard
                     }
                     marker.Center = GameSaveIO.TreeToVec2(GameSaveIO.GetDict(m, "center"));
                     marker.DragRequested += OnMarkerDragRequested;
+
+                    // 2026-09-02 추가 — 게임 도중 멀티 시작으로 받은 상태라면
+                    // 이 마커가 호스트 쪽에서 이미 발급받은 네트워크 id를
+                    // 갖고 있을 수 있다(BoardManager.MidGameHandoff.cs가 보내기
+                    // 전에 미리 채워둠). 그걸 그대로 이어받아야 이후 이동/삭제/
+                    // 상태변경 방송이 양쪽에서 같은 id로 짝지어진다. 옛 저장
+                    // 파일이나 순수 솔로 저장은 이 필드가 없어 -1(기본값)로
+                    // 남고, 그러면 등록하지 않는다(일반 배치와 동일하게 취급).
+                    int networkMarkerId = GameSaveIO.GetInt(m, "network_marker_id", -1);
+                    if (networkMarkerId >= 0)
+                    {
+                        marker.NetworkMarkerId = networkMarkerId;
+                        _networkedMarkersById[networkMarkerId] = marker;
+                    }
                 }
             }
 
@@ -180,6 +176,31 @@ namespace TmgBoard
                 SupplyOverride = GameSaveIO.GetNullableInt(p, "supply_override"),
                 Specialists = specialists,
                 Detail = GameSaveIO.DetailFromTree(p.TryGetValue("detail", out var pDetailRaw) ? pDetailRaw : null),
+            };
+        }
+
+        /// <summary>택티컬 카드 정의 하나를 트리에서 만든다 — 게임 불러오기와
+        /// 택티컬 카드 목록 동기화(BoardManager.TacticalCardSync.cs) 둘 다
+        /// 쓴다(2026-09-02, ParsePendingUnitDefTree와 같은 이유로 추출).</summary>
+        private static TacticalCardDef ParseTacticalCardDefTree(Dictionary<string, object> c)
+        {
+            var abilities = new List<RosterAbilityEntry>();
+            foreach (var rawAbility in GameSaveIO.GetList(c, "abilities"))
+            {
+                if (rawAbility is Dictionary<string, object> a)
+                {
+                    abilities.Add(GameSaveIO.TreeToAbility(a));
+                }
+            }
+            return new TacticalCardDef
+            {
+                Name = GameSaveIO.GetString(c, "name"),
+                Team = GameSaveIO.GetString(c, "team", "neutral"),
+                Count = GameSaveIO.GetInt(c, "count", 1),
+                Remaining = GameSaveIO.GetInt(c, "remaining", 1),
+                ResourceAbbr = GameSaveIO.GetString(c, "resource_abbr"),
+                ResourceAmount = GameSaveIO.GetInt(c, "resource_amount"),
+                Abilities = abilities,
             };
         }
     }

@@ -9,7 +9,7 @@ namespace TmgBoard
 {
     /// <summary>
     /// 멀티플레이어 전용 "카드 준비" 화면(2026-08-31 신설) — 호스트와
-    /// 클라이언트가 연결되는 즉시(RelayConnectionTest) 양쪽 다 자동으로
+    /// 클라이언트가 연결되는 즉시(MultiplayerConnectDialog) 양쪽 다 자동으로
     /// 여기로 들어온다. 각자 자기 화면에서 배치 프리셋 2장 + 미션 프리셋
     /// 2장을 고른다(SelectionController와 같은 목록/탭/썸네일 코드를 재사용
     /// 패턴으로 복제 — 이 프로젝트가 MapAuthoringController/
@@ -65,6 +65,8 @@ namespace TmgBoard
         // 다시 클릭을 받을 일이 없지만, 혹시 모를 중복 호출을 막는 방어용 플래그.
         private bool _readySent;
 
+        private MissionInfoDialog _missionInfoDialog;
+
         private void Start()
         {
             // 카드 준비 화면에 들어올 때마다 새로 시작 — 직전 판(멀티 게임을
@@ -78,6 +80,14 @@ namespace TmgBoard
             BuildMapPanel();
             BuildMissionPanel();
             BuildReadyButton();
+
+            // 별도 자식 오브젝트에 붙인다 — CardDraftController와 같은 이유
+            // (Awake()가 자기 GameObject에 화면 전체를 덮는 반투명 배경을
+            // 직접 추가하므로, 이 화면의 루트에 바로 붙이면 그 배경이 카드
+            // 클릭을 항상 가로막는다).
+            var missionInfoGo = new GameObject("MissionInfoDialog", typeof(RectTransform));
+            missionInfoGo.transform.SetParent(Root, false);
+            _missionInfoDialog = missionInfoGo.AddComponent<MissionInfoDialog>();
         }
 
         private static string ScaleToMapPreset(string scale)
@@ -118,7 +128,7 @@ namespace TmgBoard
             titleRect.anchoredPosition = new Vector2(0f, -MarginPx);
             titleRect.sizeDelta = new Vector2(700f, TitleHeight);
             var titleLabel = titleGo.AddComponent<TextMeshProUGUI>();
-            titleLabel.text = "배치 프리셋 2장, 미션 프리셋 2장을 골라주세요";
+            titleLabel.text = "배치 카드 2장, 미션 카드 2장을 골라주세요";
             titleLabel.fontSize = 18f;
             titleLabel.color = new Color(0.85f, 0.85f, 0.85f, 1f);
             titleLabel.alignment = TextAlignmentOptions.Center;
@@ -205,7 +215,7 @@ namespace TmgBoard
             layout.childControlHeight = true;
             layout.childForceExpandHeight = false;
 
-            var titleLabel = CreateLabel(panelRect, "배치 프리셋 (2장)", 16f, FontStyles.Bold);
+            var titleLabel = CreateLabel(panelRect, "배치 카드 (2장)", 16f, FontStyles.Bold);
             titleLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 24f;
 
             _mapStatusLabel = CreateLabel(panelRect, "선택됨 (0/2)", 13f, FontStyles.Normal);
@@ -340,7 +350,7 @@ namespace TmgBoard
             layout.childControlHeight = true;
             layout.childForceExpandHeight = false;
 
-            var titleLabel = CreateLabel(panelRect, "미션 프리셋 (2장)", 16f, FontStyles.Bold);
+            var titleLabel = CreateLabel(panelRect, "미션 카드 (2장)", 16f, FontStyles.Bold);
             titleLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 24f;
 
             _missionStatusLabel = CreateLabel(panelRect, "선택됨 (0/2)", 13f, FontStyles.Normal);
@@ -357,6 +367,15 @@ namespace TmgBoard
         {
             public string MissionName;
             public string EngagementScale;
+            // CardDraftController의 "정보" 버튼(MissionInfoDialog)과 똑같은
+            // 것을 이 화면에도 붙이려고(2026-09-02, 새 백로그 항목) 나머지
+            // 필드도 마저 담아둔다 — 예전엔 목록 표시에 필요 없어서 버렸었다.
+            public string MissionParameters;
+            public string ScoringConditions;
+            public string AdditionalConditions;
+            public int BaseSupply;
+            public int SupplyPerRound;
+            public int RoundLength;
         }
 
         private static bool TryLoadMissionPreset(string path, out MissionPresetData preset)
@@ -371,12 +390,23 @@ namespace TmgBoard
             {
                 return false;
             }
-            if (!MissionSettingsPresetIO.TryLoad(jsonText, out var missionName, out _, out _,
-                    out _, out _, out _, out _, out var engagementScale, out _))
+            if (!MissionSettingsPresetIO.TryLoad(jsonText, out var missionName, out var missionParameters, out var scoringConditions,
+                    out var additionalConditions, out var baseSupply, out var supplyPerRound, out var roundLength,
+                    out var engagementScale, out _))
             {
                 return false;
             }
-            preset = new MissionPresetData { MissionName = missionName, EngagementScale = engagementScale };
+            preset = new MissionPresetData
+            {
+                MissionName = missionName,
+                EngagementScale = engagementScale,
+                MissionParameters = missionParameters,
+                ScoringConditions = scoringConditions,
+                AdditionalConditions = additionalConditions,
+                BaseSupply = baseSupply,
+                SupplyPerRound = supplyPerRound,
+                RoundLength = roundLength,
+            };
             return true;
         }
 
@@ -404,13 +434,16 @@ namespace TmgBoard
 
             var itemGo = new GameObject("Item", typeof(RectTransform));
             itemGo.transform.SetParent(_missionListContent, false);
-            var itemLayout = itemGo.AddComponent<VerticalLayoutGroup>();
+            // 세로(이름+규모)였던 걸 가로로 바꿔서, 텍스트 칸(왼쪽, 가변폭)과
+            // "정보" 버튼(오른쪽, 고정폭)을 나란히 배치한다(사용자 요청,
+            // 2026-09-02 — 정보 버튼이 카드/항목 아래 대신 오른쪽에 오길 원함).
+            var itemLayout = itemGo.AddComponent<HorizontalLayoutGroup>();
             itemLayout.padding = new RectOffset(6, 6, 6, 6);
-            itemLayout.spacing = 2f;
+            itemLayout.spacing = 6f;
             itemLayout.childControlWidth = true;
-            itemLayout.childForceExpandWidth = true;
+            itemLayout.childForceExpandWidth = false;
             itemLayout.childControlHeight = true;
-            itemLayout.childForceExpandHeight = false;
+            itemLayout.childForceExpandHeight = true;
 
             var itemBg = itemGo.AddComponent<Image>();
             itemBg.color = new Color(0.22f, 0.22f, 0.22f, 1f);
@@ -419,12 +452,57 @@ namespace TmgBoard
             itemBtn.targetGraphic = itemBg;
             itemBtn.onClick.AddListener(() => ToggleMissionPick(path, displayName));
 
-            var nameLabel = CreateLabel((RectTransform)itemGo.transform, displayName, 13f, FontStyles.Bold);
+            var textColGo = new GameObject("TextColumn", typeof(RectTransform));
+            textColGo.transform.SetParent(itemGo.transform, false);
+            var textColLayout = textColGo.AddComponent<VerticalLayoutGroup>();
+            textColLayout.spacing = 2f;
+            textColLayout.childControlWidth = true;
+            textColLayout.childForceExpandWidth = true;
+            textColLayout.childControlHeight = true;
+            textColLayout.childForceExpandHeight = false;
+            textColGo.AddComponent<LayoutElement>().flexibleWidth = 1f;
+
+            var nameLabel = CreateLabel((RectTransform)textColGo.transform, displayName, 13f, FontStyles.Bold);
             nameLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 18f;
 
-            var scaleLabel = CreateLabel((RectTransform)itemGo.transform, preset.EngagementScale, 11f, FontStyles.Normal);
+            var scaleLabel = CreateLabel((RectTransform)textColGo.transform, preset.EngagementScale, 11f, FontStyles.Normal);
             scaleLabel.color = new Color(0.7f, 0.75f, 0.85f, 1f);
             scaleLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 16f;
+
+            CreateMissionInfoButton((RectTransform)itemGo.transform, displayName, preset);
+        }
+
+        /// <summary>미션 카드마다 붙는 작은 "정보" 버튼 — CardDraftController의
+        /// CreateInfoButton과 같은 모양(2026-09-02, 새 백로그 항목: 카드 준비
+        /// 화면에도 상세보기 지원. 같은 날 사용자 요청으로 항목 오른쪽에
+        /// 고정폭 버튼으로 재배치). 목록 항목 자체의 선택 토글(ToggleMissionPick)과
+        /// 겹치지 않도록 별도 버튼으로 뺀다.</summary>
+        private void CreateMissionInfoButton(Transform parent, string displayName, MissionPresetData preset)
+        {
+            var go = new GameObject("InfoButton", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            go.AddComponent<LayoutElement>().preferredWidth = 56f;
+
+            var img = go.AddComponent<Image>();
+            img.color = new Color(0.3f, 0.3f, 0.35f, 1f);
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(() => _missionInfoDialog.Open(displayName, preset.MissionParameters, preset.ScoringConditions,
+                    preset.AdditionalConditions, preset.BaseSupply, preset.SupplyPerRound, preset.RoundLength, preset.EngagementScale));
+
+            var labelGo = new GameObject("Label", typeof(RectTransform));
+            labelGo.transform.SetParent(go.transform, false);
+            var labelRect = (RectTransform)labelGo.transform;
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+            var text = labelGo.AddComponent<TextMeshProUGUI>();
+            text.text = "정보";
+            text.alignment = TextAlignmentOptions.Center;
+            text.fontSize = 12f;
+            text.color = Color.white;
+            text.raycastTarget = false;
         }
 
         private void ToggleMissionPick(string path, string name)

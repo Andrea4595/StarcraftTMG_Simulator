@@ -16,7 +16,18 @@ namespace TmgBoard
 
         public void SaveGame(string path)
         {
-            var root = new Dictionary<string, object>
+            GameSaveIO.WriteToFile(path, BuildFullStateTree());
+        }
+
+        /// <summary>SaveGame이 파일로 쓰는 것과 완전히 같은 트리 — 2026-09-02,
+        /// 게임 도중 멀티 시작(BoardManager.MidGameHandoff.cs)이 상대에게
+        /// 넘겨줄 스냅샷을 만드는 데도 재사용한다(파일로 안 쓰고 네트워크로
+        /// 보낼 뿐, 스키마와 그걸 불러오는 경로(GameSaveIO.ApplyLoadedStaticState
+        /// + BoardManager.Load.cs의 ApplyLoadedLiveState)는 저장 파일
+        /// 불러오기와 완전히 동일).</summary>
+        public Dictionary<string, object> BuildFullStateTree()
+        {
+            return new Dictionary<string, object>
             {
                 { "map", BuildMapTree() },
                 { "mission", BuildMissionTree() },
@@ -30,7 +41,6 @@ namespace TmgBoard
                 { "markers", BuildMarkersTree() },
                 { "mission_objective_states", BuildMissionObjectiveStatesTree() },
             };
-            GameSaveIO.WriteToFile(path, root);
         }
 
         private static Dictionary<string, object> BuildMapTree()
@@ -271,17 +281,23 @@ namespace TmgBoard
                 {
                     continue;
                 }
+                // network_marker_id는 2026-09-02 추가 — 파일 저장 자체엔 필요
+                // 없지만(솔로 불러오기는 새로 놓는 것과 동일), 게임 도중 멀티
+                // 시작(BoardManager.MidGameHandoff.cs)이 이 값을 몰라야 하는
+                // 파일 저장과 알아야 하는 네트워크 전송 양쪽에 같은 트리를
+                // 재사용하므로 여기 같이 실어 보낸다 — -1(미배정)이어도 안전
+                // (network_unit_id와 같은 이유로 harmless).
                 if (markerGo.TryGetComponent<ActivationMarker>(out var act))
                 {
-                    list.Add(new Dictionary<string, object> { { "kind", "activation" }, { "center", GameSaveIO.Vec2ToTree(act.Center) }, { "state", act.State } });
+                    list.Add(new Dictionary<string, object> { { "kind", "activation" }, { "center", GameSaveIO.Vec2ToTree(act.Center) }, { "state", act.State }, { "network_marker_id", act.NetworkMarkerId } });
                 }
                 else if (markerGo.TryGetComponent<CaptureMarker>(out var cap))
                 {
-                    list.Add(new Dictionary<string, object> { { "kind", "capture" }, { "center", GameSaveIO.Vec2ToTree(cap.Center) }, { "state", cap.ColorState } });
+                    list.Add(new Dictionary<string, object> { { "kind", "capture" }, { "center", GameSaveIO.Vec2ToTree(cap.Center) }, { "state", cap.ColorState }, { "network_marker_id", cap.NetworkMarkerId } });
                 }
                 else if (markerGo.TryGetComponent<IconMarker>(out var icon))
                 {
-                    list.Add(new Dictionary<string, object> { { "kind", icon.Kind }, { "center", GameSaveIO.Vec2ToTree(icon.Center) }, { "state", "" } });
+                    list.Add(new Dictionary<string, object> { { "kind", icon.Kind }, { "center", GameSaveIO.Vec2ToTree(icon.Center) }, { "state", "" }, { "network_marker_id", icon.NetworkMarkerId } });
                 }
             }
             return list;

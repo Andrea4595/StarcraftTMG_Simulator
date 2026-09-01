@@ -272,7 +272,7 @@ namespace TmgBoard
                 AddDetailText(content, "변위 유닛", 13f, new Color(1f, 0.8f, 0.4f, 1f));
             }
 
-            RenderUnitStatRow(content, detail, vm.CanMove, vm.MoveInch, vm.CoherencyInch);
+            RenderUnitStatRow(content, detail, vm.CanMove, vm.MoveInch, vm.CoherencyInch, vm.ModelCount);
 
             if (vm.SupplyTiers != null && vm.SupplyTiers.Count > 0)
             {
@@ -414,8 +414,10 @@ namespace TmgBoard
 
         /// <summary>SHLD/SPD/EVA/ARM/HP/SIZ 6개를 한 줄에 값(위)+라벨(아래) 칸으로
         /// 나열한다(Document/유닛 스탯 표시 방법.png). SPD만 "이동력/이동력+코히런시"
-        /// 비율로 특별 취급 — 나머지는 로스터 stat 값 그대로, 없으면(null) "-".</summary>
-        private static void RenderUnitStatRow(Transform parent, RosterUnitDetail detail, bool canMove, float moveInch, float coherencyInch)
+        /// 비율로 특별 취급 — 나머지는 로스터 stat 값 그대로, 없으면(null) "-".
+        /// 단, 1모델 유닛은 결속 보너스를 안 받으므로(EffectiveMoveInch 참고)
+        /// 합산 비율 대신 이동력 값만 단독으로 표시한다.</summary>
+        private static void RenderUnitStatRow(Transform parent, RosterUnitDetail detail, bool canMove, float moveInch, float coherencyInch, int modelCount)
         {
             var rowGo = new GameObject("StatRow", typeof(RectTransform));
             rowGo.transform.SetParent(parent, false);
@@ -427,7 +429,19 @@ namespace TmgBoard
             rowLayout.childForceExpandWidth = false;
             rowLayout.childForceExpandHeight = false;
 
-            string spdText = canMove ? $"{moveInch:0.#}/{moveInch + coherencyInch:0.#}" : "-";
+            string spdText;
+            if (!canMove)
+            {
+                spdText = "-";
+            }
+            else if (modelCount <= 1)
+            {
+                spdText = $"{moveInch:0.#}";
+            }
+            else
+            {
+                spdText = $"{moveInch:0.#}/{moveInch + coherencyInch:0.#}";
+            }
             AddStatColumn(rowGo.transform, "SHLD", DashIfEmpty(detail?.Shield));
             AddStatColumn(rowGo.transform, "SPD", spdText);
             AddStatColumn(rowGo.transform, "EVA", DashIfEmpty(detail?.Evasion));
@@ -479,7 +493,7 @@ namespace TmgBoard
         }
 
         /// <summary>스쿼드(서플라이 단계표)를 파란 네모(서플라이 1개당 하나, 0이면
-        /// ×) + 그 단계의 최대 모델 수로 이루어진 "알약" 모양으로 가로 나열한다
+        /// "X") + 그 단계의 최대 모델 수로 이루어진 "알약" 모양으로 가로 나열한다
         /// (Document/스쿼드 표시 방법.png). supply_override는 일부러 무시하고
         /// 항상 tier.Supply(로스터 원본 값)를 그린다 — 사용자 지정: "여기서는
         /// supply_override 값을 무시하고, 유닛 데이터 본연의 정보를 표시".
@@ -519,7 +533,9 @@ namespace TmgBoard
 
                 if (tier.Supply <= 0)
                 {
-                    AddSquadTierGlyph(pillGo.transform, "×", new Color(0.6f, 0.6f, 0.6f, 1f));
+                    // "×"(U+00D7)는 이 프로젝트가 쓰는 PretendardVariable SDF
+                    // 폰트 아틀라스에 없는 글리프라 안 보인다 — ASCII "X"로 대체.
+                    AddSquadTierGlyph(pillGo.transform, "X", new Color(0.6f, 0.6f, 0.6f, 1f));
                 }
                 else
                 {

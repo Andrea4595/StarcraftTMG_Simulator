@@ -35,6 +35,14 @@ namespace TmgBoard
 
         private BoardManager _board;
         private RectTransform _listContent;
+        // BoardManager.UndoHistoryVersion을 마지막으로 확인했을 때의 값 —
+        // Update()에서 매 프레임 비교해 바뀌었으면 다시 그린다. 이 컴포넌트는
+        // 닫혀있는 동안(SetActive(false)) Unity가 Update() 자체를 안 불러주므로
+        // 열려있을 때만 폴링된다(코루틴 없이, 이 프로젝트의 기존 Time.time
+        // 폴링 관례와 같은 결의 접근). 로컬 커밋/카스케이드는 물론, 창이 열려
+        // 있는 동안 상대에게서 ApplyRemoteUndoPush/ApplyRemoteUndoCascade가
+        // 도착하는 경우도 이걸로 함께 잡힌다.
+        private int _lastSeenVersion = -1;
 
         private void Awake()
         {
@@ -108,7 +116,7 @@ namespace TmgBoard
         public void Open(BoardManager board)
         {
             _board = board;
-            RefreshList();
+            SyncAndRefresh();
             gameObject.SetActive(true);
             transform.SetAsLastSibling();
         }
@@ -118,8 +126,29 @@ namespace TmgBoard
             gameObject.SetActive(false);
         }
 
+        /// <summary>열려있는 동안만 Unity가 불러준다(SetActive(false)면 Update() 자체가
+        /// 안 돎) — BoardManager의 되돌리기 스택이 그새 바뀌었으면(내 커밋/카스케이드는
+        /// 물론 상대에게서 온 것까지) 목록을 다시 그린다.</summary>
+        private void Update()
+        {
+            if (_board == null)
+            {
+                return;
+            }
+            if (_board.UndoHistoryVersion != _lastSeenVersion)
+            {
+                SyncAndRefresh();
+            }
+        }
+
+        private void SyncAndRefresh()
+        {
+            _lastSeenVersion = _board.UndoHistoryVersion;
+            RefreshList();
+        }
+
         /// <summary>목록을 다시 그린다 — 항목을 클릭했을 때(취소/복원 실행
-        /// 직후)도 다시 부른다.</summary>
+        /// 직후)도 SyncAndRefresh를 통해 다시 부른다.</summary>
         private void RefreshList()
         {
             if (_board == null)
@@ -163,7 +192,7 @@ namespace TmgBoard
                     {
                         _board.CancelOperationsDownTo(capturedIndex);
                     }
-                    RefreshList();
+                    SyncAndRefresh();
                 });
 
                 var label = CreateLabel(itemGo.transform, row.Label, 13f, FontStyles.Normal, isUndone ? UndoneLabelColor : Color.white);

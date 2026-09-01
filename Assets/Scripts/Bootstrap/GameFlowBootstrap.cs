@@ -44,6 +44,8 @@ public static class GameFlowBootstrap
     {
         EnsureEventSystem();
         EnsureNetworkManager();
+        EnsureMultiplayerConnectDialog();
+        EnsureDisconnectNotice();
         SceneManager.sceneLoaded += (scene, mode) => HandleSceneLoaded(scene);
         // sceneLoaded 이벤트는 앱 시작 시 최초로 로드된 씬에는 발생하지
         // 않으므로(Unity의 알려진 동작), 지금 이미 떠 있는 씬은 직접 처리한다.
@@ -65,7 +67,7 @@ public static class GameFlowBootstrap
 
     /// <summary>NGO는 씬을 넘나들며 살아있는 단일 NetworkManager를 필요로
     /// 한다 — EventSystem과 같은 이유로 여기서 한 번만 만든다. 실제 전송은
-    /// Relay를 거치므로 UnityTransport를 붙여둔다(RelayConnectionTest가
+    /// Relay를 거치므로 UnityTransport를 붙여둔다(MultiplayerConnectDialog가
     /// SetHostRelayData/SetClientRelayData로 접속 직전에 채운다).</summary>
     private static void EnsureNetworkManager()
     {
@@ -119,6 +121,52 @@ public static class GameFlowBootstrap
         }
     }
 
+    /// <summary>상대방 이탈 알림(DisconnectNoticeController)은 CardPrep/
+    /// CardDraft/TerrainSetup/GameBoard 어느 씬에서든 떠야 하므로 EventSystem/
+    /// NetworkManager와 같은 방식으로 여기서 한 번만 만들고 DontDestroyOnLoad로
+    /// 유지한다 — 자기 자신의 Canvas를 따로 둬서 현재 씬의 캔버스와 무관하게
+    /// 뜬다. sortingOrder를 높게 잡아 항상 다른 씬 캔버스보다 위에 그려지게 한다.</summary>
+    /// <summary>MultiplayerConnectDialog는 원래 Entry 화면에만 있었지만
+    /// (2026-09-01), GameBoard 마커바의 "같이 하기" 버튼처럼 다른 씬에서도
+    /// 열 수 있어야 해서(사용자 요청, 2026-09-02) EventSystem/NetworkManager와
+    /// 같은 방식으로 여기서 한 번만 만들고 DontDestroyOnLoad + `Instance`
+    /// 정적 참조로 어디서든 열 수 있게 승격했다. sortingOrder는 DisconnectNotice
+    /// (100)보다 낮게 잡아 — 만약 언젠가 두 모달이 동시에 뜨는 경우가 생기면
+    /// (지금은 안 일어남) 이탈 알림이 항상 위에 오도록.</summary>
+    private static void EnsureMultiplayerConnectDialog()
+    {
+        if (Object.FindFirstObjectByType<MultiplayerConnectDialog>() != null)
+        {
+            return;
+        }
+
+        var canvasGo = new GameObject("MultiplayerConnectDialog_Canvas");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 90;
+        canvasGo.AddComponent<CanvasScaler>();
+        canvasGo.AddComponent<GraphicRaycaster>();
+        canvasGo.AddComponent<MultiplayerConnectDialog>();
+        Object.DontDestroyOnLoad(canvasGo);
+    }
+
+    private static void EnsureDisconnectNotice()
+    {
+        if (Object.FindFirstObjectByType<DisconnectNoticeController>() != null)
+        {
+            return;
+        }
+
+        var canvasGo = new GameObject("DisconnectNotice_Canvas");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 100;
+        canvasGo.AddComponent<CanvasScaler>();
+        canvasGo.AddComponent<GraphicRaycaster>();
+        canvasGo.AddComponent<DisconnectNoticeController>();
+        Object.DontDestroyOnLoad(canvasGo);
+    }
+
     private static void HandleSceneLoaded(Scene scene)
     {
         // 지도(정사각형)가 화면(와이드) 비율에 안 맞아 남는 여백에 Unity 기본
@@ -161,8 +209,9 @@ public static class GameFlowBootstrap
         }
     }
 
-    /// <summary>화면 중앙 "게임 시작" 큰 버튼(→ Selection) + 오른쪽 아래
-    /// 구석의 "배치/미션 프리셋 제작" 작은 버튼 두 개(→ 각 Authoring 화면,
+    /// <summary>화면 중앙 "혼자 하기"(→ Selection)/"같이 하기"(→
+    /// MultiplayerConnectDialog) 큰 버튼 두 개 + 오른쪽 아래 구석의
+    /// "배치/미션 프리셋 제작" 작은 버튼 두 개(→ 각 Authoring 화면,
     /// 완료하면 다시 Entry로).</summary>
     private static void BuildEntry()
     {
@@ -173,20 +222,18 @@ public static class GameFlowBootstrap
         canvasGo.AddComponent<GraphicRaycaster>();
 
         var entry = canvasGo.AddComponent<EntryController>();
-        // "게임 시작"은 이제 솔로 흐름 전용이다(2026-08-31 재구성) — 멀티는
-        // 더 이상 이 버튼을 거치지 않는다. RelayConnectionTest가 호스트/
-        // 클라이언트 연결이 완성되는 즉시(양쪽 다 연결됨) 자동으로
+        // "혼자 하기"는 솔로 흐름(2026-08-31 재구성, 2026-09-01 이름 변경).
+        // "같이 하기"는 MultiplayerConnectDialog를 연다 — 그 다이얼로그가
+        // 호스트/클라이언트 연결이 완성되는 즉시(양쪽 다 연결됨) 자동으로
         // CardPrep으로 넘어간다(사용자 지정 — "호스트에게 연결되는 즉시").
+        // 그 다이얼로그는 이제 EnsureMultiplayerConnectDialog()가 앱 시작 시
+        // 한 번만 만든 영구 인스턴스라(2026-09-02) 여기서 새로 짓지 않고
+        // Instance를 그대로 연결한다.
         entry.StartGamePicked += () => SceneManager.LoadScene(SelectionSceneName);
         entry.LoadGamePicked += () => SceneManager.LoadScene(LoadGameSceneName);
         entry.MapAuthoringPicked += () => SceneManager.LoadScene(MapAuthoringSceneName);
         entry.MissionAuthoringPicked += () => SceneManager.LoadScene(MissionAuthoringSceneName);
-
-        // 멀티 기능 설계 전 Relay 연결 배관만 검증하는 임시 패널(화면 왼쪽
-        // 아래 구석) — 실제 화면이 정해지면 걷어낼 것.
-        var relayTestGo = new GameObject("RelayConnectionTest", typeof(RectTransform));
-        relayTestGo.transform.SetParent(canvasGo.transform, false);
-        relayTestGo.AddComponent<RelayConnectionTest>();
+        entry.MultiplayerPicked += () => MultiplayerConnectDialog.Instance?.Open();
     }
 
     /// <summary>"이어하기" 화면 — Saves/ 폴더의 저장 파일 목록. 고르면 그
@@ -432,6 +479,8 @@ public static class GameFlowBootstrap
         missionInfoDialog.transform.SetParent(canvasGo.transform, false);
         var saveNameDialog = new GameObject("SaveNameDialog").AddComponent<InputDialog>();
         saveNameDialog.transform.SetParent(canvasGo.transform, false);
+        var emotePickerPanel = new GameObject("EmotePickerPanel").AddComponent<EmotePickerPanel>();
+        emotePickerPanel.transform.SetParent(canvasGo.transform, false);
 
         var guideline = new GameObject("Guideline").AddComponent<GuidelineOverlay>();
         guideline.transform.SetParent(mapAreaRect, false);
@@ -486,6 +535,7 @@ public static class GameFlowBootstrap
         board.ConfigureWeaponProfile(weaponProfileDialog);
         board.ConfigureExit(exitConfirmDialog);
         board.ConfigureSave(saveNameDialog);
+        board.ConfigureEmote(emotePickerPanel);
         scoreboard.SetBoardManager(board);
         scoreboard.SetMissionInfoDialog(missionInfoDialog);
 

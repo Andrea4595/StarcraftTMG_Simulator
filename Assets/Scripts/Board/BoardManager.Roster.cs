@@ -152,7 +152,10 @@ namespace TmgBoard
                 return;
             }
 
-            if (Input.GetMouseButtonDown(0) && !IsPointerOverUi())
+            // IsOverMissionObjective() 예외: HandlePendingDeploymentInput과
+            // 같은 이유(2026-09-02) — 미션 목표 마커 위에는 로스터 토큰도
+            // 배치할 수 있어야 한다.
+            if (Input.GetMouseButtonDown(0) && (!IsPointerOverUi() || IsOverMissionObjective()))
             {
                 if (TryGetLocalMouse(out var clickPoint))
                 {

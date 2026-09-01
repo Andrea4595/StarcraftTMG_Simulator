@@ -83,5 +83,41 @@ namespace TmgBoard
             }
             piece.SetRingColorState(colorState);
         }
+
+        /// <summary>마우스 아래 미션 목표 마커(원형 판정, 회전 불필요 — 항상
+        /// 정원이라 FindBaseAtPoint처럼 회전 보정을 할 필요가 없다)를 찾는다.
+        /// 이 마커는 순수 표시/우클릭-색상순환 전용인데도 raycastTarget이
+        /// 켜져 있어(우클릭을 받으려면 필요) 3인치 점령 링 전체 크기만큼
+        /// EventSystem.IsPointerOverGameObject()에 "UI 위"로 잡혀버린다 —
+        /// 리딩 모델 배치 완료(HandlePendingDeploymentInput)나 지도 팬/줌
+        /// (HandlePanAndZoom)처럼 정말 UI 패널 위인지와 무관해야 하는 곳에서는
+        /// FindBaseAtPoint의 overBase 예외 패턴과 같은 방식으로 이 결과를 써서
+        /// "실은 UI가 아니다"라고 무시해야 한다(사용자 보고 버그 두 건, 2026-09-01
+        /// 백로그 → 2026-09-02 수정).</summary>
+        private MissionObjectivePiece FindMissionObjectiveAtPoint(Vector2 point)
+        {
+            foreach (var piece in _missionObjectivePiecesByNumber.Values)
+            {
+                if (piece == null)
+                {
+                    continue;
+                }
+                float radius = piece.RectTransform.sizeDelta.x / 2f;
+                if (Vector2.Distance(point, piece.Center) <= radius)
+                {
+                    return piece;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>지금 마우스 아래에 미션 목표 마커가 있는지만 확인하는
+        /// 편의 래퍼 — HandlePendingDeploymentInput/HandlePanAndZoom처럼
+        /// "IsPointerOverUi()가 true여도 사실 이건 무시해도 되는 raycastable"
+        /// 예외 판정에 쓴다.</summary>
+        private bool IsOverMissionObjective()
+        {
+            return TryGetLocalMouse(out var local) && FindMissionObjectiveAtPoint(local) != null;
+        }
     }
 }
