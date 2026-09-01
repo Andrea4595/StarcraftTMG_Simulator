@@ -36,7 +36,7 @@ namespace TmgBoard
         /// 올라가는 셈이지만 그 시차는 무시할 수준이다.</summary>
         private void RequestAddRange(Unit unit, float inch, bool alwaysShow)
         {
-            BeginUndoTransaction($"{DescribeUnit(unit)} 범위 추가 ({inch:F1}\")");
+            BeginUndoTransaction($"{DescribeUnit(unit)} 범위 추가 ({inch:F1}\")", unit?.Team);
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 if (BoardNetworkSync.Instance == null)
@@ -108,7 +108,7 @@ namespace TmgBoard
         private void RequestDeleteRange(Unit unit, int idx)
         {
             _rangeDeleteTargetUnit = null;
-            BeginUndoTransaction($"{DescribeUnit(unit)} 범위 삭제");
+            BeginUndoTransaction($"{DescribeUnit(unit)} 범위 삭제", unit?.Team);
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 if (BoardNetworkSync.Instance == null)

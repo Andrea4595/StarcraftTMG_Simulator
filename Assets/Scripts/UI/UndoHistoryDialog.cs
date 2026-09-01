@@ -31,7 +31,6 @@ namespace TmgBoard
     {
         private static readonly Color RowColor = new Color(0.22f, 0.22f, 0.22f, 1f);
         private static readonly Color UndoneRowColor = new Color(0.14f, 0.14f, 0.14f, 1f);
-        private static readonly Color UndoneLabelColor = new Color(0.5f, 0.5f, 0.5f, 1f);
 
         private BoardManager _board;
         private RectTransform _listContent;
@@ -195,7 +194,7 @@ namespace TmgBoard
                     SyncAndRefresh();
                 });
 
-                var label = CreateLabel(itemGo.transform, row.Label, 13f, FontStyles.Normal, isUndone ? UndoneLabelColor : Color.white);
+                var label = CreateLabel(itemGo.transform, row.Label, 13f, FontStyles.Normal, ResolveRowLabelColor(row.Team, isUndone));
                 var labelRect = (RectTransform)label.transform;
                 labelRect.anchorMin = Vector2.zero;
                 labelRect.anchorMax = Vector2.one;
@@ -205,6 +204,17 @@ namespace TmgBoard
                 label.alignment = TextAlignmentOptions.MidlineLeft;
                 label.raycastTarget = false;
             }
+        }
+
+        /// <summary>행 텍스트 색 — 행위자 팀 색(GameConstants.ResolveTeamTextColor,
+        /// 팀이 없으면 흰색)을 기본으로 쓰되, 이미 취소된(어두운 배경) 행은
+        /// 그 색을 절반만큼 어둡게 낮춘다 — "이미 취소됨"이라는 기존 시각
+        /// 신호(밝기 차이)는 유지하면서 팀 색 구분도 같이 보이게 한다
+        /// (2026-09-04, 사용자 요청).</summary>
+        private static Color ResolveRowLabelColor(string team, bool isUndone)
+        {
+            Color c = GameConstants.ResolveTeamTextColor(team);
+            return isUndone ? new Color(c.r * 0.5f, c.g * 0.5f, c.b * 0.5f, 1f) : c;
         }
 
         private static TextMeshProUGUI CreateLabel(Transform parent, string text, float fontSize, FontStyles style, Color color)

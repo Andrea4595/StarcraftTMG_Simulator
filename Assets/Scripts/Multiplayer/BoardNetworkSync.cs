@@ -892,7 +892,7 @@ namespace TmgBoard
         // 파라미터로 자기 메아리를 구분하는 것과 같은 방식으로, 보낸
         // 클라이언트 id를 함께 실어 보낸다.
 
-        public void RequestBroadcastUndoPush(string label, string snapshotJson)
+        public void RequestBroadcastUndoPush(string label, string team, string snapshotJson)
         {
             ulong senderId = NetworkManager.Singleton.LocalClientId;
             int transferId = System.Guid.NewGuid().GetHashCode();
@@ -902,20 +902,20 @@ namespace TmgBoard
                 int start = i * TextChunkSize;
                 int length = Mathf.Min(TextChunkSize, snapshotJson.Length - start);
                 string chunk = snapshotJson.Substring(start, length);
-                RequestBroadcastUndoPushChunkServerRpc(transferId, senderId, label, i, totalChunks, chunk);
+                RequestBroadcastUndoPushChunkServerRpc(transferId, senderId, label, team, i, totalChunks, chunk);
             }
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
-        private void RequestBroadcastUndoPushChunkServerRpc(int transferId, ulong senderId, string label, int chunkIndex, int totalChunks, string chunk)
+        private void RequestBroadcastUndoPushChunkServerRpc(int transferId, ulong senderId, string label, string team, int chunkIndex, int totalChunks, string chunk)
         {
-            BroadcastUndoPushChunkRpc(transferId, senderId, label, chunkIndex, totalChunks, chunk);
+            BroadcastUndoPushChunkRpc(transferId, senderId, label, team, chunkIndex, totalChunks, chunk);
         }
 
         private readonly Dictionary<int, TextChunkBuffer> _undoPushChunkBuffers = new();
 
         [Rpc(SendTo.ClientsAndHost)]
-        private void BroadcastUndoPushChunkRpc(int transferId, ulong senderId, string label, int chunkIndex, int totalChunks, string chunk)
+        private void BroadcastUndoPushChunkRpc(int transferId, ulong senderId, string label, string team, int chunkIndex, int totalChunks, string chunk)
         {
             if (!_undoPushChunkBuffers.TryGetValue(transferId, out var buf))
             {
@@ -945,7 +945,7 @@ namespace TmgBoard
                 Debug.LogError("[BoardNetworkSync] BoardManager를 못 찾음 — 되돌리기 기록을 못 반영함");
                 return;
             }
-            board.ApplyRemoteUndoPush(label, fullJson);
+            board.ApplyRemoteUndoPush(label, team, fullJson);
         }
 
         /// <summary>카스케이드(값이 작아 청크가 필요 없다) — isRedo=false면
@@ -1105,6 +1105,30 @@ namespace TmgBoard
                 return;
             }
             board.SpawnLocalEmote(spriteIndex, point);
+        }
+
+        // ── 채팅(2026-09-04 신설) ──────────────────────────────────────────
+        // 이모트와 같은 이유로 청크가 필요 없다(짧은 한 줄 텍스트,
+        // ChatController가 입력창 글자 수 제한으로 이미 짧게 보장한다). 이걸
+        // 받을 ChatController는 이 컴포넌트처럼 앱 시작 시 한 번 만들어져
+        // DontDestroyOnLoad로 모든 씬에 걸쳐 존재하는 영구 싱글턴이라
+        // (GameFlowBootstrap.EnsureChatController), BoardManager처럼 씬마다
+        // 있는지 찾을 필요 없이 바로 Instance로 부른다.
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestSendChatServerRpc(string team, string message)
+        {
+            BroadcastChatRpc(team, message);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void BroadcastChatRpc(string team, string message)
+        {
+            if (ChatController.Instance == null)
+            {
+                Debug.LogError("[BoardNetworkSync] ChatController.Instance가 없음 — 채팅을 못 띄움");
+                return;
+            }
+            ChatController.Instance.ReceiveChatMessage(team, message);
         }
     }
 }

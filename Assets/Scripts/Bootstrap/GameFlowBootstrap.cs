@@ -46,6 +46,7 @@ public static class GameFlowBootstrap
         EnsureNetworkManager();
         EnsureMultiplayerConnectDialog();
         EnsureDisconnectNotice();
+        EnsureChatController();
         SceneManager.sceneLoaded += (scene, mode) => HandleSceneLoaded(scene);
         // sceneLoaded 이벤트는 앱 시작 시 최초로 로드된 씬에는 발생하지
         // 않으므로(Unity의 알려진 동작), 지금 이미 떠 있는 씬은 직접 처리한다.
@@ -164,6 +165,30 @@ public static class GameFlowBootstrap
         canvasGo.AddComponent<CanvasScaler>();
         canvasGo.AddComponent<GraphicRaycaster>();
         canvasGo.AddComponent<DisconnectNoticeController>();
+        Object.DontDestroyOnLoad(canvasGo);
+    }
+
+    /// <summary>채팅(2026-09-04 신설) — 멀티가 진행되는 모든 화면(CardPrep/
+    /// CardDraft/TerrainSetup/GameBoard)에서 다 떠야 해서(사용자 요청)
+    /// MultiplayerConnectDialog/DisconnectNoticeController와 같은 방식으로
+    /// 앱 시작 시 한 번만 만들고 DontDestroyOnLoad + Instance로 승격했다.
+    /// sortingOrder는 그 둘(90/100)보다 낮게 잡는다 — 채팅/토스트는 화면
+    /// 구석의 비독점 표시라 모달과 겹칠 일이 거의 없지만, 혹시 겹치면
+    /// 모달이 항상 위에 오는 게 자연스럽다.</summary>
+    private static void EnsureChatController()
+    {
+        if (Object.FindFirstObjectByType<ChatController>() != null)
+        {
+            return;
+        }
+
+        var canvasGo = new GameObject("Chat_Canvas");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 80;
+        canvasGo.AddComponent<CanvasScaler>();
+        canvasGo.AddComponent<GraphicRaycaster>();
+        canvasGo.AddComponent<ChatController>();
         Object.DontDestroyOnLoad(canvasGo);
     }
 

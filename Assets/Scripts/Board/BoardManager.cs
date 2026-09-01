@@ -218,11 +218,13 @@ namespace TmgBoard
         // (2026-09-01 재구성, 예전 Ctrl+Z 단축키 방식은 제거됨).
 
         /// <summary>되돌리기 조작 리스트에 유닛을 언급할 때 공통으로 쓰는
-        /// 표기 — "A 유닛이름" 처럼 소속 팀을 이름 앞에 붙인다(사용자
-        /// 지정). unit이 null이면(방어적) 그냥 "유닛".</summary>
+        /// 표기 — "[유닛] 유닛이름" 형태(2026-09-04 재구성: 팀 문자는 이제
+        /// 텍스트가 아니라 색으로 표시하므로 — BeginUndoTransaction의 team
+        /// 인자, GameConstants.ResolveTeamTextColor 참고 — 이름 앞에서
+        /// 뺐다). unit이 null이면(방어적) 그냥 "[유닛]".</summary>
         private static string DescribeUnit(Unit unit)
         {
-            return unit == null ? "유닛" : $"{unit.Team} {unit.UnitName}";
+            return unit == null ? "[유닛]" : $"[유닛] {unit.UnitName}";
         }
 
         private void Start()
@@ -537,7 +539,6 @@ namespace TmgBoard
             UpdateHoveredUnit();
             UpdateUnitDetailPanel();
             UpdateScreenshotToast();
-            UpdateUndoToast();
             UpdateMarkerMoveTweens();
             UpdatePieceMoveTweens();
             UpdateEmoteFades();
@@ -702,7 +703,7 @@ namespace TmgBoard
 
             // 유닛 이동 중이 아닌 일반 드래그 — 여기서 되돌리기 트랜잭션을 열고,
             // 마우스를 뗄 때(EndPieceDrag) 실제로 뭔가 바뀌었으면 커밋한다.
-            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 이동");
+            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 이동", piece.Unit?.Team);
             _draggingPiece = piece;
             TryGetLocalMouse(out var localFree);
             _dragOffset = piece.Center - localFree;
@@ -866,7 +867,7 @@ namespace TmgBoard
             {
                 return;
             }
-            BeginUndoTransaction($"{DescribeUnit(_menuTarget.Unit)} 데미지 변경");
+            BeginUndoTransaction($"{DescribeUnit(_menuTarget.Unit)} 데미지 변경", _menuTarget.Unit?.Team);
             var unit = _menuTarget.Unit;
             if (int.TryParse(value, out int dmg))
             {
@@ -887,7 +888,7 @@ namespace TmgBoard
             {
                 return;
             }
-            BeginUndoTransaction($"{DescribeUnit(_menuTarget.Unit)} 메모 변경");
+            BeginUndoTransaction($"{DescribeUnit(_menuTarget.Unit)} 메모 변경", _menuTarget.Unit?.Team);
             var unit = _menuTarget.Unit;
             _menuTarget.Memo = value.Trim();
             _menuTarget = null;
@@ -897,7 +898,7 @@ namespace TmgBoard
 
         private void RemoveBase(Base piece)
         {
-            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 모델 제거");
+            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 모델 제거", piece.Unit?.Team);
             var unit = piece.Unit;
             unit?.Models.Remove(piece);
             _pieces.Remove(piece);
@@ -913,7 +914,7 @@ namespace TmgBoard
 
         private void DuplicateBase(Base piece)
         {
-            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 모델 복제");
+            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 모델 복제", piece.Unit?.Team);
             var unit = piece.Unit;
             var newPiece = CreatePieceObject(unit, piece.SizeMm, piece.FillColor, piece.IsDisplacement);
             unit?.Models.Add(newPiece);
@@ -938,7 +939,7 @@ namespace TmgBoard
             {
                 return;
             }
-            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 리저브 복귀");
+            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 리저브 복귀", piece.Unit?.Team);
             var unit = piece.Unit;
 
             var damages = new List<int>();

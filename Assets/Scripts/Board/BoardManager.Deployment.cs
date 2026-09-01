@@ -413,14 +413,28 @@ namespace TmgBoard
             var handler = btnGo.AddComponent<TacticalCardClickHandler>();
             handler.OnLeftClick = () =>
             {
+                // 좌클릭은 보통 "소모"(핍 하나 줄임)지만, 이미 다 소모된
+                // 상태(Remaining==0)에서 좌클릭하면 전부 복구되는 한 바퀴
+                // 순환이라 이땐 라벨이 반대로 "복구"여야 실제 효과와 맞는다
+                // (사용자 지정 — 클릭 방향이 아니라 실제로 무슨 일이
+                // 일어났는지로 라벨을 정한다).
+                string verb = def.Remaining > 0 ? "소모" : "복구";
+                BeginUndoTransaction($"[택티컬] {def.Name} {verb}", def.Team);
                 def.Remaining = def.Remaining > 0 ? def.Remaining - 1 : def.Count;
                 RefreshTacticalCardVisual(btnImg, nameLabel, pips, def);
+                CommitUndoTransaction();
                 BroadcastTacticalCardsIfNetworked();
             };
             handler.OnRightClick = () =>
             {
+                // 우클릭은 보통 "복구"지만, 이미 꽉 찬 상태(Remaining==Count)
+                // 에서 우클릭하면 전부 소모되는 한 바퀴 순환이라 이땐 반대로
+                // "소모"(좌클릭과 완전히 같은 이유).
+                string verb = def.Remaining < def.Count ? "복구" : "소모";
+                BeginUndoTransaction($"[택티컬] {def.Name} {verb}", def.Team);
                 def.Remaining = def.Remaining < def.Count ? def.Remaining + 1 : 0;
                 RefreshTacticalCardVisual(btnImg, nameLabel, pips, def);
+                CommitUndoTransaction();
                 BroadcastTacticalCardsIfNetworked();
             };
         }
@@ -552,7 +566,7 @@ namespace TmgBoard
             // 뒤라 되돌려도 목록에 복원이 안 된다. 지도 클릭 전에 우클릭으로
             // 취소하면(HandlePendingDeploymentInput) 폐기, 실제로 배치까지
             // 마치면 CompleteUnitMove()에서 커밋된다.
-            BeginUndoTransaction($"{_pendingUnits[index].Team} {_pendingUnits[index].Name} 배치");
+            BeginUndoTransaction($"[유닛] {_pendingUnits[index].Name} 배치", _pendingUnits[index].Team);
             var def = _pendingUnits[index];
             RemovePendingUnitDefAt(index);
 

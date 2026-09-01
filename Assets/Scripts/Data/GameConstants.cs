@@ -90,6 +90,21 @@ namespace TmgBoard
             TeamColors["neutral"] = DefaultTeamColorNeutral;
         }
 
+        /// <summary>팀 코드("A"/"B" 등)로 텍스트에 칠할 색을 찾는다 — 되돌리기
+        /// 토스트/되돌리기 목록 텍스트를 행위자 팀 색으로 칠하기 위해 쓴다
+        /// (2026-09-04, 사용자 요청). team이 비어있거나 TeamColors에 없는
+        /// 값(마커처럼 팀 소유가 뚜렷하지 않은 행동)이면 흰색으로 대체한다.
+        /// TeamColors 자체는 유닛 채우기용으로 알파 0.85가 섞여 있어(반투명),
+        /// 텍스트 가독성을 위해 항상 알파 1로 강제한다.</summary>
+        public static Color ResolveTeamTextColor(string team)
+        {
+            if (!string.IsNullOrEmpty(team) && TeamColors.TryGetValue(team, out var c))
+            {
+                return new Color(c.r, c.g, c.b, 1f);
+            }
+            return Color.white;
+        }
+
         /// <summary>플레이어 색상 선택 팝업에 보여줄 미리 정해둔 팔레트.</summary>
         public static readonly Color[] TeamColorPalette =
         {
