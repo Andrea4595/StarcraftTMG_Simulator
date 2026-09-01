@@ -138,14 +138,15 @@ namespace TmgBoard
             RefreshTacticalCardList();
             RefreshRangeOverlays();
 
-            // 리플레이 저장 파일(BuildFullStateTree(includeUndoHistory: true)
-            // 로 쓰인 것)에만 있다(2026-09-04 추가) — 평범한 저장 파일에는
-            // 이 키 자체가 없으므로 GameSaveIO.GetDict가 null을 돌려주고,
-            // ApplySeededUndoHistory는 안에서 GameSaveIO.GetList(null도
-            // 안전하게 빈 리스트로 처리)만 쓰므로 null을 넘겨도 그냥 두
-            // 스택을 비운 채로 둔다(Start()에서 어차피 처음부터 비어있으므로
-            // 사실상 아무 일도 안 일어남) — 굳이 키가 있는지부터 확인할
-            // 필요 없이 항상 호출해도 안전하다.
+            // 되돌리기 히스토리(2026-09-04 추가) — SaveGame이 쓴 저장
+            // 파일이면 이 키가 실제로 채워져 있어 그 판의 되돌리기가 그대로
+            // 살아난다(사용자 판단 — "불러왔을 때 히스토리가 남아있지 않을
+            // 이유가 없다"). 게임 도중 멀티 시작으로 들어온 상태라면(이
+            // 메서드를 통째로 재사용하는 다른 경로) 이 키가 없어서
+            // GameSaveIO.GetDict가 null을 돌려주는데, ApplySeededUndoHistory는
+            // 안에서 GameSaveIO.GetList(null도 안전하게 빈 리스트로 처리)만
+            // 쓰므로 null을 넘겨도 그냥 두 스택을 비운 채로 둔다 — 굳이 키가
+            // 있는지부터 확인할 필요 없이 항상 호출해도 안전하다.
             ApplySeededUndoHistory(GameSaveIO.GetDict(root, "undo_history"));
         }
 

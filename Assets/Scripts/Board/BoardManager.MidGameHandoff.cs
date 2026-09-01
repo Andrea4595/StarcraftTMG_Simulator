@@ -37,11 +37,14 @@ namespace TmgBoard
             ClearUndoHistoryForMidGameJoin();
             // full_state/undo_history를 한 봉투에 같이 담아 보낸다 —
             // BuildFullStateTree()를 인자 없이(기본값 includeUndoHistory=false)
-            // 부르므로 그 안엔 히스토리가 안 실린다(평범한 저장과 동일 —
-            // 2026-09-04부터 리플레이 저장만 true로 따로 부른다, BoardManager.
-            // Save.cs 참고). 대신 여기서는 undo_history를 그 트리 밖에
-            // 별도 키로 담는다. undo_history는 방금 위에서 비웠으니 사실상
-            // 항상 빈 트리다.
+            // 부르므로 그 안엔 히스토리가 안 실린다. SaveGame은 2026-09-04
+            // 부터 항상 true로 불러 저장 파일엔 히스토리가 실리지만
+            // (BoardManager.Save.cs), 여기(게임 도중 멀티 시작)는 일부러
+            // 계속 false로 둔다 — 합류 이전 히스토리는 통째로 지우는 게
+            // 별도의 명시적 결정(ClearUndoHistoryForMidGameJoin, 유닛 중복
+            // 버그 재발 방지)이라 저장 파일과 같은 값을 따라갈 이유가 없다.
+            // 대신 여기서는 undo_history를 그 트리 밖에 별도 키로 담는다 —
+            // 방금 위에서 비웠으니 사실상 항상 빈 트리다.
             var wrapper = new Dictionary<string, object>
             {
                 { "full_state", BuildFullStateTree() },
