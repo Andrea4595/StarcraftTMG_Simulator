@@ -58,6 +58,49 @@ namespace TmgBoard
             }
         }
 
+        /// <summary>ActivationMarker.State 원시값("movement"/"assault"/"done")을
+        /// 되돌리기 라벨에 쓸 한글 표시로 바꾼다(사용자 요청, 2026-09-04 —
+        /// "서클형 조작기들도 숫자 조작기처럼 {초기값} -> {최종값} 형태로
+        /// 기록해줘"). BoardManager.MissionObjectives.DescribeRingColorState와
+        /// 같은 자리의 헬퍼.</summary>
+        private static string DescribeActivationState(string state)
+        {
+            switch (state)
+            {
+                case "movement":
+                    return "이동";
+                case "assault":
+                    return "돌격";
+                case "done":
+                    return "완료";
+                default:
+                    return state;
+            }
+        }
+
+        /// <summary>CaptureMarker.ColorState 원시값("white"/"red"/"blue")을
+        /// 되돌리기 라벨에 쓸 한글 표시로 바꾼다(사용자 요청, 2026-09-04) —
+        /// red/blue는 색 이름이 아니라 A/B팀 점령을 뜻한다(CaptureMarker.
+        /// ResolveColor 참고). 미션 목표 마커(BoardManager.MissionObjectives.
+        /// DescribeRingColorState)와 달리 "inactive" 상태가 없어 white를
+        /// "활성"이 아니라 "미점령"으로 표시한다 — 이 마커 자체가 항상
+        /// 활성 상태이고(비활성 개념이 없음) white는 그냥 아직 어느 팀도
+        /// 점령하지 않은 상태를 뜻하기 때문.</summary>
+        private static string DescribeCaptureColorState(string state)
+        {
+            switch (state)
+            {
+                case "white":
+                    return "미점령";
+                case "red":
+                    return "A 점령";
+                case "blue":
+                    return "B 점령";
+                default:
+                    return state;
+            }
+        }
+
         /// <summary>화면 맨 아래를 가로지르는 바 — 마커 종류별 버튼은 중앙에
         /// 모아두고, 스크린샷 버튼은 우측 하단에 고정한다. 누르면
         /// StartMarkerPlacement()로 배치 모드에 들어간다. Godot판
@@ -825,7 +868,7 @@ namespace TmgBoard
             // 우클릭은 이동 → 돌격 → 완료를 계속 순환한다.
             int idx = System.Array.IndexOf(ActivationMarker.StateSequence, marker.State);
             string nextState = ActivationMarker.StateSequence[(idx + 1) % ActivationMarker.StateSequence.Length];
-            BeginUndoTransaction($"{DescribeMarkerKind(marker)} 상태 변경");
+            BeginUndoTransaction($"{DescribeMarkerKind(marker)} {DescribeActivationState(marker.State)} -> {DescribeActivationState(nextState)}");
             if (TryRequestNetworkMarkerStateChange(marker, nextState))
             {
                 CommitUndoTransaction();
@@ -855,7 +898,7 @@ namespace TmgBoard
             // 삭제는 별도 입력으로 뺐다.
             int idx = System.Array.IndexOf(CaptureMarker.ColorSequence, marker.ColorState);
             string nextState = CaptureMarker.ColorSequence[(idx + 1) % CaptureMarker.ColorSequence.Length];
-            BeginUndoTransaction($"{DescribeMarkerKind(marker)} 색 변경");
+            BeginUndoTransaction($"{DescribeMarkerKind(marker)} {DescribeCaptureColorState(marker.ColorState)} -> {DescribeCaptureColorState(nextState)}");
             if (TryRequestNetworkMarkerStateChange(marker, nextState))
             {
                 CommitUndoTransaction();

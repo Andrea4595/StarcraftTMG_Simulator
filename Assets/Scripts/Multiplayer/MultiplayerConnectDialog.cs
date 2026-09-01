@@ -68,6 +68,15 @@ namespace TmgBoard
         private string _currentJoinCode;
         private float _copiedFeedbackHideTime = -1f;
 
+        // OpenAndStartHosting()으로 들어온 세션인지 표시(2026-09-04 추가,
+        // 사용자 요청 — "게임 화면에서 호스트 시작 눌렀다가 취소하면 바로
+        // 꺼지게 하자"). 이 경로는 ChoiceView/HostChoiceView를 아예 거치지
+        // 않고 곧장 호스팅을 시작하므로, "취소"를 눌렀을 때 되돌아갈 의미
+        // 있는 이전 화면이 없다 — Open()으로 들어온 정상 흐름(ChoiceView →
+        // "호스트로 시작" → HostChoiceView → "새 게임"/"이어하기")과 달리
+        // OnHostCancelClicked가 그냥 모달을 닫아야 한다.
+        private bool _openedViaInstantHost;
+
         // 진행 중인 비동기 시도(호스트/참가)가 그 사이 취소/뒤로가기로
         // 더 이상 유효하지 않게 됐는지 구분하는 용도 — 취소/뒤로/새 시도
         // 시작 시마다 올라간다. await 재개 시점마다 이 값이 시작할 때
@@ -111,6 +120,7 @@ namespace TmgBoard
 
         public void Open()
         {
+            _openedViaInstantHost = false;
             ShowChoiceView();
             gameObject.SetActive(true);
             transform.SetAsLastSibling();
@@ -118,11 +128,14 @@ namespace TmgBoard
 
         /// <summary>"호스트로 시작"→"이어하기"(OnHostContinueClicked)에서
         /// 저장 파일을 고른 뒤, 그 상태가 GameBoard에 다 채워지고 나면
-        /// BoardManager.Start()가 부른다(2026-09-04 추가) — ChoiceView/
+        /// BoardManager.Start()가 부른다. GameBoard 마커바의 멀티 버튼
+        /// (BoardManager.Markers.cs → CreateMultiplayerButton, 2026-09-04
+        /// 추가)도 같은 이유로 이걸 직접 부른다 — 둘 다 ChoiceView/
         /// HostChoiceView를 거치지 않고, "호스트로 시작"→"새 게임"을 바로
         /// 누른 것과 똑같이 곧장 호스팅을 시작하고 코드를 띄운다.</summary>
         public void OpenAndStartHosting()
         {
+            _openedViaInstantHost = true;
             gameObject.SetActive(true);
             transform.SetAsLastSibling();
             BeginHosting();
@@ -271,10 +284,22 @@ namespace TmgBoard
             _ = StartHostAsync(token);
         }
 
+        /// <summary>2026-09-04 수정(사용자 요청) — OpenAndStartHosting()으로
+        /// 들어온 세션(게임 화면 멀티 버튼, "이어하기" 자동 호스팅)이면
+        /// ChoiceView로 돌아가지 않고 모달 자체를 바로 닫는다. 그 경로는
+        /// 애초에 ChoiceView/HostChoiceView를 거친 적이 없어서 "돌아갈
+        /// 이전 화면"이라는 개념 자체가 안 맞는다. Open()으로 들어온 정상
+        /// 흐름(ChoiceView → "호스트로 시작" → HostChoiceView → "새 게임"/
+        /// "이어하기" → 여기)은 기존대로 ChoiceView로 돌아간다.</summary>
         private void OnHostCancelClicked()
         {
             ++_operationToken; // 진행 중이던 시도가 있었다면 여기서 무효화.
             ShutdownNetworkIfListening();
+            if (_openedViaInstantHost)
+            {
+                Close();
+                return;
+            }
             ShowChoiceView();
         }
 
