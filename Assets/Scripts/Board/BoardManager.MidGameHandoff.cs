@@ -36,9 +36,12 @@ namespace TmgBoard
             BackfillMarkerNetworkIds();
             ClearUndoHistoryForMidGameJoin();
             // full_state/undo_history를 한 봉투에 같이 담아 보낸다 —
-            // BuildFullStateTree 자체(=저장 파일 스키마)는 안 건드린다
-            // (되돌리기 히스토리는 파일엔 여전히 안 담김, 사용자 지정 그대로).
-            // undo_history는 방금 위에서 비웠으니 사실상 항상 빈 트리다.
+            // BuildFullStateTree()를 인자 없이(기본값 includeUndoHistory=false)
+            // 부르므로 그 안엔 히스토리가 안 실린다(평범한 저장과 동일 —
+            // 2026-09-04부터 리플레이 저장만 true로 따로 부른다, BoardManager.
+            // Save.cs 참고). 대신 여기서는 undo_history를 그 트리 밖에
+            // 별도 키로 담는다. undo_history는 방금 위에서 비웠으니 사실상
+            // 항상 빈 트리다.
             var wrapper = new Dictionary<string, object>
             {
                 { "full_state", BuildFullStateTree() },

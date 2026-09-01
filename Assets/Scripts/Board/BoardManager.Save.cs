@@ -5,14 +5,23 @@ namespace TmgBoard
     public partial class BoardManager
     {
         // ── 게임 저장(2026-08-31 신설) ────────────────────────────────
-        // "되돌리기" 히스토리는 저장하지 않는다(사용자 지정) — CaptureBoardSnapshot/
-        // RestoreBoardSnapshot(BoardManager.UndoRedo.cs)과 구조가 거의 같지만,
-        // 그건 같은 세션 메모리 안에서만 살아있으면 되는 반면(Unit/RosterUnitDetail을
-        // 참조만 복사) 이건 실제 파일로 나가야 해서 전부 실제 값으로 직렬화해야
-        // 한다. 지도/배치구역/미션 목표/지형은 MapData를, 미션 파라미터는
+        // "되돌리기" 히스토리는 기본적으로 저장하지 않는다(사용자 지정,
+        // 2026-08-31) — CaptureBoardSnapshot/RestoreBoardSnapshot(BoardManager.
+        // UndoRedo.cs)과 구조가 거의 같지만, 그건 같은 세션 메모리 안에서만
+        // 살아있으면 되는 반면(Unit/RosterUnitDetail을 참조만 복사) 이건
+        // 실제 파일로 나가야 해서 전부 실제 값으로 직렬화해야 한다. 지도/
+        // 배치구역/미션 목표/지형은 MapData를, 미션 파라미터는
         // MissionSettingsData를 그대로 다시 쓴다 — Selection→TerrainSetup이
         // 이미 채워둔 값을 그대로 반영하면 되므로 baseLayer를 다시 스캔할
         // 필요가 없다(그 값들은 게임 중 바뀌지 않는다).
+        //
+        // 리플레이 기능 준비(2026-09-04, 1단계) — 리플레이는 되돌리기
+        // 히스토리 자체가 곧 "재생할 액션 목록"이라 반드시 파일에 실려야
+        // 한다. 기존 "저장엔 히스토리를 안 담는다"는 결정을 조용히 뒤집지
+        // 않도록, BuildFullStateTree에 옵션 인자를 추가해 기본값(false)은
+        // 그대로 두고 — 평범한 SaveGame/게임 도중 멀티 시작(BoardManager.
+        // MidGameHandoff.cs)은 여태처럼 히스토리 없이 저장/전송된다 — 앞으로
+        // 만들 "Replay 저장" 경로만 true로 불러 히스토리를 함께 담는다.
 
         public void SaveGame(string path)
         {
@@ -24,10 +33,14 @@ namespace TmgBoard
         /// 넘겨줄 스냅샷을 만드는 데도 재사용한다(파일로 안 쓰고 네트워크로
         /// 보낼 뿐, 스키마와 그걸 불러오는 경로(GameSaveIO.ApplyLoadedStaticState
         /// + BoardManager.Load.cs의 ApplyLoadedLiveState)는 저장 파일
-        /// 불러오기와 완전히 동일).</summary>
-        public Dictionary<string, object> BuildFullStateTree()
+        /// 불러오기와 완전히 동일). includeUndoHistory=true면 되돌리기
+        /// 스택 전체(BuildUndoHistoryTree, 원래 게임 도중 멀티 시작 전용
+        /// 이었던 것)를 "undo_history" 키로 트리 안에 함께 담는다 — 리플레이
+        /// 저장 전용(2026-09-04 추가), 평범한 저장/멀티 시작 전송은 계속
+        /// 기본값(false)을 쓴다.</summary>
+        public Dictionary<string, object> BuildFullStateTree(bool includeUndoHistory = false)
         {
-            return new Dictionary<string, object>
+            var tree = new Dictionary<string, object>
             {
                 { "map", BuildMapTree() },
                 { "mission", BuildMissionTree() },
@@ -41,6 +54,11 @@ namespace TmgBoard
                 { "markers", BuildMarkersTree() },
                 { "mission_objective_states", BuildMissionObjectiveStatesTree() },
             };
+            if (includeUndoHistory)
+            {
+                tree["undo_history"] = BuildUndoHistoryTree();
+            }
+            return tree;
         }
 
         private static Dictionary<string, object> BuildMapTree()

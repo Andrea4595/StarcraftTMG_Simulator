@@ -137,6 +137,16 @@ namespace TmgBoard
             RefreshRosterTokenList();
             RefreshTacticalCardList();
             RefreshRangeOverlays();
+
+            // 리플레이 저장 파일(BuildFullStateTree(includeUndoHistory: true)
+            // 로 쓰인 것)에만 있다(2026-09-04 추가) — 평범한 저장 파일에는
+            // 이 키 자체가 없으므로 GameSaveIO.GetDict가 null을 돌려주고,
+            // ApplySeededUndoHistory는 안에서 GameSaveIO.GetList(null도
+            // 안전하게 빈 리스트로 처리)만 쓰므로 null을 넘겨도 그냥 두
+            // 스택을 비운 채로 둔다(Start()에서 어차피 처음부터 비어있으므로
+            // 사실상 아무 일도 안 일어남) — 굳이 키가 있는지부터 확인할
+            // 필요 없이 항상 호출해도 안전하다.
+            ApplySeededUndoHistory(GameSaveIO.GetDict(root, "undo_history"));
         }
 
         /// <summary>예비대 정의 하나를 트리에서 만든다 — 게임 불러오기와
