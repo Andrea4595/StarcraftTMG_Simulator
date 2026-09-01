@@ -208,16 +208,33 @@ namespace TmgBoard
                     });
                 }
 
-                string labelText = locked ? $"{row.Label} (참가 전 — 조작 불가)" : row.Label;
-                var label = CreateLabel(itemGo.transform, labelText, 13f, FontStyles.Normal, ResolveRowLabelColor(row.Team, isUndone, locked));
+                var label = CreateLabel(itemGo.transform, row.Label, 13f, FontStyles.Normal, ResolveRowLabelColor(row.Team, isUndone, locked));
                 var labelRect = (RectTransform)label.transform;
                 labelRect.anchorMin = Vector2.zero;
                 labelRect.anchorMax = Vector2.one;
                 labelRect.offsetMin = new Vector2(10f, 0f);
-                labelRect.offsetMax = new Vector2(-10f, 0f);
+                // 잠긴 행은 오른쪽에 자물쇠 아이콘이 붙으므로 텍스트가 거기까지
+                // 침범하지 않게 오른쪽 여백을 더 준다(사용자 요청, 2026-09-04
+                // — "(참가 전 조작 불가) 텍스트 대신 Lock.png 사용").
+                labelRect.offsetMax = new Vector2(locked ? -30f : -10f, 0f);
                 Object.Destroy(label.GetComponent<LayoutElement>());
                 label.alignment = TextAlignmentOptions.MidlineLeft;
                 label.raycastTarget = false;
+
+                if (locked)
+                {
+                    var lockGo = new GameObject("LockIcon", typeof(RectTransform));
+                    lockGo.transform.SetParent(itemGo.transform, false);
+                    var lockRect = (RectTransform)lockGo.transform;
+                    lockRect.anchorMin = new Vector2(1f, 0.5f);
+                    lockRect.anchorMax = new Vector2(1f, 0.5f);
+                    lockRect.pivot = new Vector2(1f, 0.5f);
+                    lockRect.anchoredPosition = new Vector2(-10f, 0f);
+                    lockRect.sizeDelta = new Vector2(16f, 16f);
+                    var lockImg = lockGo.AddComponent<RawImage>();
+                    lockImg.texture = Resources.Load<Texture2D>("UI/Lock");
+                    lockImg.raycastTarget = false;
+                }
             }
         }
 
@@ -225,14 +242,16 @@ namespace TmgBoard
         /// 팀이 없으면 흰색)을 기본으로 쓰되, 이미 취소된(어두운 배경) 행은
         /// 그 색을 절반만큼 어둡게 낮춘다 — "이미 취소됨"이라는 기존 시각
         /// 신호(밝기 차이)는 유지하면서 팀 색 구분도 같이 보이게 한다
-        /// (2026-09-04, 사용자 요청). 잠긴 행은 그보다 더(1/4로) 어둡게
-        /// 낮춰서 조작 불가라는 게 색으로도 드러난다(2026-09-04 추가).</summary>
+        /// (2026-09-04, 사용자 요청). 잠긴 행은 배경(LockedRowColor)과 자물쇠
+        /// 아이콘만으로 이미 "조작 불가"가 충분히 드러나므로, 글자색 자체는
+        /// isUndone 행보다 살짝만 낮춘다 — 처음엔 1/4로 너무 어둡게 뺐다가
+        /// "텍스트가 너무 어둡다"는 사용자 피드백으로 밝혔다(2026-09-04).</summary>
         private static Color ResolveRowLabelColor(string team, bool isUndone, bool locked)
         {
             Color c = GameConstants.ResolveTeamTextColor(team);
             if (locked)
             {
-                return new Color(c.r * 0.25f, c.g * 0.25f, c.b * 0.25f, 1f);
+                return new Color(c.r * 0.65f, c.g * 0.65f, c.b * 0.65f, 1f);
             }
             return isUndone ? new Color(c.r * 0.5f, c.g * 0.5f, c.b * 0.5f, 1f) : c;
         }
