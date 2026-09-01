@@ -539,6 +539,7 @@ namespace TmgBoard
             UpdateHoveredUnit();
             UpdateUnitDetailPanel();
             UpdateScreenshotToast();
+            UpdateMultiplayerButtonState();
             UpdateMarkerMoveTweens();
             UpdatePieceMoveTweens();
             UpdateEmoteFades();

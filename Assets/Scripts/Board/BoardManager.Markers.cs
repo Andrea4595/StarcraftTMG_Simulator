@@ -192,6 +192,10 @@ namespace TmgBoard
         /// 지금 보드 상태를 그대로 넘겨받아 둘 다 GameBoard에서 합류한다
         /// (MultiplayerConnectDialog.OnClientConnected/BoardManager.
         /// BroadcastFullStateForMidGameJoin 참고).</summary>
+        private RawImage _multiplayerButtonIcon;
+        private Image _multiplayerButtonBorder;
+        private Button _multiplayerButton;
+
         private void CreateMultiplayerButton(Transform parent)
         {
             var go = new GameObject("MultiplayerButton", typeof(RectTransform));
@@ -201,14 +205,60 @@ namespace TmgBoard
             rect.anchorMax = new Vector2(0f, 0.5f);
             rect.pivot = new Vector2(0f, 0.5f);
             rect.anchoredPosition = new Vector2(10f + GameConstants.MarkerBarHeight * 2f, 0f);
-            rect.sizeDelta = new Vector2(GameConstants.MarkerBarHeight - 8f, GameConstants.MarkerBarHeight - 8f);
+            float size = GameConstants.MarkerBarHeight - 8f;
+            rect.sizeDelta = new Vector2(size, size);
 
-            var img = go.AddComponent<RawImage>();
+            // 연결 중 표시(사용자 요청, 2026-09-04) — 얇은 초록 테두리 +
+            // 아이콘 어둡게 + 조작 불가. 전용 프레임 스프라이트 없이, 버튼
+            // 루트 자신의 배경 Image를 테두리 색으로 깔고(평소엔 alpha 0으로
+            // 안 보임) 그보다 살짝 작은 아이콘을 자식으로 그 위에 올려서
+            // 가장자리 두께만큼만 테두리처럼 보이게 만든다(자식이 부모보다
+            // 나중에 그려지는 UGUI 순서를 이용).
+            const float BorderThickness = 2f;
+            var border = go.AddComponent<Image>();
+            border.color = new Color(0f, 0f, 0f, 0f);
+            _multiplayerButtonBorder = border;
+
+            var iconGo = new GameObject("Icon", typeof(RectTransform));
+            iconGo.transform.SetParent(go.transform, false);
+            var iconRect = (RectTransform)iconGo.transform;
+            iconRect.anchorMin = new Vector2(0.5f, 0.5f);
+            iconRect.anchorMax = new Vector2(0.5f, 0.5f);
+            iconRect.pivot = new Vector2(0.5f, 0.5f);
+            iconRect.sizeDelta = new Vector2(size - BorderThickness * 2f, size - BorderThickness * 2f);
+            var img = iconGo.AddComponent<RawImage>();
             img.texture = Resources.Load<Texture2D>("UI/MultiplayButton");
+            _multiplayerButtonIcon = img;
 
             var btn = go.AddComponent<Button>();
-            btn.targetGraphic = img;
+            btn.targetGraphic = border;
+            // Selectable의 기본 ColorTint 전환을 꺼둔다 — 안 그러면 그게
+            // targetGraphic(border)의 색을 자기 나름대로(normal/disabled 등)
+            // 계속 덧칠해서, 매 프레임 직접 칠하는 UpdateMultiplayerButtonState
+            // 의 초록/투명 색과 서로 다퉈 깜빡이거나 잘못된 색으로 보일 수 있다.
+            btn.transition = Selectable.Transition.None;
             btn.onClick.AddListener(() => MultiplayerConnectDialog.Instance?.Open());
+            _multiplayerButton = btn;
+
+            UpdateMultiplayerButtonState();
+        }
+
+        /// <summary>매 프레임 폴링(코루틴 없음, 이 프로젝트 관례) —
+        /// BoardManager.cs의 Update()가 부른다. 연결 중이면 버튼을 초록
+        /// 테두리 + 어두운 아이콘 + 비활성으로, 아니면 평소 모습으로.</summary>
+        private void UpdateMultiplayerButtonState()
+        {
+            if (_multiplayerButton == null)
+            {
+                return;
+            }
+            bool connected = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+            _multiplayerButton.interactable = !connected;
+            _multiplayerButtonBorder.color = connected ? new Color(0.2f, 0.9f, 0.3f, 1f) : new Color(0f, 0f, 0f, 0f);
+            if (_multiplayerButtonIcon != null)
+            {
+                _multiplayerButtonIcon.color = connected ? new Color(0.45f, 0.45f, 0.45f, 1f) : Color.white;
+            }
         }
 
         /// <summary>마커 아이콘 오른쪽에 조작법을 띄워주는 라벨(사용자 요청) —

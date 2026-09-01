@@ -330,6 +330,15 @@ namespace TmgBoard
 
         private void OnCardLeftClicked(DraftState.DraftCard card)
         {
+            // 상대 카드 4장의 정체가 전부 밝혀지기 전엔(RemoteReady) 선택도
+            // 막는다(사용자 요청, 2026-09-04) — 롤 오프 버튼과 완전히 같은
+            // 기준(RefreshRolloffButtonState 참고). 이 카드 자신이 이미
+            // 실카드(내 카드는 처음부터 항상 실카드)라도, 화면 전체가 아직
+            // 안 밝혀졌으면 막는다는 점이 IsPlaceholder 체크와 다르다.
+            if (!DraftState.RemoteReady)
+            {
+                return;
+            }
             // 아직 상대 데이터가 안 온 자리표시자는 선택할 게 없다.
             if (card.IsPlaceholder || DraftState.BannedIds.Contains(card.Id))
             {
@@ -347,6 +356,11 @@ namespace TmgBoard
 
         private void OnCardRightClicked(DraftState.DraftCard card)
         {
+            // 좌클릭과 같은 이유(RemoteReady 기준) — 사용자 요청, 2026-09-04.
+            if (!DraftState.RemoteReady)
+            {
+                return;
+            }
             if (card.IsPlaceholder)
             {
                 return;
@@ -482,6 +496,18 @@ namespace TmgBoard
             if (card == null || card.IsPlaceholder)
             {
                 visual.Background.color = new Color(0.12f, 0.12f, 0.12f, 1f);
+                visual.StateLabel.text = "";
+                return;
+            }
+            // 이 카드 자신은 실카드라도, 상대 4장이 다 밝혀지기 전엔(RemoteReady)
+            // 클릭이 막혀 있으므로(OnCardLeftClicked/OnCardRightClicked) 아직
+            // 아무것도 선택/밴할 수 없는 "잠김" 상태임을 살짝 어둡게 보여준다
+            // (사용자 요청, 2026-09-04). RemoteReady가 true로 바뀌는 순간은
+            // RefreshRemoteCards가 이미 모든 카드의 RefreshCardVisual을 다시
+            // 부르므로 별도 갱신 트리거가 필요 없다.
+            if (!DraftState.RemoteReady)
+            {
+                visual.Background.color = new Color(0.16f, 0.16f, 0.16f, 1f);
                 visual.StateLabel.text = "";
                 return;
             }
