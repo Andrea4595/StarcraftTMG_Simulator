@@ -255,27 +255,24 @@ public static class GameFlowBootstrap
         // 한 번만 만든 영구 인스턴스라(2026-09-02) 여기서 새로 짓지 않고
         // Instance를 그대로 연결한다.
         entry.StartGamePicked += () => SceneManager.LoadScene(SelectionSceneName);
-        // 순수 "이어하기"(구석 버튼이든 "혼자 하기"→"이어하기"든 전부 여기로
-        // 온다) — 혹시 이전에 "같이 하기"→"이어하기"를 시도하다 저장 파일을
-        // 안 고르고 뒤로가기로 빠져나온 경우 그 플래그가 그대로 남아있을 수
-        // 있으므로(2026-09-04 추가), 확실히 꺼두고 들어간다.
+        // "이어하기"(구석 버튼이든 "혼자 하기"→"이어하기"든 전부 여기로
+        // 온다) — 혹시 MultiplayerConnectDialog의 "호스트로 시작"→"이어하기"
+        // (2026-09-04 추가, 그 다이얼로그 자신의 하위 단계로 옮김 — 아래
+        // MultiplayerPicked 주석 참고)를 시도하다 저장 파일을 안 고르고
+        // 뒤로가기로 빠져나온 경우 그 플래그가 그대로 남아있을 수 있으므로,
+        // 확실히 꺼두고 들어간다.
         entry.LoadGamePicked += () =>
         {
             GameLoadRequest.AutoOpenMultiplayerAfterLoad = false;
             SceneManager.LoadScene(LoadGameSceneName);
         };
-        // "같이 하기"→"이어하기"(2026-09-04 추가) — 저장 파일을 고르는 화면
-        // 자체는 완전히 같다(BuildLoadGame). 다른 점은 딱 하나, GameBoard가
-        // 그 상태를 다 채운 직후 MultiplayerConnectDialog를 자동으로 열어
-        // 주는 것뿐이라, 그 신호 하나(AutoOpenMultiplayerAfterLoad)만 세워두고
-        // 나머지는 기존 "이어하기" 경로를 그대로 탄다.
-        entry.LoadGameForMultiplayerPicked += () =>
-        {
-            GameLoadRequest.AutoOpenMultiplayerAfterLoad = true;
-            SceneManager.LoadScene(LoadGameSceneName);
-        };
         entry.MapAuthoringPicked += () => SceneManager.LoadScene(MapAuthoringSceneName);
         entry.MissionAuthoringPicked += () => SceneManager.LoadScene(MissionAuthoringSceneName);
+        // "같이 하기"는 곧바로 MultiplayerConnectDialog를 연다 — "새 게임"/
+        // "이어하기" 선택은 여기(Entry)가 아니라 그 다이얼로그의 "호스트로
+        // 시작" 하위 단계에 있다(2026-09-04 재구성, 사용자 지적 — 참가하는
+        // 쪽엔 "이어하기"가 의미 없으므로 호스트/참가 갈림길보다 먼저
+        // 물어보면 안 맞았다).
         entry.MultiplayerPicked += () => MultiplayerConnectDialog.Instance?.Open();
     }
 
@@ -297,9 +294,10 @@ public static class GameFlowBootstrap
             GameLoadRequest.PendingData = tree;
             SceneManager.LoadScene(GameBoardSceneName);
         };
-        // "같이 하기"→"이어하기"로 왔다가 여기서 뒤로 나가면(저장 파일을
-        // 안 고름) AutoOpenMultiplayerAfterLoad가 세워진 채로 Entry에 돌아갈
-        // 수 있으므로 여기서도 방어적으로 꺼둔다(2026-09-04 추가) — 그 뒤에
+        // "같이 하기"→"호스트로 시작"→"이어하기"(MultiplayerConnectDialog.
+        // OnHostContinueClicked)로 왔다가 여기서 뒤로 나가면(저장 파일을 안
+        // 고름) AutoOpenMultiplayerAfterLoad가 세워진 채로 Entry에 돌아갈 수
+        // 있으므로 여기서도 방어적으로 꺼둔다(2026-09-04 추가) — 그 뒤에
         // "혼자 하기"→"이어하기"를 눌러도 이 플래그를 다시 끄지만, 사용자가
         // Entry로 돌아간 뒤 아무 버튼도 안 누르고 그대로 둘 수도 있으니
         // 이중으로 안전하게.

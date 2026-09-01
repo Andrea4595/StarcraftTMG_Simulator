@@ -277,13 +277,15 @@ namespace TmgBoard
                 GameLoadRequest.PendingUndoHistory = null;
             }
 
-            // Entry "같이 하기"→"이어하기"로 들어온 경우만 켜져 있다
-            // (2026-09-04 추가, EntryController/GameFlowBootstrap 참고) — 이
-            // 판을 곧바로 초대할 수 있게 연결 다이얼로그를 자동으로 연다.
+            // "같이 하기"→"호스트로 시작"→"이어하기"로 들어온 경우만 켜져
+            // 있다(2026-09-04 추가, MultiplayerConnectDialog.
+            // OnHostContinueClicked 참고) — 이 판을 곧바로 호스팅할 수 있게,
+            // "호스트로 시작"을 다시 누른 것처럼 곧장 호스팅을 시작하고
+            // 코드를 띄운다(선택 화면들을 다시 거치지 않는다).
             if (GameLoadRequest.AutoOpenMultiplayerAfterLoad)
             {
                 GameLoadRequest.AutoOpenMultiplayerAfterLoad = false;
-                MultiplayerConnectDialog.Instance?.Open();
+                MultiplayerConnectDialog.Instance?.OpenAndStartHosting();
             }
         }
 

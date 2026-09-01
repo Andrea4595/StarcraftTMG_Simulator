@@ -8,29 +8,25 @@ namespace TmgBoard
 {
     /// <summary>맨 처음 뜨는 화면(2026-08-30 재구성, 2026-08-31에 "이어하기"
     /// 추가, 2026-09-01에 "게임 시작" 큰 버튼 하나를 "혼자 하기"/"같이 하기"
-    /// 두 개로 재구성, 2026-09-04에 "이어하기"를 두 큰 버튼에도 통합) —
-    /// 화면 중앙에 같은 크기 정사각형 버튼 두 개가 나란히: "혼자 하기"와
-    /// "같이 하기". 둘 다 이제 바로 흐름을 시작하지 않고 먼저 "새 게임"/
-    /// "이어하기" 선택 창(_choiceDialogGo)을 띄운다(사용자 요청 — "이어하기"
-    /// 를 별도 구석 버튼이 아니라 이 두 버튼을 통해서도 갈 수 있게). "새
-    /// 게임"을 고르면 기존 StartGamePicked/MultiplayerPicked을 그대로
-    /// 올리고, "이어하기"를 고르면 각각 LoadGamePicked(혼자 하기 쪽, 기존
-    /// 구석 버튼과 동일)/LoadGameForMultiplayerPicked(같이 하기 쪽, 신규 —
-    /// 저장 파일을 고른 뒤 GameBoard에 그 상태로 들어가자마자
-    /// MultiplayerConnectDialog를 자동으로 열어준다, GameFlowBootstrap 참고)
-    /// 을 올린다. 화면 오른쪽 아래 구석의 작은 "이어하기"/"배치 프리셋
-    /// 제작"/"미션 프리셋 제작" 버튼 세 개는 그대로 남겨뒀다(사용자 지정 —
-    /// 기존 지름길을 없앨 필요는 없다는 판단, "이어하기"는 여전히 LoadGame
-    /// 화면으로, 나머지 둘은 각각 MapAuthoring/MissionAuthoring 화면으로).
-    /// 실제 씬 전환은 이 컴포넌트를 만든 쪽(GameFlowBootstrap)이 담당한다 —
-    /// 이 컴포넌트는 클릭 이벤트만 올린다.</summary>
+    /// 두 개로 재구성, 2026-09-04에 "혼자 하기"에 "이어하기" 통합) — 화면
+    /// 중앙에 같은 크기 정사각형 버튼 두 개가 나란히: "혼자 하기"는 이제
+    /// 바로 흐름을 시작하지 않고 "새 게임"/"이어하기" 선택 창
+    /// (_choiceDialogGo)을 먼저 띄운다(사용자 요청). "같이 하기"는 그대로
+    /// MultiplayerPicked 하나만 올린다 — 그쪽의 "새 게임"/"이어하기" 선택은
+    /// MultiplayerConnectDialog 자신의 "호스트로 시작" 하위 단계에 있다
+    /// (사용자가 처음 이 화면 단계에서 선택하게 했더니 "이상한 과정"이라고
+    /// 지적, 2026-09-04 — 참가하는 쪽엔 "이어하기"가 아예 의미가 없어서
+    /// 호스트/참가 갈림길보다 먼저 물어보면 안 맞았다). 화면 오른쪽 아래
+    /// 구석의 작은 "이어하기"/"배치 프리셋 제작"/"미션 프리셋 제작" 버튼
+    /// 세 개는 그대로 남겨뒀다(사용자 지정 — 기존 지름길을 없앨 필요는
+    /// 없다는 판단). 실제 씬 전환은 이 컴포넌트를 만든 쪽(GameFlowBootstrap)
+    /// 이 담당한다 — 이 컴포넌트는 클릭 이벤트만 올린다.</summary>
     [RequireComponent(typeof(RectTransform))]
     public class EntryController : MonoBehaviour
     {
         public event Action StartGamePicked;
         public event Action MultiplayerPicked;
         public event Action LoadGamePicked;
-        public event Action LoadGameForMultiplayerPicked;
         public event Action MapAuthoringPicked;
         public event Action MissionAuthoringPicked;
 
@@ -77,8 +73,7 @@ namespace TmgBoard
             float halfOffset = PrimaryButtonSize / 2f + PrimaryButtonGap / 2f;
             CreateBigButton(root, "혼자 하기", new Color(0.2f, 0.45f, 0.3f, 1f), "UI/Singleplay", new Vector2(-halfOffset, 0f),
                     () => OpenChoiceDialog("혼자 하기", () => StartGamePicked?.Invoke(), () => LoadGamePicked?.Invoke()));
-            CreateBigButton(root, "같이 하기", new Color(0.2f, 0.35f, 0.5f, 1f), "UI/Multiplay", new Vector2(halfOffset, 0f),
-                    () => OpenChoiceDialog("같이 하기", () => MultiplayerPicked?.Invoke(), () => LoadGameForMultiplayerPicked?.Invoke()));
+            CreateBigButton(root, "같이 하기", new Color(0.2f, 0.35f, 0.5f, 1f), "UI/Multiplay", new Vector2(halfOffset, 0f), () => MultiplayerPicked?.Invoke());
 
             // 오른쪽 아래 구석의 작은 "제작" 도구 진입점 두 개(사용자 지정 —
             // 메인 흐름과 시각적으로 분리되도록 눈에 덜 띄는 자리/크기).

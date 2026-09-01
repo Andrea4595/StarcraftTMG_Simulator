@@ -25,15 +25,16 @@ namespace TmgBoard
         /// ApplySeededUndoHistory로 반영한 뒤 반드시 null로 비운다.</summary>
         public static Dictionary<string, object> PendingUndoHistory;
 
-        /// <summary>Entry "같이 하기" → "이어하기"로 저장 파일을 골랐을 때만
-        /// true로 세팅된다(2026-09-04 추가, EntryController.
-        /// LoadGameForMultiplayerPicked → GameFlowBootstrap). 이 값이 true인
-        /// 채로 GameBoard가 저장 상태를 다 채우고 나면(PendingData 처리
-        /// 직후), BoardManager.Start()가 곧바로 MultiplayerConnectDialog를
-        /// 열어준다 — 이어받은 판을 그대로 호스트로 초대할 수 있게, 마커바의
-        /// 멀티플레이 버튼을 따로 또 누를 필요 없이. 반드시 다 쓴 뒤 false로
-        /// 되돌린다(안 그러면 다음에 순수 "이어하기"로 들어와도 다이얼로그가
-        /// 떠버린다).</summary>
+        /// <summary>"같이 하기"→"호스트로 시작"→"이어하기"로 저장 파일을
+        /// 골랐을 때만 true로 세팅된다(2026-09-04 추가,
+        /// MultiplayerConnectDialog.OnHostContinueClicked → GameFlowBootstrap
+        /// 의 LoadGame 화면). 이 값이 true인 채로 GameBoard가 저장 상태를 다
+        /// 채우고 나면(PendingData 처리 직후), BoardManager.Start()가 곧바로
+        /// MultiplayerConnectDialog.OpenAndStartHosting()을 불러 선택 화면을
+        /// 다시 거치지 않고 "새 게임"을 누른 것과 똑같이 곧장 호스팅을
+        /// 시작하고 코드를 띄운다. 반드시 다 쓴 뒤 false로 되돌린다(안
+        /// 그러면 다음에 순수 "이어하기"로 들어와도 자동으로 호스팅이
+        /// 시작돼버린다).</summary>
         public static bool AutoOpenMultiplayerAfterLoad;
     }
 }

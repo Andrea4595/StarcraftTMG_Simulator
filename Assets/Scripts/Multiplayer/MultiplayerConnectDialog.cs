@@ -53,6 +53,7 @@ namespace TmgBoard
         private TextMeshProUGUI _titleLabel;
 
         private GameObject _choiceViewGo;
+        private GameObject _hostChoiceViewGo;
 
         private GameObject _hostViewGo;
         private TextMeshProUGUI _hostStatusLabel;
@@ -113,6 +114,18 @@ namespace TmgBoard
             ShowChoiceView();
             gameObject.SetActive(true);
             transform.SetAsLastSibling();
+        }
+
+        /// <summary>"호스트로 시작"→"이어하기"(OnHostContinueClicked)에서
+        /// 저장 파일을 고른 뒤, 그 상태가 GameBoard에 다 채워지고 나면
+        /// BoardManager.Start()가 부른다(2026-09-04 추가) — ChoiceView/
+        /// HostChoiceView를 거치지 않고, "호스트로 시작"→"새 게임"을 바로
+        /// 누른 것과 똑같이 곧장 호스팅을 시작하고 코드를 띄운다.</summary>
+        public void OpenAndStartHosting()
+        {
+            gameObject.SetActive(true);
+            transform.SetAsLastSibling();
+            BeginHosting();
         }
 
         public void Close()
@@ -185,6 +198,7 @@ namespace TmgBoard
         {
             _titleLabel.text = "같이 하기";
             _choiceViewGo.SetActive(true);
+            _hostChoiceViewGo.SetActive(false);
             _hostViewGo.SetActive(false);
             _joinViewGo.SetActive(false);
         }
@@ -194,12 +208,57 @@ namespace TmgBoard
             Close();
         }
 
-        // ── HostView ─────────────────────────────────────────────────────
+        // ── HostChoiceView ───────────────────────────────────────────────
 
+        /// <summary>ChoiceView의 "호스트로 시작"을 누르면 곧장 호스팅을
+        /// 시작하지 않고 먼저 "새 게임"/"이어하기"를 물어본다(사용자 요청,
+        /// 2026-09-04 재구성 — 예전엔 Entry 단계에서 먼저 물어봤는데, 참가
+        /// 하는 쪽엔 "이어하기"가 의미 없어서 호스트/참가를 가르기도 전에
+        /// 물어보면 안 맞았다).</summary>
         private void OnHostButtonClicked()
         {
             _titleLabel.text = "호스트로 시작";
             _choiceViewGo.SetActive(false);
+            _hostChoiceViewGo.SetActive(true);
+            _hostViewGo.SetActive(false);
+            _joinViewGo.SetActive(false);
+        }
+
+        private void OnHostChoiceBackClicked()
+        {
+            ShowChoiceView();
+        }
+
+        private void OnHostNewGameClicked()
+        {
+            BeginHosting();
+        }
+
+        /// <summary>Entry의 "이어하기" 화면(LoadGame 씬)을 그대로 재사용한다
+        /// — 이 다이얼로그는 씬과 무관하게 어디서든 뜰 수 있는 영구
+        /// 컴포넌트라 씬을 직접 옮기기 전에 반드시 먼저 닫아야, 전환된
+        /// LoadGame 화면 위를 계속 덮고 있지 않는다. GameLoadRequest.
+        /// AutoOpenMultiplayerAfterLoad를 세워두면, 저장 파일을 고르고
+        /// GameBoard에 그 상태가 다 채워진 직후 BoardManager.Start()가
+        /// OpenAndStartHosting()을 불러 "새 게임"을 누른 것과 똑같이 곧장
+        /// 호스팅을 시작한다.</summary>
+        private void OnHostContinueClicked()
+        {
+            GameLoadRequest.AutoOpenMultiplayerAfterLoad = true;
+            Close();
+            SceneManager.LoadScene(GameConstants.LoadGameSceneName);
+        }
+
+        // ── HostView ─────────────────────────────────────────────────────
+
+        /// <summary>실제 호스팅 시작 — HostChoiceView의 "새 게임"과
+        /// OpenAndStartHosting(저장 불러오기 후 자동 진입) 둘 다 이걸
+        /// 부른다.</summary>
+        private void BeginHosting()
+        {
+            _titleLabel.text = "호스트로 시작";
+            _choiceViewGo.SetActive(false);
+            _hostChoiceViewGo.SetActive(false);
             _hostViewGo.SetActive(true);
             _joinViewGo.SetActive(false);
 
@@ -464,6 +523,7 @@ namespace TmgBoard
             _titleLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 26f;
 
             BuildChoiceView(panelGo.transform);
+            BuildHostChoiceView(panelGo.transform);
             BuildHostView(panelGo.transform);
             BuildJoinView(panelGo.transform);
         }
@@ -482,6 +542,24 @@ namespace TmgBoard
             CreateButton(_choiceViewGo.transform, "호스트로 시작", 40f, OnHostButtonClicked);
             CreateButton(_choiceViewGo.transform, "참가 코드로 접속", 40f, OnJoinButtonClicked);
             CreateButton(_choiceViewGo.transform, "닫기", 32f, OnCloseButtonClicked);
+        }
+
+        /// <summary>"호스트로 시작" 다음, 실제 호스팅 전에 묻는 "새 게임"/
+        /// "이어하기"(사용자 요청, 2026-09-04).</summary>
+        private void BuildHostChoiceView(Transform parent)
+        {
+            _hostChoiceViewGo = new GameObject("HostChoiceView", typeof(RectTransform));
+            _hostChoiceViewGo.transform.SetParent(parent, false);
+            var layout = _hostChoiceViewGo.AddComponent<VerticalLayoutGroup>();
+            layout.spacing = 10f;
+            layout.childControlWidth = true;
+            layout.childForceExpandWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandHeight = false;
+
+            CreateButton(_hostChoiceViewGo.transform, "새 게임", 40f, OnHostNewGameClicked);
+            CreateButton(_hostChoiceViewGo.transform, "이어하기", 40f, OnHostContinueClicked);
+            CreateButton(_hostChoiceViewGo.transform, "뒤로", 32f, OnHostChoiceBackClicked);
         }
 
         private void BuildHostView(Transform parent)
