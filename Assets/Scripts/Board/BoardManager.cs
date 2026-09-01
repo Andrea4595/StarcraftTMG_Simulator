@@ -276,6 +276,15 @@ namespace TmgBoard
                 ApplySeededUndoHistory(GameLoadRequest.PendingUndoHistory);
                 GameLoadRequest.PendingUndoHistory = null;
             }
+
+            // Entry "같이 하기"→"이어하기"로 들어온 경우만 켜져 있다
+            // (2026-09-04 추가, EntryController/GameFlowBootstrap 참고) — 이
+            // 판을 곧바로 초대할 수 있게 연결 다이얼로그를 자동으로 연다.
+            if (GameLoadRequest.AutoOpenMultiplayerAfterLoad)
+            {
+                GameLoadRequest.AutoOpenMultiplayerAfterLoad = false;
+                MultiplayerConnectDialog.Instance?.Open();
+            }
         }
 
         /// <summary>씬을 코드로 구성할 때(부트스트랩 등) 인스펙터 대신 쓰는 초기화.</summary>
