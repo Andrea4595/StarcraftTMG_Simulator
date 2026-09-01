@@ -37,6 +37,13 @@ namespace TmgBoard
             // null을 안전하게 못 보내므로 "빈 문자열=팀 없음"을 프로젝트
             // 전체에서 일관되게 쓴다(null 아님).
             public string Team = "";
+            // 연속 편집 합치기(Composite, 2026-09-04 추가, 사용자 요청) 용 키.
+            // 예: 같은 팀의 미션VP 스테퍼를 연달아 3번 눌러도 되돌리기
+            // 목록엔 항목 하나만 남고(라벨만 최신 값으로 계속 갱신), 그
+            // 항목의 Snapshot(되돌아갈 대상)은 첫 클릭 때 캡처된 "그 연속
+            // 편집 시작 전" 상태 그대로 고정된다 — CommitUndoTransaction
+            // 참고. 빈 문자열이면 합치기 대상이 아님(대부분의 행동).
+            public string CompositeKey = "";
         }
 
         private readonly List<UndoEntry> _undoStack = new List<UndoEntry>();
@@ -45,6 +52,7 @@ namespace TmgBoard
         private BoardSnapshot _undoPendingSnapshot;
         private string _undoPendingLabel;
         private string _undoPendingTeam = "";
+        private string _undoPendingCompositeKey = "";
 
         // 두 스택 중 하나라도 바뀔 때마다 올라간다 — UndoHistoryDialog가 열려
         // 있는 동안 이 값을 매 프레임 폴링해서(코루틴 없이) 바뀌었으면 목록을
@@ -59,7 +67,7 @@ namespace TmgBoard
         // 조작을 되돌리기에 편입시키면서, BoardManager 밖에서 처음으로 이
         // 트랜잭션 메서드들을 직접 부를 필요가 생겼다(그 전까진 전부
         // BoardManager 자신의 파셜 클래스 파일 안에서만 쓰였다).
-        internal void BeginUndoTransaction(string label, string team = "")
+        internal void BeginUndoTransaction(string label, string team = "", string compositeKey = "")
         {
             if (_undoPendingActive)
             {
@@ -68,7 +76,21 @@ namespace TmgBoard
             _undoPendingSnapshot = CaptureBoardSnapshot();
             _undoPendingLabel = label;
             _undoPendingTeam = team ?? "";
+            _undoPendingCompositeKey = compositeKey ?? "";
             _undoPendingActive = true;
+        }
+
+        /// <summary>compositeKey가 채워져 있고 지금 _undoStack 맨 위 항목이
+        /// 같은 키라면, 그건 "연속 편집을 계속하는 중"이라는 뜻이다(사용자
+        /// 요청, 2026-09-04 — "이 전 기록과 동일한 값을 편집하고 있다면
+        /// Composit 해줘"). 호출부(ScoreboardPanel 등)가 BeginUndoTransaction
+        /// 전에 이걸로 미리 물어봐서, "원래 시작값"을 라벨에 계속 써야
+        /// 하는지 판단하는 데 쓴다.</summary>
+        internal bool IsTopUndoEntryComposite(string compositeKey)
+        {
+            return !string.IsNullOrEmpty(compositeKey)
+                    && _undoStack.Count > 0
+                    && _undoStack[_undoStack.Count - 1].CompositeKey == compositeKey;
         }
 
         internal void CommitUndoTransaction()
@@ -77,22 +99,53 @@ namespace TmgBoard
             {
                 return;
             }
-            _undoStack.Add(new UndoEntry { Snapshot = _undoPendingSnapshot, Label = _undoPendingLabel, Team = _undoPendingTeam });
+
+            bool isComposite = IsTopUndoEntryComposite(_undoPendingCompositeKey);
+            if (isComposite)
+            {
+                // 새 항목을 쌓지 않는다 — 기존 맨 위 항목의 Snapshot(연속
+                // 편집이 시작되기 전 상태)은 그대로 두고 라벨만 최신 값으로
+                // 갈아 끼운다. 방금 캡처한 _undoPendingSnapshot(이번 클릭
+                // 직전 상태)은 버려진다 — 필요 없다, 되돌아갈 목표는 여전히
+                // "연속 편집 시작 전"이어야 하므로.
+                _undoStack[_undoStack.Count - 1].Label = _undoPendingLabel;
+                _undoStack[_undoStack.Count - 1].Team = _undoPendingTeam;
+            }
+            else
+            {
+                _undoStack.Add(new UndoEntry
+                {
+                    Snapshot = _undoPendingSnapshot,
+                    Label = _undoPendingLabel,
+                    Team = _undoPendingTeam,
+                    CompositeKey = _undoPendingCompositeKey,
+                });
+            }
             _redoStack.Clear();
             _undoHistoryVersion++;
             ShowUndoToast(_undoPendingLabel, _undoPendingTeam);
-            // 멀티 연결 중이면 상대의 되돌리기 스택에도 똑같은 항목을
-            // 쌓아달라고 방송한다 — 이게 없으면 상대가 한 조작은 내
-            // 스택에, 내가 한 조작은 상대 스택에 전혀 안 남아서, 나중에
-            // 누구든 카스케이드로 되돌리면 그 사이 상대가 만들거나 지운
-            // 것까지 통째로 덮어써버리는 문제가 있었다(사용자 보고 —
-            // "undo redo를 복잡하게 조작하면 서로 꼬여서 없던게 생기고
-            // 있던게 사라짐"). 아래 참고.
-            BroadcastUndoPushIfNetworked(_undoPendingSnapshot, _undoPendingLabel, _undoPendingTeam);
+            // 멀티 연결 중이면 상대의 되돌리기 스택에도 똑같이 반영해달라고
+            // 방송한다 — 이게 없으면 상대가 한 조작은 내 스택에, 내가 한
+            // 조작은 상대 스택에 전혀 안 남아서, 나중에 누구든 카스케이드로
+            // 되돌리면 그 사이 상대가 만들거나 지운 것까지 통째로
+            // 덮어써버리는 문제가 있었다(사용자 보고 — "undo redo를
+            // 복잡하게 조작하면 서로 꼬여서 없던게 생기고 있던게 사라짐").
+            // 합치는 중이면 스냅샷 전체를 다시 보낼 필요가 없다 —
+            // 상대에게도 "이미 있는 맨 위 항목의 라벨만 바꿔라"는 훨씬 작은
+            // 메시지만 보낸다(BroadcastUndoRelabelIfNetworked).
+            if (isComposite)
+            {
+                BroadcastUndoRelabelIfNetworked(_undoPendingLabel, _undoPendingTeam);
+            }
+            else
+            {
+                BroadcastUndoPushIfNetworked(_undoPendingSnapshot, _undoPendingLabel, _undoPendingTeam, _undoPendingCompositeKey);
+            }
             _undoPendingActive = false;
             _undoPendingSnapshot = null;
             _undoPendingLabel = null;
             _undoPendingTeam = "";
+            _undoPendingCompositeKey = "";
         }
 
         internal void DiscardUndoTransaction()
@@ -101,6 +154,7 @@ namespace TmgBoard
             _undoPendingSnapshot = null;
             _undoPendingLabel = null;
             _undoPendingTeam = "";
+            _undoPendingCompositeKey = "";
         }
 
         /// <summary>진행 중인 트랜잭션이 있으면(드래그/유닛 이동/변위 배치 등) 그
@@ -144,7 +198,7 @@ namespace TmgBoard
             var current = CaptureBoardSnapshot();
             var entry = _undoStack[_undoStack.Count - 1];
             _undoStack.RemoveAt(_undoStack.Count - 1);
-            _redoStack.Add(new UndoEntry { Snapshot = current, Label = entry.Label, Team = entry.Team });
+            _redoStack.Add(new UndoEntry { Snapshot = current, Label = entry.Label, Team = entry.Team, CompositeKey = entry.CompositeKey });
             RestoreBoardSnapshot(entry.Snapshot);
             _undoHistoryVersion++;
         }
@@ -158,7 +212,7 @@ namespace TmgBoard
             var current = CaptureBoardSnapshot();
             var entry = _redoStack[_redoStack.Count - 1];
             _redoStack.RemoveAt(_redoStack.Count - 1);
-            _undoStack.Add(new UndoEntry { Snapshot = current, Label = entry.Label, Team = entry.Team });
+            _undoStack.Add(new UndoEntry { Snapshot = current, Label = entry.Label, Team = entry.Team, CompositeKey = entry.CompositeKey });
             RestoreBoardSnapshot(entry.Snapshot);
             _undoHistoryVersion++;
         }
@@ -218,7 +272,7 @@ namespace TmgBoard
         /// 오고 있다. 이렇게 두 클라이언트의 되돌리기 스택 내용을 항상
         /// 같은 순서로 맞춰두면, 나중에 어느 쪽이 카스케이드(되돌리기/다시
         /// 실행)를 하든 서로 어긋나지 않는다.</summary>
-        private void BroadcastUndoPushIfNetworked(BoardSnapshot snapshot, string label, string team)
+        private void BroadcastUndoPushIfNetworked(BoardSnapshot snapshot, string label, string team, string compositeKey)
         {
             if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
             {
@@ -230,7 +284,7 @@ namespace TmgBoard
                 return;
             }
             string json = MiniJson.Write(BuildSnapshotTree(snapshot));
-            BoardNetworkSync.Instance.RequestBroadcastUndoPush(label, team ?? "", json);
+            BoardNetworkSync.Instance.RequestBroadcastUndoPush(label, team ?? "", compositeKey ?? "", json);
         }
 
         /// <summary>상대가 커밋한 되돌리기 항목을 받았을 때 호출한다
@@ -238,15 +292,52 @@ namespace TmgBoard
         /// 방송의 메아리는 이미 거기서 걸러진다). 로컬에서 직접 커밋한 것과
         /// 똑같은 모양으로 내 스택에 쌓는다 — 보드 자체는 안 건드린다(그
         /// 변화는 별도의 액션 전용 방송이 따로 반영한다).</summary>
-        internal void ApplyRemoteUndoPush(string label, string team, string json)
+        internal void ApplyRemoteUndoPush(string label, string team, string compositeKey, string json)
         {
             if (!(MiniJson.Parse(json) is Dictionary<string, object> root))
             {
                 Debug.LogError("[BoardManager] 되돌리기 기록 JSON 파싱 실패");
                 return;
             }
-            _undoStack.Add(new UndoEntry { Snapshot = ParseSnapshotTree(root), Label = label, Team = team ?? "" });
+            _undoStack.Add(new UndoEntry { Snapshot = ParseSnapshotTree(root), Label = label, Team = team ?? "", CompositeKey = compositeKey ?? "" });
             _redoStack.Clear();
+            _undoHistoryVersion++;
+            ShowUndoToast(label, team);
+        }
+
+        /// <summary>연속 편집을 합치는 중일 때(CommitUndoTransaction의
+        /// isComposite 분기) 상대에게 보낸다 — 스냅샷 전체를 다시 보내는
+        /// 대신 "네 스택 맨 위 항목의 라벨만 이걸로 바꿔라"는 아주 작은
+        /// 메시지 하나만 보낸다(청크 불필요, 이모트/드래프트 선택 RPC와
+        /// 같은 이유). 두 스택은 이미 같은 순서로 맞춰져 있으므로
+        /// (BroadcastUndoPushIfNetworked 덕분에), "맨 위"를 바꾸라는 것만으로
+        /// 어느 항목인지 특정하는 데 충분하다.</summary>
+        private void BroadcastUndoRelabelIfNetworked(string label, string team)
+        {
+            if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
+            {
+                return;
+            }
+            if (BoardNetworkSync.Instance == null)
+            {
+                Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 되돌리기 라벨 갱신을 못 보냄");
+                return;
+            }
+            BoardNetworkSync.Instance.RequestBroadcastUndoRelabel(label, team ?? "");
+        }
+
+        /// <summary>BoardNetworkSync.BroadcastUndoRelabelRpc가 방송을 받았을
+        /// 때(자기 자신의 메아리는 이미 거기서 걸러진다) 호출한다 — 내
+        /// 스택 맨 위 항목의 라벨만 갈아 끼운다(새 항목을 쌓지 않음).</summary>
+        internal void ApplyRemoteUndoRelabel(string label, string team)
+        {
+            if (_undoStack.Count == 0)
+            {
+                Debug.LogError("[BoardManager] 되돌리기 라벨을 갱신할 항목이 없음 — 스택이 상대와 어긋났을 수 있음");
+                return;
+            }
+            _undoStack[_undoStack.Count - 1].Label = label;
+            _undoStack[_undoStack.Count - 1].Team = team ?? "";
             _undoHistoryVersion++;
             ShowUndoToast(label, team);
         }
@@ -420,6 +511,18 @@ namespace TmgBoard
                 });
             }
 
+            var rosterLoadedTeams = new List<object>();
+            foreach (var team in snapshot.RosterLoadedTeams)
+            {
+                rosterLoadedTeams.Add(team);
+            }
+
+            var missionObjectiveStates = new List<object>();
+            foreach (var s in snapshot.MissionObjectiveStates)
+            {
+                missionObjectiveStates.Add(new Dictionary<string, object> { { "number", s.Number }, { "ring_state", s.RingState } });
+            }
+
             return new Dictionary<string, object>
             {
                 { "units", units },
@@ -431,6 +534,9 @@ namespace TmgBoard
                 { "round_number", snapshot.RoundNumber },
                 { "mission_vp_a", snapshot.MissionVpA }, { "mission_vp_b", snapshot.MissionVpB },
                 { "kill_vp_a", snapshot.KillVpA }, { "kill_vp_b", snapshot.KillVpB },
+                { "phase_index", snapshot.PhaseIndex },
+                { "roster_loaded_teams", rosterLoadedTeams },
+                { "mission_objective_states", missionObjectiveStates },
             };
         }
 
@@ -545,6 +651,27 @@ namespace TmgBoard
             snapshot.MissionVpB = GameSaveIO.GetInt(root, "mission_vp_b");
             snapshot.KillVpA = GameSaveIO.GetInt(root, "kill_vp_a");
             snapshot.KillVpB = GameSaveIO.GetInt(root, "kill_vp_b");
+            snapshot.PhaseIndex = GameSaveIO.GetInt(root, "phase_index");
+
+            foreach (var raw in GameSaveIO.GetList(root, "roster_loaded_teams"))
+            {
+                if (raw is string team)
+                {
+                    snapshot.RosterLoadedTeams.Add(team);
+                }
+            }
+
+            foreach (var raw in GameSaveIO.GetList(root, "mission_objective_states"))
+            {
+                if (raw is Dictionary<string, object> s)
+                {
+                    snapshot.MissionObjectiveStates.Add(new MissionObjectiveStateSnapshot
+                    {
+                        Number = GameSaveIO.GetInt(s, "number"),
+                        RingState = GameSaveIO.GetString(s, "ring_state"),
+                    });
+                }
+            }
 
             return snapshot;
         }
@@ -729,6 +856,17 @@ namespace TmgBoard
             snapshot.MissionVpB = MatchState.MissionVp["B"];
             snapshot.KillVpA = MatchState.KillVp["A"];
             snapshot.KillVpB = MatchState.KillVp["B"];
+            snapshot.PhaseIndex = MatchState.PhaseIndex;
+            snapshot.RosterLoadedTeams.AddRange(_rosterLoadedTeams);
+
+            foreach (var kv in _missionObjectivePiecesByNumber)
+            {
+                if (kv.Value == null)
+                {
+                    continue;
+                }
+                snapshot.MissionObjectiveStates.Add(new MissionObjectiveStateSnapshot { Number = kv.Key, RingState = kv.Value.RingColorState });
+            }
 
             if (markerLayer != null)
             {
@@ -879,6 +1017,17 @@ namespace TmgBoard
                 _unitRanges[unit] = new List<RangeSpec>(rangeSnap.Ranges);
             }
 
+            // "로스터 로드됨" 판정을 예비대 목록보다 먼저 되돌린다(2026-09-04
+            // 추가) — 아래 RefreshPendingList()가 부르는 RefreshPanelLayout()
+            // 이 이 값을 바로 참조하므로, 그보다 먼저 맞춰둬야 한다. BoardSnapshot.
+            // RosterLoadedTeams 주석 참고 — 로스터 불러오기 자체를 되돌리는
+            // 경우에만(그 이전 스냅샷엔 team이 없었으므로) 정확히 부활한다.
+            _rosterLoadedTeams.Clear();
+            foreach (var team in snapshot.RosterLoadedTeams)
+            {
+                _rosterLoadedTeams.Add(team);
+            }
+
             _pendingUnits.Clear();
             foreach (var def in snapshot.PendingUnits)
             {
@@ -917,6 +1066,21 @@ namespace TmgBoard
             MatchState.MissionVp["B"] = snapshot.MissionVpB;
             MatchState.KillVp["A"] = snapshot.KillVpA;
             MatchState.KillVp["B"] = snapshot.KillVpB;
+            // 페이즈(2026-09-04 추가) — PhaseBar도 스코어보드처럼 매 프레임
+            // MatchState를 다시 읽어 스스로 화면을 맞춘다(PhaseBar.Update
+            // 참고).
+            MatchState.PhaseIndex = snapshot.PhaseIndex;
+
+            // 미션 목표 마커 점령 링 상태(2026-09-04 추가) — 마커 자신은
+            // 파괴/재생성 대상이 아니므로(BoardSnapshot.MissionObjectiveStates
+            // 주석 참고) 상태만 번호로 찾아 되돌린다.
+            foreach (var stateSnap in snapshot.MissionObjectiveStates)
+            {
+                if (_missionObjectivePiecesByNumber.TryGetValue(stateSnap.Number, out var piece) && piece != null)
+                {
+                    piece.SetRingColorState(stateSnap.RingState);
+                }
+            }
 
             if (markerLayer != null)
             {
@@ -1062,6 +1226,32 @@ namespace TmgBoard
             public int MissionVpB;
             public int KillVpA;
             public int KillVpB;
+            // 페이즈도 되돌리기 대상이다(2026-09-04, 사용자 요청).
+            public int PhaseIndex;
+            // 로스터 "로드됨" 판정도 되돌리기 대상이어야 한다(2026-09-04,
+            // 사용자 요청 — "로스터 불러오기를 취소하면 버튼이 부활해야
+            // 한다"). 이 필드는 원래(BoardManager.Deployment.cs의
+            // RefreshPanelLayout 주석 참고) "한 번 켜지면 계속 유지되는
+            // 단방향 스위치"로 설계됐는데, 그건 "예비대를 배치해서 목록이
+            // 비는" 경우에만 해당하는 얘기였다 — 매 스냅샷에 이 값을 그대로
+            // 담아두면, 배치로 목록이 비어도(그 이후 스냅샷들은 계속 team이
+            // 들어있는 채로 캡처됨) 여전히 안 부활하고, 반대로 로스터
+            // 불러오기 자체를 되돌려 그 이전 스냅샷(team이 아직 없던 시점)
+            // 으로 돌아가면 정확히 그때만 부활한다 — 별도 로직 없이 스냅샷
+            // 캡처/복원 자체가 두 요구를 동시에 만족시킨다.
+            public readonly List<string> RosterLoadedTeams = new List<string>();
+            // 미션 목표 마커(점령 링) 우클릭 색 순환도 되돌리기 대상이다
+            // (2026-09-04, 사용자 요청). 그 마커 자체(MissionObjectivePiece)는
+            // 되돌리기의 파괴/재생성 대상이 아니라(ClearLiveBoardState가
+            // 일부러 건너뛴다 — 미션 셋업에서 고정된 영구 표시용) 상태 값만
+            // 번호로 짝지어 담는다.
+            public readonly List<MissionObjectiveStateSnapshot> MissionObjectiveStates = new List<MissionObjectiveStateSnapshot>();
+        }
+
+        private class MissionObjectiveStateSnapshot
+        {
+            public int Number;
+            public string RingState;
         }
 
         private static TacticalCardDef CloneTacticalCardDef(TacticalCardDef def)

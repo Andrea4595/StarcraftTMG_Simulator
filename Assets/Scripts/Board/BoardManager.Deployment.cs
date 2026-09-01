@@ -17,6 +17,11 @@ namespace TmgBoard
         private const float ListMaxHeight = 180f;
         private const float UnitListExpandedMaxHeight = 480f;
 
+        // 전술 카드 연속 편집 합치기(Composite, 2026-09-04 추가, 사용자
+        // 요청)용 — CreateTacticalCardButton의 클릭 핸들러 참고. 카드별로
+        // "그 연속 편집이 시작됐을 때의 Remaining"을 기억해둔다.
+        private readonly Dictionary<string, int> _tacticalCardStreakBase = new Dictionary<string, int>();
+
         // 아직 이 팀에 로스터를 하나도 안 불러왔을 때 "A 로스터 불러오기"
         // 버튼이 패널 전체를 꽉 채우도록 쓰는 큰 높이. 로스터를 불러오고
         // 나면(OnRosterFileSelected) 이 버튼은 아예 숨긴다 — 그 뒤로는
@@ -410,29 +415,36 @@ namespace TmgBoard
             }
             RefreshTacticalCardVisual(btnImg, nameLabel, pips, def);
 
+            // 되돌리기 목록/토스트에 "{시작값} -> {지금값}" 형태로 남긴다
+            // (사용자 요청, 2026-09-04 — 점수판 숫자와 같은 형식을 전술
+            // 카드 개수에도 적용). 연속으로 같은 카드를 눌러도(사용자 요청 —
+            // Composite) 되돌리기 목록엔 한 항목만 남고, "시작값"은 그
+            // 연속 편집이 처음 시작됐을 때의 값으로 고정된다.
+            string compositeKey = $"tacticalCard:{def.Team}:{def.Name}";
+
             var handler = btnGo.AddComponent<TacticalCardClickHandler>();
             handler.OnLeftClick = () =>
             {
-                // 좌클릭은 보통 "소모"(핍 하나 줄임)지만, 이미 다 소모된
-                // 상태(Remaining==0)에서 좌클릭하면 전부 복구되는 한 바퀴
-                // 순환이라 이땐 라벨이 반대로 "복구"여야 실제 효과와 맞는다
-                // (사용자 지정 — 클릭 방향이 아니라 실제로 무슨 일이
-                // 일어났는지로 라벨을 정한다).
-                string verb = def.Remaining > 0 ? "소모" : "복구";
-                BeginUndoTransaction($"[택티컬] {def.Name} {verb}", def.Team);
-                def.Remaining = def.Remaining > 0 ? def.Remaining - 1 : def.Count;
+                int newRemaining = def.Remaining > 0 ? def.Remaining - 1 : def.Count;
+                bool composite = IsTopUndoEntryComposite(compositeKey);
+                int baseValue = composite && _tacticalCardStreakBase.TryGetValue(compositeKey, out var b) ? b : def.Remaining;
+                _tacticalCardStreakBase[compositeKey] = baseValue;
+
+                BeginUndoTransaction($"[택티컬] {def.Name} {baseValue} -> {newRemaining}", def.Team, compositeKey);
+                def.Remaining = newRemaining;
                 RefreshTacticalCardVisual(btnImg, nameLabel, pips, def);
                 CommitUndoTransaction();
                 BroadcastTacticalCardsIfNetworked();
             };
             handler.OnRightClick = () =>
             {
-                // 우클릭은 보통 "복구"지만, 이미 꽉 찬 상태(Remaining==Count)
-                // 에서 우클릭하면 전부 소모되는 한 바퀴 순환이라 이땐 반대로
-                // "소모"(좌클릭과 완전히 같은 이유).
-                string verb = def.Remaining < def.Count ? "복구" : "소모";
-                BeginUndoTransaction($"[택티컬] {def.Name} {verb}", def.Team);
-                def.Remaining = def.Remaining < def.Count ? def.Remaining + 1 : 0;
+                int newRemaining = def.Remaining < def.Count ? def.Remaining + 1 : 0;
+                bool composite = IsTopUndoEntryComposite(compositeKey);
+                int baseValue = composite && _tacticalCardStreakBase.TryGetValue(compositeKey, out var b) ? b : def.Remaining;
+                _tacticalCardStreakBase[compositeKey] = baseValue;
+
+                BeginUndoTransaction($"[택티컬] {def.Name} {baseValue} -> {newRemaining}", def.Team, compositeKey);
+                def.Remaining = newRemaining;
                 RefreshTacticalCardVisual(btnImg, nameLabel, pips, def);
                 CommitUndoTransaction();
                 BroadcastTacticalCardsIfNetworked();

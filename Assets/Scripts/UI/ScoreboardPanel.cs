@@ -50,6 +50,16 @@ namespace TmgBoard
         private readonly Dictionary<string, Action<int>> _missionVpSetters = new Dictionary<string, Action<int>>();
         private readonly Dictionary<string, Action<int>> _killVpSetters = new Dictionary<string, Action<int>>();
 
+        // 연속 편집 합치기(Composite, 2026-09-04 추가, 사용자 요청) 용 —
+        // "이 연속 편집이 시작됐을 때의 값"을 기억해뒀다가, 스트릭이 계속
+        // 이어지는 동안(_board.IsTopUndoEntryComposite가 true인 동안) 라벨의
+        // "{시작값} -> {지금값}" 왼쪽을 계속 그 값으로 고정하는 데 쓴다.
+        // 스트릭이 끊기면(다른 조작이 끼어들거나 처음 편집하는 경우) 그
+        // 순간의 실제 이전 값으로 다시 채워진다.
+        private int _roundStreakBase = -1;
+        private readonly Dictionary<string, int> _missionVpStreakBase = new Dictionary<string, int>();
+        private readonly Dictionary<string, int> _killVpStreakBase = new Dictionary<string, int>();
+
         // BoardManager는 부트스트랩이 두 객체를 다 만든 뒤 SetBoardManager()로
         // 나중에 넣어준다(Awake() 시점엔 아직 BoardManager가 없을 수 있음) —
         // 이 컴포넌트는 원래 BoardManager와 무관하게 독립적으로 짓게 설계했지만,
@@ -441,6 +451,8 @@ namespace TmgBoard
             }
         }
 
+        private const string RoundCompositeKey = "round";
+
         /// <summary>라운드 네모를 클릭했을 때 부른다(사용자 조작) — 멀티
         /// 연결 중이면 로컬에서 바로 바꾸지 않고 방송 요청만 한다(마커
         /// 배치와 같은 "방송 후 로컬 반영" 패턴). BuildRoundIndicator가
@@ -449,10 +461,18 @@ namespace TmgBoard
         /// 되돌리기(2026-09-04 추가, 사용자 요청 — "리플레이가 의미를
         /// 가지려면 점수판 조작도 기록돼야 한다") — 마커 배치와 같은 자리에
         /// Begin/CommitUndoTransaction을 건다(방송 요청을 보내는 시점에
-        /// 커밋, 실제 반영은 그 방송이 돌아오는 걸 거친다).</summary>
+        /// 커밋, 실제 반영은 그 방송이 돌아오는 걸 거친다). 라벨은
+        /// "{시작값} -> {지금값}" 형태이고, 연속으로 라운드를 이리저리
+        /// 눌러도(사용자 요청 — Composite) 되돌리기 목록엔 한 항목만
+        /// 남는다.</summary>
         private void OnRoundPipClicked(int roundNumber)
         {
-            _board?.BeginUndoTransaction($"[점수판] 라운드 {roundNumber}");
+            int oldValue = MatchState.RoundNumber;
+            bool composite = _board != null && _board.IsTopUndoEntryComposite(RoundCompositeKey);
+            int baseValue = composite ? _roundStreakBase : oldValue;
+            _roundStreakBase = baseValue;
+
+            _board?.BeginUndoTransaction($"[점수판] 라운드 {baseValue} -> {roundNumber}", "", RoundCompositeKey);
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 if (BoardNetworkSync.Instance == null)
@@ -476,11 +496,17 @@ namespace TmgBoard
             SetRoundNumber(roundNumber);
         }
 
-        /// <summary>되돌리기(2026-09-04 추가) — OnRoundPipClicked과 같은
-        /// 이유/자리.</summary>
+        /// <summary>되돌리기 + 연속 편집 합치기(2026-09-04 추가) —
+        /// OnRoundPipClicked과 같은 이유/자리.</summary>
         private void OnMissionVpChanged(string team, int value)
         {
-            _board?.BeginUndoTransaction($"[점수판] {team} 미션VP {value}", team);
+            string key = $"missionVp:{team}";
+            int oldValue = MatchState.MissionVp[team];
+            bool composite = _board != null && _board.IsTopUndoEntryComposite(key);
+            int baseValue = composite && _missionVpStreakBase.TryGetValue(team, out var b) ? b : oldValue;
+            _missionVpStreakBase[team] = baseValue;
+
+            _board?.BeginUndoTransaction($"[점수판] {team} 미션VP {baseValue} -> {value}", team, key);
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 if (BoardNetworkSync.Instance == null)
@@ -500,7 +526,13 @@ namespace TmgBoard
 
         private void OnKillVpChanged(string team, int value)
         {
-            _board?.BeginUndoTransaction($"[점수판] {team} 파괴VP {value}", team);
+            string key = $"killVp:{team}";
+            int oldValue = MatchState.KillVp[team];
+            bool composite = _board != null && _board.IsTopUndoEntryComposite(key);
+            int baseValue = composite && _killVpStreakBase.TryGetValue(team, out var b) ? b : oldValue;
+            _killVpStreakBase[team] = baseValue;
+
+            _board?.BeginUndoTransaction($"[점수판] {team} 파괴VP {baseValue} -> {value}", team, key);
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 if (BoardNetworkSync.Instance == null)

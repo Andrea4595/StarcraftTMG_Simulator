@@ -54,22 +54,29 @@ namespace TmgBoard
         /// <summary>우클릭 시(MissionObjectivePiece.ColorCycleRequested) 부른다
         /// — 멀티 연결 중이면 다음 상태를 절대값으로 미리 계산해 방송 요청만
         /// 하고(휠 회전 절대각과 같은 이유 — 메시지 유실에도 안 어긋나게),
-        /// 실제 반영은 그 방송이 되돌아오는 걸 거친다.</summary>
+        /// 실제 반영은 그 방송이 되돌아오는 걸 거친다. 되돌리기(2026-09-04
+        /// 추가, 사용자 요청) — 마커 배치와 같은 자리에 Begin/
+        /// CommitUndoTransaction을 건다(BoardSnapshot.MissionObjectiveStates
+        /// 참고 — 마커 자신은 파괴/재생성 대상이 아니라 상태만 복원됨).</summary>
         private void OnMissionObjectiveColorCycleRequested(MissionObjectivePiece piece)
         {
+            int idx = Array.IndexOf(MissionObjectivePiece.RingColorSequence, piece.RingColorState);
+            string nextState = MissionObjectivePiece.RingColorSequence[(idx + 1) % MissionObjectivePiece.RingColorSequence.Length];
+            BeginUndoTransaction($"미션 마커 {piece.Number} {piece.RingColorState} -> {nextState}");
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 if (BoardNetworkSync.Instance == null)
                 {
                     Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 미션 마커 색 변경 요청을 못 보냄");
+                    DiscardUndoTransaction();
                     return;
                 }
-                int idx = Array.IndexOf(MissionObjectivePiece.RingColorSequence, piece.RingColorState);
-                string nextState = MissionObjectivePiece.RingColorSequence[(idx + 1) % MissionObjectivePiece.RingColorSequence.Length];
                 BoardNetworkSync.Instance.RequestSetMissionObjectiveColorServerRpc(piece.Number, nextState);
+                CommitUndoTransaction();
                 return;
             }
             piece.CycleRingColor();
+            CommitUndoTransaction();
         }
 
         /// <summary>BoardNetworkSync.SetMissionObjectiveColorRpc가 방송을

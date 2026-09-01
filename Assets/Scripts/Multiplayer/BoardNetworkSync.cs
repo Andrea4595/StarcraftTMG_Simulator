@@ -892,7 +892,7 @@ namespace TmgBoard
         // 파라미터로 자기 메아리를 구분하는 것과 같은 방식으로, 보낸
         // 클라이언트 id를 함께 실어 보낸다.
 
-        public void RequestBroadcastUndoPush(string label, string team, string snapshotJson)
+        public void RequestBroadcastUndoPush(string label, string team, string compositeKey, string snapshotJson)
         {
             ulong senderId = NetworkManager.Singleton.LocalClientId;
             int transferId = System.Guid.NewGuid().GetHashCode();
@@ -902,20 +902,20 @@ namespace TmgBoard
                 int start = i * TextChunkSize;
                 int length = Mathf.Min(TextChunkSize, snapshotJson.Length - start);
                 string chunk = snapshotJson.Substring(start, length);
-                RequestBroadcastUndoPushChunkServerRpc(transferId, senderId, label, team, i, totalChunks, chunk);
+                RequestBroadcastUndoPushChunkServerRpc(transferId, senderId, label, team, compositeKey, i, totalChunks, chunk);
             }
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
-        private void RequestBroadcastUndoPushChunkServerRpc(int transferId, ulong senderId, string label, string team, int chunkIndex, int totalChunks, string chunk)
+        private void RequestBroadcastUndoPushChunkServerRpc(int transferId, ulong senderId, string label, string team, string compositeKey, int chunkIndex, int totalChunks, string chunk)
         {
-            BroadcastUndoPushChunkRpc(transferId, senderId, label, team, chunkIndex, totalChunks, chunk);
+            BroadcastUndoPushChunkRpc(transferId, senderId, label, team, compositeKey, chunkIndex, totalChunks, chunk);
         }
 
         private readonly Dictionary<int, TextChunkBuffer> _undoPushChunkBuffers = new();
 
         [Rpc(SendTo.ClientsAndHost)]
-        private void BroadcastUndoPushChunkRpc(int transferId, ulong senderId, string label, string team, int chunkIndex, int totalChunks, string chunk)
+        private void BroadcastUndoPushChunkRpc(int transferId, ulong senderId, string label, string team, string compositeKey, int chunkIndex, int totalChunks, string chunk)
         {
             if (!_undoPushChunkBuffers.TryGetValue(transferId, out var buf))
             {
@@ -945,7 +945,39 @@ namespace TmgBoard
                 Debug.LogError("[BoardNetworkSync] BoardManager를 못 찾음 — 되돌리기 기록을 못 반영함");
                 return;
             }
-            board.ApplyRemoteUndoPush(label, team, fullJson);
+            board.ApplyRemoteUndoPush(label, team, compositeKey, fullJson);
+        }
+
+        /// <summary>연속 편집 합치기(2026-09-04 추가, BoardManager.UndoRedo.cs
+        /// 의 CommitUndoTransaction 참고) — 스택에 새 항목을 쌓는 대신 맨 위
+        /// 항목의 라벨만 바꿀 때 쓴다. 값이 작아(라벨 한 줄) 청크가
+        /// 필요없다(카스케이드/이모트와 같은 이유).</summary>
+        public void RequestBroadcastUndoRelabel(string label, string team)
+        {
+            ulong senderId = NetworkManager.Singleton.LocalClientId;
+            RequestBroadcastUndoRelabelServerRpc(senderId, label, team);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        private void RequestBroadcastUndoRelabelServerRpc(ulong senderId, string label, string team)
+        {
+            BroadcastUndoRelabelRpc(senderId, label, team);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void BroadcastUndoRelabelRpc(ulong senderId, string label, string team)
+        {
+            if (senderId == NetworkManager.Singleton.LocalClientId)
+            {
+                return; // 내가 커밋한 항목의 메아리 — 이미 로컬에서 직접 라벨을 바꿨다.
+            }
+            var board = Object.FindFirstObjectByType<BoardManager>();
+            if (board == null)
+            {
+                Debug.LogError("[BoardNetworkSync] BoardManager를 못 찾음 — 되돌리기 라벨 갱신을 못 반영함");
+                return;
+            }
+            board.ApplyRemoteUndoRelabel(label, team);
         }
 
         /// <summary>카스케이드(값이 작아 청크가 필요 없다) — isRedo=false면
