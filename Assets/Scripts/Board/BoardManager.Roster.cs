@@ -73,12 +73,14 @@ namespace TmgBoard
         /// 되돌리기(2026-09-04 추가, 사용자 요청 — "리플레이가 의미를
         /// 가지려면 로스터 불러오기도 예비대 상태로 히스토리에 남아야
         /// 한다") — 이 메서드가 솔로/멀티 양쪽의 유일한 실제 적용 지점이라
-        /// (클래스 상단 주석 참고) 여기 한 곳에만 걸면 된다. 되돌려도
-        /// _rosterLoadedTeams는 일부러 안 건드린다 — 그건 한 번 켜지면
-        /// 계속 유지돼야 하는 별개의 단방향 스위치라(RefreshPanelLayout
-        /// 주석 참고, "예비대를 전부 배치해서 목록이 비어도 큰 버튼이
-        /// 되살아나면 안 됨"과 같은 이유로, 되돌리기로 예비대가 비어도
-        /// 마찬가지다).</summary>
+        /// (클래스 상단 주석 참고) 여기 한 곳에만 걸면 된다. _rosterLoadedTeams는
+        /// (BoardSnapshot.RosterLoadedTeams 참고, 2026-09-04 수정 — 원래는
+        /// 일부러 안 건드렸으나, 되돌리기 자체를 되돌릴 때 "로스터 불러오기"
+        /// 버튼이 안 부활하는 버그로 사용자가 발견) 스냅샷에 같이 담겨서
+        /// 이 임포트 자체를 되돌리면 그 전 상태로 정확히 돌아간다 —
+        /// 배치로 예비대가 그냥 비는 것과는 별개로 이 스위치는 여전히
+        /// RefreshPanelLayout에서 단방향으로 유지된다(임포트를 되돌리지
+        /// 않는 한).</summary>
         internal void ApplyRosterImport(string team, string jsonText)
         {
             if (!RosterImporter.TryImport(jsonText, team, out var units, out var tokens, out var tacticalCards, out var error))

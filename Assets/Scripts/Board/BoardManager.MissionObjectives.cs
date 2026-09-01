@@ -62,7 +62,7 @@ namespace TmgBoard
         {
             int idx = Array.IndexOf(MissionObjectivePiece.RingColorSequence, piece.RingColorState);
             string nextState = MissionObjectivePiece.RingColorSequence[(idx + 1) % MissionObjectivePiece.RingColorSequence.Length];
-            BeginUndoTransaction($"미션 마커 {piece.Number} {piece.RingColorState} -> {nextState}");
+            BeginUndoTransaction($"미션 마커 {piece.Number} {DescribeRingColorState(piece.RingColorState)} -> {DescribeRingColorState(nextState)}");
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
                 if (BoardNetworkSync.Instance == null)
@@ -77,6 +77,29 @@ namespace TmgBoard
             }
             piece.CycleRingColor();
             CommitUndoTransaction();
+        }
+
+        /// <summary>RingColorState 원시값("inactive"/"white"/"red"/"blue")을
+        /// 되돌리기 라벨/토스트에 쓸 한글 표시로 바꾼다(사용자 요청,
+        /// 2026-09-04 — 원시값 그대로 보여주던 걸 교체). red/blue는 팀
+        /// 색상이 아니라 팀 점령 상태를 뜻하므로(MissionObjectivePiece.
+        /// ResolveRingColor 참고 — red="A"팀 색, blue="B"팀 색) "A 점령"/
+        /// "B 점령"으로 표시한다.</summary>
+        private static string DescribeRingColorState(string state)
+        {
+            switch (state)
+            {
+                case "inactive":
+                    return "비활성";
+                case "white":
+                    return "활성";
+                case "red":
+                    return "A 점령";
+                case "blue":
+                    return "B 점령";
+                default:
+                    return state;
+            }
         }
 
         /// <summary>BoardNetworkSync.SetMissionObjectiveColorRpc가 방송을

@@ -1017,30 +1017,42 @@ namespace TmgBoard
                 _unitRanges[unit] = new List<RangeSpec>(rangeSnap.Ranges);
             }
 
-            // "로스터 로드됨" 판정을 예비대 목록보다 먼저 되돌린다(2026-09-04
-            // 추가) — 아래 RefreshPendingList()가 부르는 RefreshPanelLayout()
-            // 이 이 값을 바로 참조하므로, 그보다 먼저 맞춰둬야 한다. BoardSnapshot.
-            // RosterLoadedTeams 주석 참고 — 로스터 불러오기 자체를 되돌리는
-            // 경우에만(그 이전 스냅샷엔 team이 없었으므로) 정확히 부활한다.
+            // "로스터 로드됨" 판정을 예비대/토큰/택티컬 카드 목록보다 먼저
+            // 되돌린다(2026-09-04 추가) — 아래 Refresh*List()들이 부르는
+            // RefreshPanelLayout()이 이 값을 바로 참조하므로, 그보다 먼저
+            // 맞춰둬야 한다. BoardSnapshot.RosterLoadedTeams 주석 참고 —
+            // 로스터 불러오기 자체를 되돌리는 경우에만(그 이전 스냅샷엔
+            // team이 없었으므로) 정확히 부활한다.
             _rosterLoadedTeams.Clear();
             foreach (var team in snapshot.RosterLoadedTeams)
             {
                 _rosterLoadedTeams.Add(team);
             }
 
+            // 세 예비대 계열 목록(_pendingUnits/_pendingRosterTokens/
+            // _pendingTacticalCards)을 전부 복원부터 끝낸 다음에야
+            // Refresh*List()들을 부른다(2026-09-04 버그 수정, 사용자 보고 —
+            // "A 로드, B 로드, B 되돌리기 해도 B 버튼이 안 부활하고, A까지
+            // 되돌려야 그제서야 부활함"). 예전엔 _pendingUnits만 먼저
+            // 복원하고 바로 RefreshPendingList()를 불렀는데, 그 안의
+            // RefreshPanelLayout()이 "아직 안 비운" 이전 _pendingRosterTokens
+            // 값을 그대로 읽어 tokenCount>0으로 오판 — 위에서 방금 비워둔
+            // _rosterLoadedTeams을 자기 진단 로직(RefreshPanelLayout 자체
+            // 주석의 "이미 예비대/토큰이 있으면 로드된 것으로 자동 편입")으로
+            // 즉시 되살려버렸다. 세 목록을 다 갈아치운 뒤에 한 번씩만
+            // Refresh*List()를 불러야 그 자기 진단이 실제로 복원된 최종
+            // 상태를 보고 판단한다.
             _pendingUnits.Clear();
             foreach (var def in snapshot.PendingUnits)
             {
                 _pendingUnits.Add(ClonePendingUnitDef(def));
             }
-            RefreshPendingList();
 
             _pendingRosterTokens.Clear();
             foreach (var def in snapshot.PendingRosterTokens)
             {
                 _pendingRosterTokens.Add(ClonePendingTokenDef(def));
             }
-            RefreshRosterTokenList();
 
             // 2026-09-04부터 목록 자체를 통째로 되살린다(PendingUnits/
             // PendingRosterTokens와 같은 방식) — 로스터 불러오기가 되돌리기
@@ -1052,6 +1064,9 @@ namespace TmgBoard
             {
                 _pendingTacticalCards.Add(CloneTacticalCardDef(def));
             }
+
+            RefreshPendingList();
+            RefreshRosterTokenList();
             RefreshTacticalCardList();
 
             // 라운드/서플라이/VP(2026-09-04 추가) — ScoreboardPanel.Update()가
