@@ -15,8 +15,7 @@ namespace TmgBoard
         // 어긋날 걱정은 없지만, 그래도 이미 검증된 같은 패턴을 그대로
         // 재사용하는 게 새 프로토콜을 만드는 것보다 간단하다.
 
-        private readonly Dictionary<int, string[]> _tacticalCardsTransferChunksInProgress = new();
-        private readonly Dictionary<int, int> _tacticalCardsTransferReceivedCountInProgress = new();
+        private readonly TextChunkAssembler _tacticalCardsTransferAssembler = new();
 
         private void BroadcastTacticalCardsIfNetworked()
         {
@@ -37,25 +36,11 @@ namespace TmgBoard
         /// 때마다 호출한다(호스트 자신도 포함, 클릭한 쪽도 포함).</summary>
         internal void ReceiveTacticalCardsChunk(int transferId, int chunkIndex, int totalChunks, string chunk)
         {
-            if (!_tacticalCardsTransferChunksInProgress.TryGetValue(transferId, out var chunks))
-            {
-                chunks = new string[totalChunks];
-                _tacticalCardsTransferChunksInProgress[transferId] = chunks;
-                _tacticalCardsTransferReceivedCountInProgress[transferId] = 0;
-            }
-            if (chunks[chunkIndex] == null)
-            {
-                chunks[chunkIndex] = chunk;
-                _tacticalCardsTransferReceivedCountInProgress[transferId]++;
-            }
-            if (_tacticalCardsTransferReceivedCountInProgress[transferId] < totalChunks)
+            string json = _tacticalCardsTransferAssembler.AddChunk(transferId, chunkIndex, totalChunks, chunk);
+            if (json == null)
             {
                 return;
             }
-            _tacticalCardsTransferChunksInProgress.Remove(transferId);
-            _tacticalCardsTransferReceivedCountInProgress.Remove(transferId);
-
-            string json = string.Concat(chunks);
             if (!(MiniJson.Parse(json) is List<object> tree))
             {
                 Debug.LogError("[BoardManager] 택티컬 카드 목록 JSON 파싱 실패");

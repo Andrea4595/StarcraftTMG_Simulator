@@ -43,5 +43,17 @@ namespace TmgBoard
         /// 그러면 다음에 순수 "이어하기"로 들어와도 자동으로 호스팅이
         /// 시작돼버린다).</summary>
         public static bool AutoOpenMultiplayerAfterLoad;
+
+        /// <summary>Entry의 "리플레이" 버튼(2026-09-03 추가)으로 저장 파일을
+        /// 골랐을 때만 true — 같은 LoadGame 화면/PendingData 파이프를 그대로
+        /// 타되, BoardManager.Start()가 ApplyLoadedLiveState 직후 평소처럼
+        /// 라이브 편집 가능한 판을 남기는 대신 BoardManager.Replay.cs의
+        /// EnterReplayMode로 들어가 읽기 전용 재생 모드로 전환한다.
+        /// AutoOpenMultiplayerAfterLoad와 같은 이유로 반드시 다 쓴 뒤
+        /// false로 되돌린다(안 그러면 다음 순수 "이어하기"도 재생 모드로
+        /// 들어가 버린다) — Entry의 LoadGamePicked/LoadGame의 BackRequested
+        /// 양쪽에서도 방어적으로 false 리셋한다(스테일 플래그가 새는 것
+        /// 방지, AutoOpenMultiplayerAfterLoad 리셋과 나란히).</summary>
+        public static bool IsReplayLoad;
     }
 }

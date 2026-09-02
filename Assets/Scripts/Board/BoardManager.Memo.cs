@@ -10,7 +10,7 @@ namespace TmgBoard
     {
         // ── 메모 호버 표시 ───────────────────────────────────────────────
 
-        private void UpdateHoveredUnit()
+        internal void UpdateHoveredUnit()
         {
             var previousHoveredUnit = _hoveredUnit;
             _hoveredBase = TryGetLocalMouse(out var mouseLocal) ? FindBaseAtPoint(mouseLocal) : null;

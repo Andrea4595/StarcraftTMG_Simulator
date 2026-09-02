@@ -13,7 +13,34 @@ namespace TmgBoard
 
         // 멀티플레이어 중 배치된 마커만 등록됨(id는 BoardNetworkSync가
         // 발급) — 삭제/이동 방송이 도착했을 때 어느 GameObject인지 찾는 용도.
-        private readonly Dictionary<int, MarkerBase> _networkedMarkersById = new();
+        // 필드 자체는 BoardManager.cs의 _networkedMarkers(NetworkIdentityRegistry)로
+        // 옮겼다(2026-09-02, 리팩토링 Phase 1) — Load.cs/UndoRedo.cs/
+        // MidGameHandoff.cs도 직접 쓰던 사실상 전역 상태였기 때문.
+
+        /// <summary>markerLayer 아래 실제 마커 GameObject를 전부 순회한다 — 배치
+        /// 미리보기(고스트)는 항상 제외. Save.cs(BuildMarkersTree)/UndoRedo.cs
+        /// (CaptureBoardSnapshot)/MidGameHandoff.cs(BackfillMarkerNetworkIds)가
+        /// 각자 markerLayer.childCount를 훑으며 이 고스트 제외 체크를 복붙하던
+        /// 걸 여기로 모았다(2026-09-02, 리팩토링 Phase 2). UndoRedo.cs의
+        /// ClearLiveBoardState는 대상이 아니다 — 그쪽은 자식을 그 자리에서
+        /// DestroyImmediate하며 역순으로 도는 파괴 전용 루프라 이 정방향
+        /// 읽기 전용 순회와 성격이 달라 그대로 뒀다.</summary>
+        private IEnumerable<GameObject> EnumerateRealMarkers()
+        {
+            if (markerLayer == null)
+            {
+                yield break;
+            }
+            for (int i = 0; i < markerLayer.childCount; i++)
+            {
+                var markerGo = markerLayer.GetChild(i).gameObject;
+                if (_markerPlacementPreview != null && markerGo == _markerPlacementPreview.gameObject)
+                {
+                    continue;
+                }
+                yield return markerGo;
+            }
+        }
 
         // 활성화/점령 마커 상태 순환의 연속 클릭 합치기(Composite, 2026-09-04
         // 추가, 사용자 요청) 용 — 마커별 "그 연속 편집이 시작되기 전" 상태를
@@ -309,7 +336,7 @@ namespace TmgBoard
         /// <summary>매 프레임 폴링(코루틴 없음, 이 프로젝트 관례) —
         /// BoardManager.cs의 Update()가 부른다. 연결 중이면 버튼을 초록
         /// 테두리 + 어두운 아이콘 + 비활성으로, 아니면 평소 모습으로.</summary>
-        private void UpdateMultiplayerButtonState()
+        internal void UpdateMultiplayerButtonState()
         {
             if (_multiplayerButton == null)
             {
@@ -591,7 +618,7 @@ namespace TmgBoard
         /// onClick(StartMarkerPlacement)이 처리하는데, 여기서도 같은 클릭을
         /// "배치 모드 종료"로 취급해버리면 막 시작된 새 배치가 같은 프레임에
         /// 취소돼버린다.</summary>
-        private void HandleMarkerPlacementInput()
+        internal void HandleMarkerPlacementInput()
         {
             // IsOverMissionObjective() 예외: 미션 목표 마커의 3인치 점령 링
             // 전체가 raycastTarget이라 그 위 클릭이 전부 "UI 위"로 잡혀서,
@@ -624,24 +651,14 @@ namespace TmgBoard
             // 상대에게도 같은 항목을 방송하므로(BoardManager.UndoRedo.cs),
             // 마커가 실제로 화면에 나타나기 살짝 전에 스택에 먼저 올라가는
             // 셈이지만 그 시차는 무시할 수준이다.
-            BeginUndoTransaction($"{GetMarkerKindLabel(kind)} 배치");
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-            {
-                if (BoardNetworkSync.Instance == null)
-                {
-                    Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 마커 배치 요청을 못 보냄");
-                    DiscardUndoTransaction();
-                    return;
-                }
-                BoardNetworkSync.Instance.RequestPlaceMarkerServerRpc(kind, point);
-                CommitUndoTransaction();
-                return;
-            }
-
-            var marker = CreateMarkerObject(kind, markerLayer);
-            marker.Center = ClampMarkerToMap(marker, point);
-            WireMarkerEvents(marker, kind);
-            CommitUndoTransaction();
+            PerformNetworkedMutation(this, $"{GetMarkerKindLabel(kind)} 배치", "마커 배치",
+                    () => BoardNetworkSync.Instance.RequestPlaceMarkerServerRpc(kind, point),
+                    () =>
+                    {
+                        var marker = CreateMarkerObject(kind, markerLayer);
+                        marker.Center = ClampMarkerToMap(marker, point);
+                        WireMarkerEvents(marker, kind);
+                    });
         }
 
         private void WireMarkerEvents(MarkerBase marker, string kind)
@@ -678,7 +695,7 @@ namespace TmgBoard
             }
             marker.Center = ClampMarkerToMap(marker, point);
             marker.NetworkMarkerId = id;
-            _networkedMarkersById[id] = marker;
+            _networkedMarkers.Set(id, marker);
             WireMarkerEvents(marker, kind);
         }
 
@@ -687,12 +704,12 @@ namespace TmgBoard
         /// 직접 지우지 않고 이 방송을 거쳐서 지운다).</summary>
         internal void DeleteLocalMarkerVisual(int id)
         {
-            if (!_networkedMarkersById.TryGetValue(id, out var marker))
+            if (!_networkedMarkers.TryGet(id, out var marker))
             {
                 Debug.LogError($"[BoardManager] 삭제할 마커를 못 찾음(id={id})");
                 return;
             }
-            _networkedMarkersById.Remove(id);
+            _networkedMarkers.Remove(id);
             _markerMoveTweens.RemoveAll(t => t.Marker == marker);
             Destroy(marker.gameObject);
         }
@@ -704,7 +721,7 @@ namespace TmgBoard
         /// 실제 타입을 보고 판별한다.</summary>
         internal void SetLocalMarkerState(int id, string state)
         {
-            if (!_networkedMarkersById.TryGetValue(id, out var marker))
+            if (!_networkedMarkers.TryGet(id, out var marker))
             {
                 Debug.LogError($"[BoardManager] 상태를 바꿀 마커를 못 찾음(id={id})");
                 return;
@@ -730,7 +747,7 @@ namespace TmgBoard
         /// 필요 없다), 순간이동 대신 짧게 트윈해서 부드럽게 도착시킨다.</summary>
         internal void AnimateLocalMarkerMove(int id, Vector2 to)
         {
-            if (!_networkedMarkersById.TryGetValue(id, out var marker))
+            if (!_networkedMarkers.TryGet(id, out var marker))
             {
                 Debug.LogError($"[BoardManager] 이동시킬 마커를 못 찾음(id={id})");
                 return;
@@ -748,7 +765,7 @@ namespace TmgBoard
         /// <summary>매 프레임 BoardManager.Update()에서 호출 — 진행 중인 마커
         /// 이동 트윈을 전진시킨다. 삭제된 마커(Destroy됨)는 Unity의 null
         /// 비교 오버로드 덕에 여기서 그냥 걸러진다.</summary>
-        private void UpdateMarkerMoveTweens()
+        internal void UpdateMarkerMoveTweens()
         {
             for (int i = _markerMoveTweens.Count - 1; i >= 0; i--)
             {
@@ -790,7 +807,7 @@ namespace TmgBoard
             piece.transform.SetAsLastSibling();
         }
 
-        private void HandleMarkerDragInput()
+        internal void HandleMarkerDragInput()
         {
             if (Input.GetMouseButtonUp(0))
             {
@@ -822,57 +839,14 @@ namespace TmgBoard
             }
         }
 
-        /// <summary>멀티 연결 중이고 이 마커가 네트워크로 배치된 것이면
-        /// 삭제 방송을 요청하고 true를 반환한다 — 호출자는 이때 로컬
-        /// Destroy를 건너뛰어야 한다(삭제는 이 요청이 되돌아오는 방송,
-        /// BoardNetworkSync.DeleteMarkerRpc → DeleteLocalMarkerVisual을
-        /// 거쳐서 일어난다). 미연결이면 false(호출자가 기존처럼 로컬로
-        /// 바로 처리).</summary>
-        private bool TryRequestNetworkMarkerDelete(MarkerBase marker)
-        {
-            if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
-            {
-                return false;
-            }
-            if (BoardNetworkSync.Instance == null)
-            {
-                Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 마커 삭제 요청을 못 보냄");
-                return true; // 로컬 삭제도 막는다 — 안 그러면 다른 클라이언트와 화면이 어긋난다
-            }
-            BoardNetworkSync.Instance.RequestDeleteMarkerServerRpc(marker.NetworkMarkerId);
-            return true;
-        }
-
-        /// <summary>TryRequestNetworkMarkerDelete와 같은 모양 — 활성화/점령
-        /// 마커의 우클릭 상태 순환(이동→돌격→완료, 색 순환)용.</summary>
-        private bool TryRequestNetworkMarkerStateChange(MarkerBase marker, string state)
-        {
-            if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
-            {
-                return false;
-            }
-            if (BoardNetworkSync.Instance == null)
-            {
-                Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 마커 상태 변경 요청을 못 보냄");
-                return true;
-            }
-            BoardNetworkSync.Instance.RequestSetMarkerStateServerRpc(marker.NetworkMarkerId, state);
-            return true;
-        }
-
         private void OnActivationMarkerRightClicked(MarkerBase piece, bool shiftHeld)
         {
             var marker = (ActivationMarker)piece;
             if (shiftHeld)
             {
-                BeginUndoTransaction($"{DescribeMarkerKind(marker)} 삭제");
-                if (TryRequestNetworkMarkerDelete(marker))
-                {
-                    CommitUndoTransaction();
-                    return;
-                }
-                Destroy(marker.gameObject);
-                CommitUndoTransaction();
+                PerformNetworkedMutation(this, $"{DescribeMarkerKind(marker)} 삭제", "마커 삭제",
+                        () => BoardNetworkSync.Instance.RequestDeleteMarkerServerRpc(marker.NetworkMarkerId),
+                        () => Destroy(marker.gameObject));
                 return;
             }
             // 우클릭은 이동 → 돌격 → 완료를 계속 순환한다. 연속으로
@@ -885,14 +859,10 @@ namespace TmgBoard
             string baseState = composite && _markerStateStreakBase.TryGetValue(marker.GetInstanceID(), out var b) ? b : marker.State;
             _markerStateStreakBase[marker.GetInstanceID()] = baseState;
 
-            BeginUndoTransaction($"{DescribeMarkerKind(marker)} {DescribeActivationState(baseState)} -> {DescribeActivationState(nextState)}", "", compositeKey);
-            if (TryRequestNetworkMarkerStateChange(marker, nextState))
-            {
-                CommitUndoTransaction();
-                return;
-            }
-            marker.SetState(nextState);
-            CommitUndoTransaction();
+            PerformNetworkedMutation(this, $"{DescribeMarkerKind(marker)} {DescribeActivationState(baseState)} -> {DescribeActivationState(nextState)}", "마커 상태 변경",
+                    () => BoardNetworkSync.Instance.RequestSetMarkerStateServerRpc(marker.NetworkMarkerId, nextState),
+                    () => marker.SetState(nextState),
+                    compositeKey: compositeKey);
         }
 
         private void OnCaptureMarkerRightClicked(MarkerBase piece, bool shiftHeld)
@@ -900,14 +870,9 @@ namespace TmgBoard
             var marker = (CaptureMarker)piece;
             if (shiftHeld)
             {
-                BeginUndoTransaction($"{DescribeMarkerKind(marker)} 삭제");
-                if (TryRequestNetworkMarkerDelete(marker))
-                {
-                    CommitUndoTransaction();
-                    return;
-                }
-                Destroy(marker.gameObject);
-                CommitUndoTransaction();
+                PerformNetworkedMutation(this, $"{DescribeMarkerKind(marker)} 삭제", "마커 삭제",
+                        () => BoardNetworkSync.Instance.RequestDeleteMarkerServerRpc(marker.NetworkMarkerId),
+                        () => Destroy(marker.gameObject));
                 return;
             }
             // 우클릭은 흰색 → 빨간색 → 파란색을 계속 순환한다. 색 순환에
@@ -921,27 +886,18 @@ namespace TmgBoard
             string baseState = composite && _markerStateStreakBase.TryGetValue(marker.GetInstanceID(), out var b) ? b : marker.ColorState;
             _markerStateStreakBase[marker.GetInstanceID()] = baseState;
 
-            BeginUndoTransaction($"{DescribeMarkerKind(marker)} {DescribeCaptureColorState(baseState)} -> {DescribeCaptureColorState(nextState)}", "", compositeKey);
-            if (TryRequestNetworkMarkerStateChange(marker, nextState))
-            {
-                CommitUndoTransaction();
-                return;
-            }
-            marker.SetColorState(nextState);
-            CommitUndoTransaction();
+            PerformNetworkedMutation(this, $"{DescribeMarkerKind(marker)} {DescribeCaptureColorState(baseState)} -> {DescribeCaptureColorState(nextState)}", "마커 상태 변경",
+                    () => BoardNetworkSync.Instance.RequestSetMarkerStateServerRpc(marker.NetworkMarkerId, nextState),
+                    () => marker.SetColorState(nextState),
+                    compositeKey: compositeKey);
         }
 
         private void OnIconMarkerRightClicked(MarkerBase piece, bool shiftHeld)
         {
             // 순환 없이 우클릭 한 번으로 바로 삭제(shift 여부는 상관없다).
-            BeginUndoTransaction($"{DescribeMarkerKind(piece)} 삭제");
-            if (TryRequestNetworkMarkerDelete(piece))
-            {
-                CommitUndoTransaction();
-                return;
-            }
-            Destroy(piece.gameObject);
-            CommitUndoTransaction();
+            PerformNetworkedMutation(this, $"{DescribeMarkerKind(piece)} 삭제", "마커 삭제",
+                    () => BoardNetworkSync.Instance.RequestDeleteMarkerServerRpc(piece.NetworkMarkerId),
+                    () => Destroy(piece.gameObject));
         }
 
     }

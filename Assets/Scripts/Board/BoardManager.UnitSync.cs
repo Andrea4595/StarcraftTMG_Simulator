@@ -20,13 +20,12 @@ namespace TmgBoard
         // 멀티플레이어 중 방송된 유닛만 등록됨(id는 첫 방송 시 이 클라이언트가
         // 스스로 발급 — BoardNetworkSync.RequestBroadcastUnit) — 재이동 방송이
         // 왔을 때 "새 유닛"이 아니라 "이 유닛 갱신"임을 알아보는 용도.
-        private readonly Dictionary<int, Unit> _networkedUnitsById = new();
+        // 필드 자체는 BoardManager.cs의 _networkedUnits(NetworkIdentityRegistry)로
+        // 옮겼다(2026-09-02, 리팩토링 Phase 1) — Range.cs/UndoRedo.cs/
+        // MidGameHandoff.cs도 직접 쓰던 사실상 전역 상태였기 때문.
 
-        // transferId별로 도착한 유닛 JSON 조각을 모은다(로스터 임포트와 같은
-        // 패턴 — BoardManager.Roster.cs의 _rosterTransfersInProgress 참고,
-        // 다만 여긴 team이 필요 없어 훨씬 단순하다).
-        private readonly Dictionary<int, string[]> _unitTransferChunksInProgress = new();
-        private readonly Dictionary<int, int> _unitTransferReceivedCountInProgress = new();
+        // transferId별로 도착한 유닛 JSON 조각을 모은다.
+        private readonly TextChunkAssembler _unitTransferAssembler = new();
 
         // 이미 아는 유닛의 모델을 갱신할 때, 순간이동 대신 부드럽게 그
         // 자리로 움직이게 하는 진행 중 트윈 목록 — 마커 이동(BoardManager.
@@ -45,7 +44,7 @@ namespace TmgBoard
 
         /// <summary>매 프레임 BoardManager.Update()에서 호출 — 진행 중인 모델
         /// 이동 트윈을 전진시킨다.</summary>
-        private void UpdatePieceMoveTweens()
+        internal void UpdatePieceMoveTweens()
         {
             for (int i = _pieceMoveTweens.Count - 1; i >= 0; i--)
             {
@@ -106,7 +105,7 @@ namespace TmgBoard
             // 경우 ApplyUnitTree가 갱신 분기를 타서 방금 만든 모델을 도로
             // 지웠다가 같은 내용으로 다시 짓는 낭비는 있지만, 최소한 중복
             // 생성은 아니다).
-            _networkedUnitsById[unit.NetworkUnitId] = unit;
+            _networkedUnits.Set(unit.NetworkUnitId, unit);
             string unitJson = MiniJson.Write(BuildUnitTree(unit));
             BoardNetworkSync.Instance.RequestBroadcastUnit(unitJson);
         }
@@ -136,11 +135,11 @@ namespace TmgBoard
         /// <summary>BoardNetworkSync.DeleteUnitRpc가 방송을 받았을 때
         /// 호출한다(요청한 쪽 자신도 루프백으로 포함 — 이미 로컬에서 직접
         /// 지운 뒤라 여기선 대부분 모델이 이미 비어있는 상태라 사실상
-        /// 아무 일도 안 한다, _networkedUnitsById 정리만 남아있음). 모르는
+        /// 아무 일도 안 한다, _networkedUnits 정리만 남아있음). 모르는
         /// id면(이미 정리됐거나 애초에 몰랐던 id) 조용히 무시한다.</summary>
         internal void DeleteLocalUnit(int networkUnitId)
         {
-            if (!_networkedUnitsById.TryGetValue(networkUnitId, out var unit))
+            if (!_networkedUnits.TryGet(networkUnitId, out var unit))
             {
                 return;
             }
@@ -152,32 +151,18 @@ namespace TmgBoard
             }
             unit.Models.Clear();
             _unitRanges.Remove(unit);
-            _networkedUnitsById.Remove(networkUnitId);
+            _networkedUnits.Remove(networkUnitId);
         }
 
         /// <summary>BoardNetworkSync가 유닛 JSON 조각을 방송할 때마다
         /// 호출한다(호스트 자신도 포함, 배치/이동을 요청한 쪽도 포함).</summary>
         internal void ReceiveUnitChunk(int transferId, int chunkIndex, int totalChunks, string chunk)
         {
-            if (!_unitTransferChunksInProgress.TryGetValue(transferId, out var chunks))
-            {
-                chunks = new string[totalChunks];
-                _unitTransferChunksInProgress[transferId] = chunks;
-                _unitTransferReceivedCountInProgress[transferId] = 0;
-            }
-            if (chunks[chunkIndex] == null)
-            {
-                chunks[chunkIndex] = chunk;
-                _unitTransferReceivedCountInProgress[transferId]++;
-            }
-            if (_unitTransferReceivedCountInProgress[transferId] < totalChunks)
+            string unitJson = _unitTransferAssembler.AddChunk(transferId, chunkIndex, totalChunks, chunk);
+            if (unitJson == null)
             {
                 return;
             }
-            _unitTransferChunksInProgress.Remove(transferId);
-            _unitTransferReceivedCountInProgress.Remove(transferId);
-
-            string unitJson = string.Concat(chunks);
             if (!(MiniJson.Parse(unitJson) is Dictionary<string, object> tree))
             {
                 Debug.LogError("[BoardManager] 유닛 JSON 파싱 실패");
@@ -192,7 +177,7 @@ namespace TmgBoard
         private void ApplyUnitTree(Dictionary<string, object> u)
         {
             int networkUnitId = GameSaveIO.GetInt(u, "network_unit_id", -1);
-            if (networkUnitId >= 0 && _networkedUnitsById.TryGetValue(networkUnitId, out var existingUnit))
+            if (networkUnitId >= 0 && _networkedUnits.TryGet(networkUnitId, out var existingUnit))
             {
                 UpdateUnitModelsFromTree(existingUnit, u);
                 return;
@@ -263,7 +248,7 @@ namespace TmgBoard
             }
             if (unit.NetworkUnitId >= 0)
             {
-                _networkedUnitsById[unit.NetworkUnitId] = unit;
+                _networkedUnits.Set(unit.NetworkUnitId, unit);
             }
 
             PopulateModelsFromTree(unit, u);

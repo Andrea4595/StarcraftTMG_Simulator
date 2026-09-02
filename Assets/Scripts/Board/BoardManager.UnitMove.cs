@@ -448,7 +448,7 @@ namespace TmgBoard
             EndUnitMove();
         }
 
-        private void CancelUnitMove()
+        internal void CancelUnitMove()
         {
             if (_unitMoveIsDeployment)
             {

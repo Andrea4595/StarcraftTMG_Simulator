@@ -587,7 +587,7 @@ namespace TmgBoard
             ShowDeploymentBand(def);
         }
 
-        private void HandlePendingDeploymentInput()
+        internal void HandlePendingDeploymentInput()
         {
             if (Input.GetMouseButtonDown(1) && !IsPointerOverUi())
             {

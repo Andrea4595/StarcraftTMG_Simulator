@@ -55,6 +55,26 @@ namespace TmgBoard
         // 단순하다).
         private const int TextChunkSize = 512;
 
+        /// <summary>큰 문자열을 TextChunkSize 단위로 쪼개 sendChunk 콜백을 그
+        /// 개수만큼 부른다 — 8개 전송 파이프라인(로스터/유닛/예비대/택티컬카드/
+        /// 카드프렙/다이스상태/undo/게임도중합류)이 전부 이 쪼개기 자체는
+        /// 완전히 같은 모양이라 하나로 모았다(2026-09-03). transferId는
+        /// 여기서 새로 발급해 매 조각마다 콜백에 같이 넘긴다 — 호출부는 그
+        /// 값을 각자의 ...ChunkServerRpc 호출에 그대로 실어 보내면 된다(RPC
+        /// 시그니처는 그대로라 각 호출부 이후 로직/받는 쪽은 전혀 안
+        /// 바뀐다).</summary>
+        private static void SendChunked(string payload, System.Action<int, int, int, string> sendChunk)
+        {
+            int transferId = System.Guid.NewGuid().GetHashCode();
+            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(payload.Length / (float)TextChunkSize));
+            for (int i = 0; i < totalChunks; i++)
+            {
+                int start = i * TextChunkSize;
+                int length = Mathf.Min(TextChunkSize, payload.Length - start);
+                sendChunk(transferId, i, totalChunks, payload.Substring(start, length));
+            }
+        }
+
         public override void OnNetworkSpawn()
         {
             Instance = this;
@@ -173,15 +193,8 @@ namespace TmgBoard
             // transferId를 호스트에게 받아오려면 그 자체가 또 하나의 왕복
             // RPC라 순서가 더 복잡해진다. 2인용 도구에서 충돌 가능성은
             // 무시할 수준.
-            int transferId = System.Guid.NewGuid().GetHashCode();
-            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(rosterJson.Length / (float)TextChunkSize));
-            for (int i = 0; i < totalChunks; i++)
-            {
-                int start = i * TextChunkSize;
-                int length = Mathf.Min(TextChunkSize, rosterJson.Length - start);
-                string chunk = rosterJson.Substring(start, length);
-                RequestImportRosterChunkServerRpc(transferId, team, i, totalChunks, chunk);
-            }
+            SendChunked(rosterJson, (transferId, i, totalChunks, chunk) =>
+                    RequestImportRosterChunkServerRpc(transferId, team, i, totalChunks, chunk));
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -211,15 +224,8 @@ namespace TmgBoard
         /// 참고).</summary>
         public void RequestBroadcastUnit(string unitJson)
         {
-            int transferId = System.Guid.NewGuid().GetHashCode();
-            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(unitJson.Length / (float)TextChunkSize));
-            for (int i = 0; i < totalChunks; i++)
-            {
-                int start = i * TextChunkSize;
-                int length = Mathf.Min(TextChunkSize, unitJson.Length - start);
-                string chunk = unitJson.Substring(start, length);
-                RequestBroadcastUnitChunkServerRpc(transferId, i, totalChunks, chunk);
-            }
+            SendChunked(unitJson, (transferId, i, totalChunks, chunk) =>
+                    RequestBroadcastUnitChunkServerRpc(transferId, i, totalChunks, chunk));
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -271,15 +277,8 @@ namespace TmgBoard
         /// 청크 단위).</summary>
         public void RequestBroadcastPendingUnits(string pendingUnitsJson)
         {
-            int transferId = System.Guid.NewGuid().GetHashCode();
-            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(pendingUnitsJson.Length / (float)TextChunkSize));
-            for (int i = 0; i < totalChunks; i++)
-            {
-                int start = i * TextChunkSize;
-                int length = Mathf.Min(TextChunkSize, pendingUnitsJson.Length - start);
-                string chunk = pendingUnitsJson.Substring(start, length);
-                RequestBroadcastPendingUnitsChunkServerRpc(transferId, i, totalChunks, chunk);
-            }
+            SendChunked(pendingUnitsJson, (transferId, i, totalChunks, chunk) =>
+                    RequestBroadcastPendingUnitsChunkServerRpc(transferId, i, totalChunks, chunk));
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -306,15 +305,8 @@ namespace TmgBoard
 
         public void RequestBroadcastTacticalCards(string tacticalCardsJson)
         {
-            int transferId = System.Guid.NewGuid().GetHashCode();
-            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(tacticalCardsJson.Length / (float)TextChunkSize));
-            for (int i = 0; i < totalChunks; i++)
-            {
-                int start = i * TextChunkSize;
-                int length = Mathf.Min(TextChunkSize, tacticalCardsJson.Length - start);
-                string chunk = tacticalCardsJson.Substring(start, length);
-                RequestBroadcastTacticalCardsChunkServerRpc(transferId, i, totalChunks, chunk);
-            }
+            SendChunked(tacticalCardsJson, (transferId, i, totalChunks, chunk) =>
+                    RequestBroadcastTacticalCardsChunkServerRpc(transferId, i, totalChunks, chunk));
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -407,12 +399,7 @@ namespace TmgBoard
         // 미션/배치 프리셋 원본 텍스트는 상대 컴퓨터에 그 파일이 없을 수
         // 있으므로(로스터/유닛과 같은 이유) 청크로 쪼개 원문 그대로 보낸다.
 
-        private class TextChunkBuffer
-        {
-            public string[] Parts;
-            public int ReceivedCount;
-        }
-        private readonly Dictionary<int, TextChunkBuffer> _cardPrepChunkBuffers = new();
+        private readonly TextChunkAssembler _cardPrepAssembler = new();
 
         /// <summary>CardPrep에서 "준비 완료"를 누르면 부른다 — wrapperJson은
         /// CardPrepController가 MiniJson.Write로 만든, 배치 2장+미션 2장의
@@ -424,15 +411,8 @@ namespace TmgBoard
         /// 자기 카드로 덮어써지는 버그가 있었다).</summary>
         public void RequestBroadcastCardPrep(string team, string wrapperJson)
         {
-            int transferId = System.Guid.NewGuid().GetHashCode();
-            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(wrapperJson.Length / (float)TextChunkSize));
-            for (int i = 0; i < totalChunks; i++)
-            {
-                int start = i * TextChunkSize;
-                int length = Mathf.Min(TextChunkSize, wrapperJson.Length - start);
-                string chunk = wrapperJson.Substring(start, length);
-                RequestBroadcastCardPrepChunkServerRpc(transferId, team, i, totalChunks, chunk);
-            }
+            SendChunked(wrapperJson, (transferId, i, totalChunks, chunk) =>
+                    RequestBroadcastCardPrepChunkServerRpc(transferId, team, i, totalChunks, chunk));
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -453,22 +433,11 @@ namespace TmgBoard
         [Rpc(SendTo.ClientsAndHost)]
         private void BroadcastCardPrepChunkRpc(int transferId, string team, int chunkIndex, int totalChunks, string chunk)
         {
-            if (!_cardPrepChunkBuffers.TryGetValue(transferId, out var buf))
-            {
-                buf = new TextChunkBuffer { Parts = new string[totalChunks] };
-                _cardPrepChunkBuffers[transferId] = buf;
-            }
-            if (buf.Parts[chunkIndex] == null)
-            {
-                buf.ReceivedCount++;
-            }
-            buf.Parts[chunkIndex] = chunk;
-            if (buf.ReceivedCount < totalChunks)
+            string fullJson = _cardPrepAssembler.AddChunk(transferId, chunkIndex, totalChunks, chunk);
+            if (fullJson == null)
             {
                 return;
             }
-            _cardPrepChunkBuffers.Remove(transferId);
-            string fullJson = string.Concat(buf.Parts);
 
             if (!DraftState.ApplyRemoteCardPrepJson(team, fullJson))
             {
@@ -622,15 +591,8 @@ namespace TmgBoard
 
         public void RequestBroadcastDiceState(string stateJson)
         {
-            int transferId = System.Guid.NewGuid().GetHashCode();
-            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(stateJson.Length / (float)TextChunkSize));
-            for (int i = 0; i < totalChunks; i++)
-            {
-                int start = i * TextChunkSize;
-                int length = Mathf.Min(TextChunkSize, stateJson.Length - start);
-                string chunk = stateJson.Substring(start, length);
-                RequestBroadcastDiceStateChunkServerRpc(transferId, i, totalChunks, chunk);
-            }
+            SendChunked(stateJson, (transferId, i, totalChunks, chunk) =>
+                    RequestBroadcastDiceStateChunkServerRpc(transferId, i, totalChunks, chunk));
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -639,27 +601,16 @@ namespace TmgBoard
             BroadcastDiceStateChunkRpc(transferId, chunkIndex, totalChunks, chunk);
         }
 
-        private readonly Dictionary<int, TextChunkBuffer> _diceStateChunkBuffers = new();
+        private readonly TextChunkAssembler _diceStateAssembler = new();
 
         [Rpc(SendTo.ClientsAndHost)]
         private void BroadcastDiceStateChunkRpc(int transferId, int chunkIndex, int totalChunks, string chunk)
         {
-            if (!_diceStateChunkBuffers.TryGetValue(transferId, out var buf))
-            {
-                buf = new TextChunkBuffer { Parts = new string[totalChunks] };
-                _diceStateChunkBuffers[transferId] = buf;
-            }
-            if (buf.Parts[chunkIndex] == null)
-            {
-                buf.ReceivedCount++;
-            }
-            buf.Parts[chunkIndex] = chunk;
-            if (buf.ReceivedCount < totalChunks)
+            string fullJson = _diceStateAssembler.AddChunk(transferId, chunkIndex, totalChunks, chunk);
+            if (fullJson == null)
             {
                 return;
             }
-            _diceStateChunkBuffers.Remove(transferId);
-            string fullJson = string.Concat(buf.Parts);
 
             // 닫혀 있을 수도 있으므로(방송이 열기 방송보다 먼저 처리되는
             // 극단적 순서 등) Include — 위 SetDiceRpc 주석 참고.
@@ -895,15 +846,8 @@ namespace TmgBoard
         public void RequestBroadcastUndoPush(string label, string team, string compositeKey, string snapshotJson)
         {
             ulong senderId = NetworkManager.Singleton.LocalClientId;
-            int transferId = System.Guid.NewGuid().GetHashCode();
-            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(snapshotJson.Length / (float)TextChunkSize));
-            for (int i = 0; i < totalChunks; i++)
-            {
-                int start = i * TextChunkSize;
-                int length = Mathf.Min(TextChunkSize, snapshotJson.Length - start);
-                string chunk = snapshotJson.Substring(start, length);
-                RequestBroadcastUndoPushChunkServerRpc(transferId, senderId, label, team, compositeKey, i, totalChunks, chunk);
-            }
+            SendChunked(snapshotJson, (transferId, i, totalChunks, chunk) =>
+                    RequestBroadcastUndoPushChunkServerRpc(transferId, senderId, label, team, compositeKey, i, totalChunks, chunk));
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -912,33 +856,25 @@ namespace TmgBoard
             BroadcastUndoPushChunkRpc(transferId, senderId, label, team, compositeKey, chunkIndex, totalChunks, chunk);
         }
 
-        private readonly Dictionary<int, TextChunkBuffer> _undoPushChunkBuffers = new();
+        private readonly TextChunkAssembler _undoPushAssembler = new();
 
         [Rpc(SendTo.ClientsAndHost)]
         private void BroadcastUndoPushChunkRpc(int transferId, ulong senderId, string label, string team, string compositeKey, int chunkIndex, int totalChunks, string chunk)
         {
-            if (!_undoPushChunkBuffers.TryGetValue(transferId, out var buf))
-            {
-                buf = new TextChunkBuffer { Parts = new string[totalChunks] };
-                _undoPushChunkBuffers[transferId] = buf;
-            }
-            if (buf.Parts[chunkIndex] == null)
-            {
-                buf.ReceivedCount++;
-            }
-            buf.Parts[chunkIndex] = chunk;
-            if (buf.ReceivedCount < totalChunks)
+            // 자기 메아리라도 조각을 계속 흘려보내야 어셈블러가 이 transferId를
+            // 정상적으로 완료 처리하고 정리한다 — 완료 여부 확인(fullJson이
+            // null인지)까지는 항상 하고, 실제 사용만 메아리일 때 건너뛴다.
+            string fullJson = _undoPushAssembler.AddChunk(transferId, chunkIndex, totalChunks, chunk);
+            if (fullJson == null)
             {
                 return;
             }
-            _undoPushChunkBuffers.Remove(transferId);
 
             if (senderId == NetworkManager.Singleton.LocalClientId)
             {
                 return; // 내가 커밋한 항목의 메아리 — 이미 로컬에서 직접 스택에 쌓았다.
             }
 
-            string fullJson = string.Concat(buf.Parts);
             var board = Object.FindFirstObjectByType<BoardManager>();
             if (board == null)
             {
@@ -1045,7 +981,7 @@ namespace TmgBoard
             SceneManager.LoadScene(GameConstants.CardPrepSceneName);
         }
 
-        private readonly Dictionary<int, TextChunkBuffer> _midGameStateChunkBuffers = new();
+        private readonly TextChunkAssembler _midGameStateAssembler = new();
 
         /// <summary>BoardManager.BroadcastFullStateForMidGameJoin이 부른다 —
         /// fullStateJson은 BoardManager.BuildFullStateTree()(저장 파일과
@@ -1054,15 +990,8 @@ namespace TmgBoard
         /// 확인함).</summary>
         public void RequestBroadcastMidGameState(string fullStateJson)
         {
-            int transferId = System.Guid.NewGuid().GetHashCode();
-            int totalChunks = Mathf.Max(1, Mathf.CeilToInt(fullStateJson.Length / (float)TextChunkSize));
-            for (int i = 0; i < totalChunks; i++)
-            {
-                int start = i * TextChunkSize;
-                int length = Mathf.Min(TextChunkSize, fullStateJson.Length - start);
-                string chunk = fullStateJson.Substring(start, length);
-                RequestBroadcastMidGameStateChunkServerRpc(transferId, i, totalChunks, chunk);
-            }
+            SendChunked(fullStateJson, (transferId, i, totalChunks, chunk) =>
+                    RequestBroadcastMidGameStateChunkServerRpc(transferId, i, totalChunks, chunk));
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -1081,28 +1010,18 @@ namespace TmgBoard
         [Rpc(SendTo.ClientsAndHost)]
         private void BroadcastMidGameStateChunkRpc(int transferId, int chunkIndex, int totalChunks, string chunk)
         {
-            if (!_midGameStateChunkBuffers.TryGetValue(transferId, out var buf))
-            {
-                buf = new TextChunkBuffer { Parts = new string[totalChunks] };
-                _midGameStateChunkBuffers[transferId] = buf;
-            }
-            if (buf.Parts[chunkIndex] == null)
-            {
-                buf.ReceivedCount++;
-            }
-            buf.Parts[chunkIndex] = chunk;
-            if (buf.ReceivedCount < totalChunks)
+            string fullJson = _midGameStateAssembler.AddChunk(transferId, chunkIndex, totalChunks, chunk);
+            if (fullJson == null)
             {
                 return;
             }
-            _midGameStateChunkBuffers.Remove(transferId);
 
             if (NetworkManager.Singleton.IsServer)
             {
                 return; // 호스트 자신의 루프백 — 이미 이 상태 그대로다.
             }
 
-            if (!(MiniJson.Parse(string.Concat(buf.Parts)) is Dictionary<string, object> wrapper))
+            if (!(MiniJson.Parse(fullJson) is Dictionary<string, object> wrapper))
             {
                 Debug.LogError("[BoardNetworkSync] 게임 도중 상태 JSON 파싱 실패");
                 return;

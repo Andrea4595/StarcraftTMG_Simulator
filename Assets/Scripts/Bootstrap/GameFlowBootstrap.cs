@@ -264,6 +264,17 @@ public static class GameFlowBootstrap
         entry.LoadGamePicked += () =>
         {
             GameLoadRequest.AutoOpenMultiplayerAfterLoad = false;
+            GameLoadRequest.IsReplayLoad = false;
+            SceneManager.LoadScene(LoadGameSceneName);
+        };
+        // 구석의 "리플레이" 버튼(2026-09-03 추가, 예전 "이어하기" 자리) —
+        // 같은 LoadGame 화면/PendingData 파이프를 그대로 타되, 고른 저장
+        // 파일을 BoardManager.Start()가 라이브 편집 대신 읽기 전용 재생
+        // 모드로 연다(GameLoadRequest.IsReplayLoad 참고).
+        entry.ReplayPicked += () =>
+        {
+            GameLoadRequest.AutoOpenMultiplayerAfterLoad = false;
+            GameLoadRequest.IsReplayLoad = true;
             SceneManager.LoadScene(LoadGameSceneName);
         };
         entry.MapAuthoringPicked += () => SceneManager.LoadScene(MapAuthoringSceneName);
@@ -304,6 +315,7 @@ public static class GameFlowBootstrap
         loadGame.BackRequested += () =>
         {
             GameLoadRequest.AutoOpenMultiplayerAfterLoad = false;
+            GameLoadRequest.IsReplayLoad = false;
             SceneManager.LoadScene(EntrySceneName);
         };
     }
@@ -587,6 +599,11 @@ public static class GameFlowBootstrap
         board.ConfigureExit(exitConfirmDialog);
         board.ConfigureSave(saveNameDialog);
         board.ConfigureEmote(emotePickerPanel);
+        // 리플레이 모드(2026-09-03 추가) — GameLoadRequest.IsReplayLoad일 때만
+        // Start()에서 실제로 쓰인다(라캐스터를 꺼서 이 캔버스 전체를 읽기
+        // 전용으로 만듦). 항상 넘겨두고 판단은 BoardManager 쪽이 한다 — 다른
+        // Configure* 호출들과 같은 패턴.
+        board.ConfigureReplay(canvas.GetComponent<GraphicRaycaster>());
         scoreboard.SetBoardManager(board);
         scoreboard.SetMissionInfoDialog(missionInfoDialog);
 

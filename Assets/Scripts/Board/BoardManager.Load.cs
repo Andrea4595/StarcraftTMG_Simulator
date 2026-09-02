@@ -104,7 +104,7 @@ namespace TmgBoard
                     if (networkMarkerId >= 0)
                     {
                         marker.NetworkMarkerId = networkMarkerId;
-                        _networkedMarkersById[networkMarkerId] = marker;
+                        _networkedMarkers.Set(networkMarkerId, marker);
                     }
                 }
             }
@@ -151,8 +151,10 @@ namespace TmgBoard
         }
 
         /// <summary>예비대 정의 하나를 트리에서 만든다 — 게임 불러오기와
-        /// 예비대 목록 동기화(BoardManager.PendingUnitSync.cs) 둘 다 쓴다.</summary>
-        private static PendingUnitDef ParsePendingUnitDefTree(Dictionary<string, object> p)
+        /// 예비대 목록 동기화(BoardManager.PendingUnitSync.cs) 둘 다 쓴다.
+        /// 2026-09-02부터 internal — UndoRedoService.ParseSnapshotTree(되돌리기
+        /// 스냅샷 JSON 파싱)도 같은 트리 모양을 재사용한다.</summary>
+        internal static PendingUnitDef ParsePendingUnitDefTree(Dictionary<string, object> p)
         {
             var damages = new List<int>();
             foreach (var d in GameSaveIO.GetList(p, "damages"))
@@ -192,8 +194,9 @@ namespace TmgBoard
 
         /// <summary>택티컬 카드 정의 하나를 트리에서 만든다 — 게임 불러오기와
         /// 택티컬 카드 목록 동기화(BoardManager.TacticalCardSync.cs) 둘 다
-        /// 쓴다(2026-09-02, ParsePendingUnitDefTree와 같은 이유로 추출).</summary>
-        private static TacticalCardDef ParseTacticalCardDefTree(Dictionary<string, object> c)
+        /// 쓴다(2026-09-02, ParsePendingUnitDefTree와 같은 이유로 추출).
+        /// internal인 이유도 ParsePendingUnitDefTree와 동일(UndoRedoService).</summary>
+        internal static TacticalCardDef ParseTacticalCardDefTree(Dictionary<string, object> c)
         {
             var abilities = new List<RosterAbilityEntry>();
             foreach (var rawAbility in GameSaveIO.GetList(c, "abilities"))

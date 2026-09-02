@@ -287,17 +287,8 @@ namespace TmgBoard
         private List<object> BuildMarkersTree()
         {
             var list = new List<object>();
-            if (markerLayer == null)
+            foreach (var markerGo in EnumerateRealMarkers())
             {
-                return list;
-            }
-            for (int i = 0; i < markerLayer.childCount; i++)
-            {
-                var markerGo = markerLayer.GetChild(i).gameObject;
-                if (_markerPlacementPreview != null && markerGo == _markerPlacementPreview.gameObject)
-                {
-                    continue;
-                }
                 // network_marker_id는 2026-09-02 추가 — 파일 저장 자체엔 필요
                 // 없지만(솔로 불러오기는 새로 놓는 것과 동일), 게임 도중 멀티
                 // 시작(BoardManager.MidGameHandoff.cs)이 이 값을 몰라야 하는

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using Unity.Netcode;
 using UnityEngine;
 
 namespace TmgBoard
@@ -76,21 +75,10 @@ namespace TmgBoard
             string baseState = composite && _missionObjectiveStreakBase.TryGetValue(piece.Number, out var b) ? b : piece.RingColorState;
             _missionObjectiveStreakBase[piece.Number] = baseState;
 
-            BeginUndoTransaction($"미션 마커 {piece.Number} {DescribeRingColorState(baseState)} -> {DescribeRingColorState(nextState)}", "", compositeKey);
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-            {
-                if (BoardNetworkSync.Instance == null)
-                {
-                    Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 미션 마커 색 변경 요청을 못 보냄");
-                    DiscardUndoTransaction();
-                    return;
-                }
-                BoardNetworkSync.Instance.RequestSetMissionObjectiveColorServerRpc(piece.Number, nextState);
-                CommitUndoTransaction();
-                return;
-            }
-            piece.CycleRingColor();
-            CommitUndoTransaction();
+            PerformNetworkedMutation(this, $"미션 마커 {piece.Number} {DescribeRingColorState(baseState)} -> {DescribeRingColorState(nextState)}", "미션 마커 색 변경",
+                    () => BoardNetworkSync.Instance.RequestSetMissionObjectiveColorServerRpc(piece.Number, nextState),
+                    () => piece.CycleRingColor(),
+                    compositeKey: compositeKey);
         }
 
         /// <summary>RingColorState 원시값("inactive"/"white"/"red"/"blue")을

@@ -65,7 +65,7 @@ namespace TmgBoard
         /// 있어서, ApplyUnitTree가 "모르는 id"로 착각해 완전히 새로운 중복
         /// 유닛을 만들어버린다(이 프로젝트가 이미 겪었던 것과 같은 종류의
         /// 중복 버그). 그래서 여기서 미리 모든 유닛에 id를 배정하고
-        /// _networkedUnitsById에도 등록해, 트리에 실려 나가는 network_unit_id를
+        /// _networkedUnits에도 등록해, 트리에 실려 나가는 network_unit_id를
         /// 상대가 그대로 받아 자기 쪽에도 똑같이 등록하게 한다(CreateUnitFromTree
         /// 참고 — network_unit_id&gt;=0이면 이미 자동으로 등록해준다).</summary>
         private void BackfillUnitNetworkIds()
@@ -89,12 +89,12 @@ namespace TmgBoard
                     // (부호 비트 제거 이유도 동일 — -1은 "미배정" 전용).
                     unit.NetworkUnitId = System.Guid.NewGuid().GetHashCode() & 0x7FFFFFFF;
                 }
-                _networkedUnitsById[unit.NetworkUnitId] = unit;
+                _networkedUnits.Set(unit.NetworkUnitId, unit);
             }
         }
 
         /// <summary>아직 한 번도 네트워크로 다뤄진 적 없는(NetworkMarkerId
-        /// 기본값 -1인) 마커에 새 id를 발급해 채우고 _networkedMarkersById에
+        /// 기본값 -1인) 마커에 새 id를 발급해 채우고 _networkedMarkers에
         /// 등록한다 — 실제 배치 방송(RequestPlaceMarkerServerRpc)과 달리
         /// 새로 만들지도, 상대에게 "놓였다"고 알리지도 않는다(이미 두
         /// 화면 모두에 이 마커가 존재하게 될 것이므로 — 상대는 이번 전체
@@ -106,13 +106,8 @@ namespace TmgBoard
             {
                 return;
             }
-            for (int i = 0; i < markerLayer.childCount; i++)
+            foreach (var markerGo in EnumerateRealMarkers())
             {
-                var markerGo = markerLayer.GetChild(i).gameObject;
-                if (_markerPlacementPreview != null && markerGo == _markerPlacementPreview.gameObject)
-                {
-                    continue;
-                }
                 var marker = markerGo.GetComponent<MarkerBase>();
                 if (marker == null || marker.NetworkMarkerId >= 0)
                 {
@@ -120,7 +115,7 @@ namespace TmgBoard
                 }
                 int id = BoardNetworkSync.Instance.AllocateNextMarkerId();
                 marker.NetworkMarkerId = id;
-                _networkedMarkersById[id] = marker;
+                _networkedMarkers.Set(id, marker);
             }
         }
     }

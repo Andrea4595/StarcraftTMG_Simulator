@@ -17,10 +17,12 @@ namespace TmgBoard
     /// (사용자가 처음 이 화면 단계에서 선택하게 했더니 "이상한 과정"이라고
     /// 지적, 2026-09-04 — 참가하는 쪽엔 "이어하기"가 아예 의미가 없어서
     /// 호스트/참가 갈림길보다 먼저 물어보면 안 맞았다). 화면 오른쪽 아래
-    /// 구석의 작은 "이어하기"/"배치 프리셋 제작"/"미션 프리셋 제작" 버튼
-    /// 세 개는 그대로 남겨뒀다(사용자 지정 — 기존 지름길을 없앨 필요는
-    /// 없다는 판단). 실제 씬 전환은 이 컴포넌트를 만든 쪽(GameFlowBootstrap)
-    /// 이 담당한다 — 이 컴포넌트는 클릭 이벤트만 올린다.</summary>
+    /// 구석의 작은 "리플레이"/"배치 프리셋 제작"/"미션 프리셋 제작" 버튼
+    /// 세 개가 있다 — 원래 "이어하기"였던 자리를 2026-09-03에 "리플레이"로
+    /// 바꿨다(순수 이어하기는 "혼자 하기" 선택 창 안에 이미 있으므로 구석
+    /// 자리는 굳이 중복 지름길을 안 두고 리플레이 진입점으로 넘겼다). 실제
+    /// 씬 전환은 이 컴포넌트를 만든 쪽(GameFlowBootstrap)이 담당한다 — 이
+    /// 컴포넌트는 클릭 이벤트만 올린다.</summary>
     [RequireComponent(typeof(RectTransform))]
     public class EntryController : MonoBehaviour
     {
@@ -29,6 +31,11 @@ namespace TmgBoard
         public event Action LoadGamePicked;
         public event Action MapAuthoringPicked;
         public event Action MissionAuthoringPicked;
+        // 2026-09-03 추가 — 오른쪽 아래 구석의 "이어하기" 자리를 대체한다
+        // (LoadGamePicked와 똑같이 LoadGame 화면을 거치지만, 고른 저장
+        // 파일을 이어하기가 아니라 읽기 전용 리플레이로 연다 —
+        // GameLoadRequest.IsReplayLoad로 구분, GameFlowBootstrap 참고).
+        public event Action ReplayPicked;
 
         private const float PrimaryButtonSize = 260f;
         private const float PrimaryButtonGap = 24f;
@@ -96,7 +103,7 @@ namespace TmgBoard
             cornerFitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             cornerFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            CreateCornerButton(cornerRect, "이어하기", () => LoadGamePicked?.Invoke());
+            CreateCornerButton(cornerRect, "리플레이", () => ReplayPicked?.Invoke());
             CreateCornerButton(cornerRect, "배치 프리셋 제작", () => MapAuthoringPicked?.Invoke());
             CreateCornerButton(cornerRect, "미션 프리셋 제작", () => MissionAuthoringPicked?.Invoke());
 

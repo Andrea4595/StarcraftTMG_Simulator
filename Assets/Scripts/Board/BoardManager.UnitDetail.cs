@@ -30,7 +30,7 @@ namespace TmgBoard
         // Detail==null)은 대상 밖 — 후자는 이름/모델 수 등 기본 정보만
         // 보여준다(사용자 스펙: "유닛"이라고 명시했으므로 토큰 제외).
 
-        private void UpdateUnitDetailPanel()
+        internal void UpdateUnitDetailPanel()
         {
             foreach (var team in _unitDetailContainers.Keys)
             {

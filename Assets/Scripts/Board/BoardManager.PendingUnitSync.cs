@@ -21,8 +21,7 @@ namespace TmgBoard
         // 양쪽에서 어긋날 걱정이 없고, 예비대 목록은 크지도 자주 바뀌지도
         // 않아 통째로 보내는 비용이 무시할 만하다.
 
-        private readonly Dictionary<int, string[]> _pendingUnitsTransferChunksInProgress = new();
-        private readonly Dictionary<int, int> _pendingUnitsTransferReceivedCountInProgress = new();
+        private readonly TextChunkAssembler _pendingUnitsTransferAssembler = new();
 
         /// <summary>예비대 목록에 정의 하나를 추가한다 — 이 메서드로만
         /// 추가하면 방송이 자동으로 따라간다.</summary>
@@ -61,25 +60,11 @@ namespace TmgBoard
         /// 호출한다(호스트 자신도 포함, 목록을 바꾼 쪽도 포함).</summary>
         internal void ReceivePendingUnitsChunk(int transferId, int chunkIndex, int totalChunks, string chunk)
         {
-            if (!_pendingUnitsTransferChunksInProgress.TryGetValue(transferId, out var chunks))
-            {
-                chunks = new string[totalChunks];
-                _pendingUnitsTransferChunksInProgress[transferId] = chunks;
-                _pendingUnitsTransferReceivedCountInProgress[transferId] = 0;
-            }
-            if (chunks[chunkIndex] == null)
-            {
-                chunks[chunkIndex] = chunk;
-                _pendingUnitsTransferReceivedCountInProgress[transferId]++;
-            }
-            if (_pendingUnitsTransferReceivedCountInProgress[transferId] < totalChunks)
+            string json = _pendingUnitsTransferAssembler.AddChunk(transferId, chunkIndex, totalChunks, chunk);
+            if (json == null)
             {
                 return;
             }
-            _pendingUnitsTransferChunksInProgress.Remove(transferId);
-            _pendingUnitsTransferReceivedCountInProgress.Remove(transferId);
-
-            string json = string.Concat(chunks);
             if (!(MiniJson.Parse(json) is List<object> tree))
             {
                 Debug.LogError("[BoardManager] 예비대 목록 JSON 파싱 실패");

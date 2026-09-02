@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using TMPro;
-using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -472,21 +471,10 @@ namespace TmgBoard
             int baseValue = composite ? _roundStreakBase : oldValue;
             _roundStreakBase = baseValue;
 
-            _board?.BeginUndoTransaction($"[점수판] 라운드 {baseValue} -> {roundNumber}", "", RoundCompositeKey);
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-            {
-                if (BoardNetworkSync.Instance == null)
-                {
-                    Debug.LogError("[ScoreboardPanel] BoardNetworkSync.Instance가 없음 — 라운드 변경 요청을 못 보냄");
-                    _board?.DiscardUndoTransaction();
-                    return;
-                }
-                BoardNetworkSync.Instance.RequestSetRoundServerRpc(roundNumber);
-                _board?.CommitUndoTransaction();
-                return;
-            }
-            SetRoundNumber(roundNumber);
-            _board?.CommitUndoTransaction();
+            BoardManager.PerformNetworkedMutation(_board, $"[점수판] 라운드 {baseValue} -> {roundNumber}", "라운드 변경",
+                    () => BoardNetworkSync.Instance.RequestSetRoundServerRpc(roundNumber),
+                    () => SetRoundNumber(roundNumber),
+                    compositeKey: RoundCompositeKey);
         }
 
         /// <summary>BoardNetworkSync.SetRoundRpc가 방송을 받았을 때(누른 쪽
@@ -506,22 +494,14 @@ namespace TmgBoard
             int baseValue = composite && _missionVpStreakBase.TryGetValue(team, out var b) ? b : oldValue;
             _missionVpStreakBase[team] = baseValue;
 
-            _board?.BeginUndoTransaction($"[점수판] {team} 미션VP {baseValue} -> {value}", team, key);
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-            {
-                if (BoardNetworkSync.Instance == null)
-                {
-                    Debug.LogError("[ScoreboardPanel] BoardNetworkSync.Instance가 없음 — 미션VP 변경 요청을 못 보냄");
-                    _board?.DiscardUndoTransaction();
-                    return;
-                }
-                BoardNetworkSync.Instance.RequestSetMissionVpServerRpc(team, value);
-                _board?.CommitUndoTransaction();
-                return;
-            }
-            MatchState.MissionVp[team] = value;
-            RefreshTotalLabel(team);
-            _board?.CommitUndoTransaction();
+            BoardManager.PerformNetworkedMutation(_board, $"[점수판] {team} 미션VP {baseValue} -> {value}", "미션VP 변경",
+                    () => BoardNetworkSync.Instance.RequestSetMissionVpServerRpc(team, value),
+                    () =>
+                    {
+                        MatchState.MissionVp[team] = value;
+                        RefreshTotalLabel(team);
+                    },
+                    team, key);
         }
 
         private void OnKillVpChanged(string team, int value)
@@ -532,22 +512,14 @@ namespace TmgBoard
             int baseValue = composite && _killVpStreakBase.TryGetValue(team, out var b) ? b : oldValue;
             _killVpStreakBase[team] = baseValue;
 
-            _board?.BeginUndoTransaction($"[점수판] {team} 파괴VP {baseValue} -> {value}", team, key);
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-            {
-                if (BoardNetworkSync.Instance == null)
-                {
-                    Debug.LogError("[ScoreboardPanel] BoardNetworkSync.Instance가 없음 — 파괴VP 변경 요청을 못 보냄");
-                    _board?.DiscardUndoTransaction();
-                    return;
-                }
-                BoardNetworkSync.Instance.RequestSetKillVpServerRpc(team, value);
-                _board?.CommitUndoTransaction();
-                return;
-            }
-            MatchState.KillVp[team] = value;
-            RefreshTotalLabel(team);
-            _board?.CommitUndoTransaction();
+            BoardManager.PerformNetworkedMutation(_board, $"[점수판] {team} 파괴VP {baseValue} -> {value}", "파괴VP 변경",
+                    () => BoardNetworkSync.Instance.RequestSetKillVpServerRpc(team, value),
+                    () =>
+                    {
+                        MatchState.KillVp[team] = value;
+                        RefreshTotalLabel(team);
+                    },
+                    team, key);
         }
 
         /// <summary>BoardNetworkSync.SetMissionVpRpc/SetKillVpRpc가 방송을

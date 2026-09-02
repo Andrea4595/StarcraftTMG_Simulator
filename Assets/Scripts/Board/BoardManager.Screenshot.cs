@@ -73,7 +73,7 @@ namespace TmgBoard
         /// 지나면 그때부터 ScreenshotToastFadeDurationSeconds에 걸쳐 알파를
         /// 1→0으로 서서히 낮추고(사용자 요청), 다 낮아지면 완전히 끈다.
         /// BoardManager.cs의 Update()가 부른다.</summary>
-        private void UpdateScreenshotToast()
+        internal void UpdateScreenshotToast()
         {
             if (_screenshotToastHideTime < 0f || _screenshotToastGo == null)
             {

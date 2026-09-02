@@ -75,8 +75,33 @@ namespace TmgBoard
         private Vector2 _lastPanScreenPos;
         private Vector2 _lastViewportSize;
 
-        private readonly List<Base> _pieces = new List<Base>();
+        private readonly PieceRoster _pieces = new PieceRoster();
         private Base _menuTarget;
+
+        // 네트워크 id(int) -> 라이브 오브젝트 매핑 — 유닛/마커 각각 하나씩
+        // (NetworkIdentityRegistry.cs 참고). UnitSync.cs/Markers.cs뿐 아니라
+        // Range.cs/UndoRedo.cs/Load.cs/MidGameHandoff.cs도 직접 쓴다.
+        private readonly NetworkIdentityRegistry<Unit> _networkedUnits = new();
+        private readonly NetworkIdentityRegistry<MarkerBase> _networkedMarkers = new();
+
+        // 되돌리기/다시하기 스택 등(UndoRedoService.cs 참고, 2026-09-02
+        // 리팩토링 Phase 3) — 캡처/복원 자체(BoardManager.UndoRedo.cs)는 씬
+        // 참조에 직접 의존해서 여기 남아있고, 이 서비스가 그 둘을 호출한다.
+        // 필드 초기화식에서 this를 못 써서(CS0027) Awake()에서 만든다 —
+        // 다른 컴포넌트의 Start()보다 항상 먼저 실행되므로 안전하다.
+        private UndoRedoService _undoRedo;
+
+        private void Awake()
+        {
+            _undoRedo = new UndoRedoService(this);
+        }
+
+        // 리플레이 모드(BoardManager.Replay.cs 참고, 2026-09-03 추가) —
+        // Entry의 "리플레이" 버튼으로 저장 파일을 열었을 때만 쓰인다.
+        private bool _replayMode;
+        private List<(BoardSnapshot Snapshot, string Label, string Team)> _replayFrames;
+        private int _replayFrameIndex;
+        private GraphicRaycaster _mainRaycaster;
 
         private Base _draggingPiece;
         private Base _draggingFollower;
@@ -94,7 +119,7 @@ namespace TmgBoard
 
         // ── 예비대 배치 ──────────────────────────────────────────────────
         // 팀별로 별도 패널(A는 왼쪽, B는 오른쪽)에 나눠 보여준다.
-        private readonly List<PendingUnitDef> _pendingUnits = new List<PendingUnitDef>();
+        private readonly OwnedList<PendingUnitDef> _pendingUnits = new OwnedList<PendingUnitDef>();
         private readonly Dictionary<string, RectTransform> _pendingUnitsListContainers = new Dictionary<string, RectTransform>();
         // 항목 수에 맞춰 목록 박스 높이를 그때그때 다시 맞추는 데 쓴다
         // (ScrollListUtil.ApplyFittedHeight) — RefreshPendingList/
@@ -114,7 +139,7 @@ namespace TmgBoard
         // 비어도(전부 배치해서) 버튼이 되살아나지 않는다. RefreshPanelLayout 참고.
         private readonly Dictionary<string, GameObject> _rosterImportButtons = new Dictionary<string, GameObject>();
         private readonly HashSet<string> _rosterLoadedTeams = new HashSet<string>();
-        private readonly List<PendingTokenDef> _pendingRosterTokens = new List<PendingTokenDef>();
+        private readonly OwnedList<PendingTokenDef> _pendingRosterTokens = new OwnedList<PendingTokenDef>();
         private readonly Dictionary<string, RectTransform> _rosterTokenListContainers = new Dictionary<string, RectTransform>();
         private readonly Dictionary<string, LayoutElement> _rosterTokenListLayoutElements = new Dictionary<string, LayoutElement>();
         // 라벨+목록을 함께 켜고 끄기 위한 래퍼 — 토큰이 하나도 없는 팀은
@@ -126,7 +151,7 @@ namespace TmgBoard
 
         // 택티컬 카드 — 배치되는 게 아니라 그냥 목록에서 켜고 끄기만 하므로
         // (좌클릭 소진/우클릭 복구) 토큰과 달리 "배치 중" 상태 자체가 없다.
-        private readonly List<TacticalCardDef> _pendingTacticalCards = new List<TacticalCardDef>();
+        private readonly OwnedList<TacticalCardDef> _pendingTacticalCards = new OwnedList<TacticalCardDef>();
         private readonly Dictionary<string, RectTransform> _tacticalCardListContainers = new Dictionary<string, RectTransform>();
         private readonly Dictionary<string, LayoutElement> _tacticalCardListLayoutElements = new Dictionary<string, LayoutElement>();
 
@@ -263,8 +288,18 @@ namespace TmgBoard
             // 이전 저장을 다시 불러오지 않는다.
             if (GameLoadRequest.PendingData != null)
             {
-                ApplyLoadedLiveState(GameLoadRequest.PendingData);
+                var pendingData = GameLoadRequest.PendingData;
                 GameLoadRequest.PendingData = null;
+                ApplyLoadedLiveState(pendingData);
+                // 리플레이 진입이면(Entry의 "리플레이" 버튼, GameLoadRequest.
+                // IsReplayLoad) 방금 지은 라이브 상태를 그대로 두지 않고
+                // 읽기 전용 재생 모드로 전환한다 — BoardManager.Replay.cs
+                // 참고.
+                if (GameLoadRequest.IsReplayLoad)
+                {
+                    GameLoadRequest.IsReplayLoad = false;
+                    EnterReplayMode(pendingData);
+                }
             }
 
             // 게임 도중 멀티 합류로 들어온 경우에만 채워져 있다(저장 파일
@@ -543,21 +578,31 @@ namespace TmgBoard
             return piece;
         }
 
+        /// <summary>매 프레임 실제 디스패치는 BoardInputController.RunFrame으로
+        /// 옮겼다(2026-09-03, 리팩토링 Phase 5) — 아래 internal 프로퍼티/메서드
+        /// 들이 그 창구다. 드래그 계산 자체(ResolvePosition 등 조각/보드
+        /// 상태에 깊이 의존하는 부분)는 여전히 BoardManager 안에 남아있다 —
+        /// BoardInputController는 상태를 안 갖고 "이번 프레임에 어느 분기를
+        /// 탈지"만 판단해 이 메서드들을 부른다.</summary>
         private void Update()
         {
-            HandlePanAndZoom();
-            HandleMeasureInput();
-            UpdateHoveredUnit();
-            UpdateUnitDetailPanel();
-            UpdateScreenshotToast();
-            UpdateMultiplayerButtonState();
-            UpdateMarkerMoveTweens();
-            UpdatePieceMoveTweens();
-            UpdateEmoteFades();
+            BoardInputController.RunFrame(this);
+        }
 
-            // 유닛 이동(리딩 모델)/팔로워 배치 중에만 적 인게이지 경고를
-            // 켠다 — 일반 모델 드래그(유닛 이동 워크플로 밖)에는 적용하지
-            // 않는다(사용자 요청 범위 그대로).
+        internal bool IsUnitMoveActive => _unitMoveActive;
+        internal bool IsDraggingPiece => _draggingPiece != null;
+        internal bool IsDraggingFollower => _draggingFollower != null;
+        internal bool HasDisplacementQueue => _displacementQueue.Count > 0;
+        internal bool HasPendingDeployment => _pendingDeploymentDef != null;
+        internal bool HasPendingRosterToken => _pendingRosterTokenDef != null;
+        internal bool IsDraggingMarker => _draggingMarker != null;
+        internal bool IsPlacingMarker => _placingMarkerKind != "";
+
+        /// <summary>유닛 이동(리딩 모델)/팔로워 배치 중에만 적 인게이지 경고를
+        /// 켠다 — 일반 모델 드래그(유닛 이동 워크플로 밖)에는 적용하지
+        /// 않는다(사용자 요청 범위 그대로).</summary>
+        internal void UpdateEngageWarningForCurrentDrag()
+        {
             Base engageCheckPiece = null;
             if (_unitMoveActive && _unitMovePhase == "leading" && _draggingPiece == _unitMoveLeading)
             {
@@ -568,90 +613,66 @@ namespace TmgBoard
                 engageCheckPiece = _draggingFollower;
             }
             UpdateEngageWarning(engageCheckPiece);
+        }
 
-            if (_unitMoveActive && Input.GetMouseButtonDown(1))
+        internal void HandlePieceDragInput()
+        {
+            if (Input.GetMouseButtonUp(0))
             {
-                CancelUnitMove();
+                EndPieceDrag();
                 return;
             }
-
-            if (_draggingPiece != null)
+            if (TryGetLocalMouse(out var local))
             {
-                if (Input.GetMouseButtonUp(0))
+                var desired = local + _dragOffset;
+                if (_unitMoveActive && _unitMovePhase == "leading" && _draggingPiece == _unitMoveLeading)
                 {
-                    EndPieceDrag();
-                    return;
+                    desired = ResolveLeadingDragCenter(desired);
                 }
-                if (TryGetLocalMouse(out var local))
-                {
-                    var desired = local + _dragOffset;
-                    if (_unitMoveActive && _unitMovePhase == "leading" && _draggingPiece == _unitMoveLeading)
-                    {
-                        desired = ResolveLeadingDragCenter(desired);
-                    }
-                    // 모델 메뉴얼 이동/리딩 모델 이동: 변위 베이스는 통과할 수 있다.
-                    _draggingPiece.Center = ResolvePosition(_draggingPiece, desired, true);
-                    UpdateUnitMoveDistanceLabel();
-                }
-                return;
+                // 모델 메뉴얼 이동/리딩 모델 이동: 변위 베이스는 통과할 수 있다.
+                _draggingPiece.Center = ResolvePosition(_draggingPiece, desired, true);
+                UpdateUnitMoveDistanceLabel();
             }
+        }
 
-            if (_draggingFollower != null)
+        internal void HandleFollowerDragInput()
+        {
+            if (Input.GetMouseButtonUp(0))
             {
-                if (Input.GetMouseButtonUp(0))
-                {
-                    _draggingFollower = null;
-                    // 팔로워를 하나 옮길 때마다 공유한다(마커 드래그와 같은
-                    // 패턴 — 끝난 시점 위치만, 실시간 아님). FinishLeadingMove의
-                    // 첫 공유와 이유는 같다.
-                    BroadcastUnitIfNetworked(_unitMoveUnit);
-                    return;
-                }
-                if (TryGetLocalMouse(out var local))
-                {
-                    var desired = local + _dragOffset;
-                    _draggingFollower.Center = ResolveFollowerPosition(_draggingFollower, desired);
-                    UpdateUnitMoveWarning();
-                }
+                _draggingFollower = null;
+                // 팔로워를 하나 옮길 때마다 공유한다(마커 드래그와 같은
+                // 패턴 — 끝난 시점 위치만, 실시간 아님). FinishLeadingMove의
+                // 첫 공유와 이유는 같다.
+                BroadcastUnitIfNetworked(_unitMoveUnit);
                 return;
             }
-
-            if (_displacementQueue.Count > 0)
+            if (TryGetLocalMouse(out var local))
             {
-                HandleDisplacementPlacementInput();
-                return;
+                var desired = local + _dragOffset;
+                _draggingFollower.Center = ResolveFollowerPosition(_draggingFollower, desired);
+                UpdateUnitMoveWarning();
             }
+        }
 
-            if (_pendingDeploymentDef != null)
+        /// <summary>이번 프레임 클릭이 그 어떤 특수 처리도 안 탔을 때(베이스를
+        /// 클릭했다면 IsDraggingPiece 분기가 이미 처리했을 것이므로, 남은
+        /// 가능성은 빈 땅이나 마커/미션 목표물처럼 유닛이 아닌 다른
+        /// raycastable) 부른다.</summary>
+        internal void HandleEmptyClickFallthrough()
+        {
+            // 리플레이 중엔 여기까지 오면 안 된다 — 라캐스터를 꺼서 막는 건
+            // "다른 조각/버튼 위" 클릭만이고, 이 메서드 자체는 Input.*를
+            // 직접 폴링하므로 라캐스터랑 무관하게 매 프레임 계속 불린다.
+            // 안 막으면 리플레이 중 우클릭할 때마다 이모트 피커가 뜨는데,
+            // 그 피커도 같은(꺼진) 캔버스 위라 닫을 수도 없는 채로 떠버린다.
+            if (_replayMode)
             {
-                HandlePendingDeploymentInput();
                 return;
             }
 
-            if (_pendingRosterTokenDef != null)
-            {
-                HandlePendingRosterTokenInput();
-                return;
-            }
-
-            if (_draggingMarker != null)
-            {
-                HandleMarkerDragInput();
-                return;
-            }
-
-            if (_placingMarkerKind != "")
-            {
-                HandleMarkerPlacementInput();
-                return;
-            }
-
-            // 여기까지 내려왔다는 건 이번 프레임 좌클릭이 그 어떤 특수 처리도
-            // 안 탔다는 뜻 — 베이스를 클릭했다면 위의 _draggingPiece 분기가
-            // 이미 return했을 것이므로, 남은 가능성은 빈 땅(또는 마커/미션
-            // 목표물처럼 유닛이 아닌 다른 raycastable) 클릭이다. 사용자 지정:
-            // "빈 땅을 클릭하거나... 꺼주면 돼" — 어느 team인지 특정할 수
-            // 없는 제스처이므로 두 team의 좌클릭 선택을 한꺼번에 해제한다.
+            // 사용자 지정: "빈 땅을 클릭하거나... 꺼주면 돼" — 어느 team인지
+            // 특정할 수 없는 제스처이므로 두 team의 좌클릭 선택을 한꺼번에
+            // 해제한다.
             if (Input.GetMouseButtonDown(0) && !IsPointerOverUi())
             {
                 _selectedUnitForDetailByTeam.Clear();

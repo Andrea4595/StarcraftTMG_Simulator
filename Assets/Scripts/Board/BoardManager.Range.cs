@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using TMPro;
-using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -36,21 +35,10 @@ namespace TmgBoard
         /// 올라가는 셈이지만 그 시차는 무시할 수준이다.</summary>
         private void RequestAddRange(Unit unit, float inch, bool alwaysShow)
         {
-            BeginUndoTransaction($"{DescribeUnit(unit)} 범위 추가 ({inch:F1}\")", unit?.Team);
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-            {
-                if (BoardNetworkSync.Instance == null)
-                {
-                    Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 범위 추가 요청을 못 보냄");
-                    DiscardUndoTransaction();
-                    return;
-                }
-                BoardNetworkSync.Instance.RequestAddRangeServerRpc(unit.NetworkUnitId, inch, alwaysShow);
-                CommitUndoTransaction();
-                return;
-            }
-            AddRangeToUnit(unit, inch, alwaysShow);
-            CommitUndoTransaction();
+            PerformNetworkedMutation(this, $"{DescribeUnit(unit)} 범위 추가 ({inch:F1}\")", "범위 추가",
+                    () => BoardNetworkSync.Instance.RequestAddRangeServerRpc(unit.NetworkUnitId, inch, alwaysShow),
+                    () => AddRangeToUnit(unit, inch, alwaysShow),
+                    unit?.Team);
         }
 
         private void AddRangeToUnit(Unit unit, float inch, bool alwaysShow)
@@ -68,7 +56,7 @@ namespace TmgBoard
         /// 쪽 자신도 포함) 호출한다.</summary>
         internal void ApplyAddRangeById(int networkUnitId, float inch, bool alwaysShow)
         {
-            if (!_networkedUnitsById.TryGetValue(networkUnitId, out var unit))
+            if (!_networkedUnits.TryGet(networkUnitId, out var unit))
             {
                 Debug.LogError($"[BoardManager] 범위를 추가할 유닛을 못 찾음(id={networkUnitId})");
                 return;
@@ -108,21 +96,10 @@ namespace TmgBoard
         private void RequestDeleteRange(Unit unit, int idx)
         {
             _rangeDeleteTargetUnit = null;
-            BeginUndoTransaction($"{DescribeUnit(unit)} 범위 삭제", unit?.Team);
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-            {
-                if (BoardNetworkSync.Instance == null)
-                {
-                    Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 범위 삭제 요청을 못 보냄");
-                    DiscardUndoTransaction();
-                    return;
-                }
-                BoardNetworkSync.Instance.RequestDeleteRangeServerRpc(unit.NetworkUnitId, idx);
-                CommitUndoTransaction();
-                return;
-            }
-            RemoveRangeAtIndex(unit, idx);
-            CommitUndoTransaction();
+            PerformNetworkedMutation(this, $"{DescribeUnit(unit)} 범위 삭제", "범위 삭제",
+                    () => BoardNetworkSync.Instance.RequestDeleteRangeServerRpc(unit.NetworkUnitId, idx),
+                    () => RemoveRangeAtIndex(unit, idx),
+                    unit?.Team);
         }
 
         private void RemoveRangeAtIndex(Unit unit, int idx)
@@ -147,7 +124,7 @@ namespace TmgBoard
         /// 쪽 자신도 포함) 호출한다.</summary>
         internal void ApplyDeleteRangeById(int networkUnitId, int idx)
         {
-            if (!_networkedUnitsById.TryGetValue(networkUnitId, out var unit))
+            if (!_networkedUnits.TryGet(networkUnitId, out var unit))
             {
                 Debug.LogError($"[BoardManager] 범위를 지울 유닛을 못 찾음(id={networkUnitId})");
                 return;

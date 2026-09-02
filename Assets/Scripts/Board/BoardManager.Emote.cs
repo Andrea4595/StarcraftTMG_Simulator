@@ -292,7 +292,7 @@ namespace TmgBoard
         /// 이 프로젝트는 코루틴을 안 쓴다. 알파 페이드, 화면 밖 아이콘/화살표
         /// 생성/갱신/제거, X/Y 독립 스케일 커브를 모두 매 프레임 갱신하고,
         /// 다 사라진 이모트(및 그 아이콘/화살표)는 파괴하고 목록에서 뺀다.</summary>
-        private void UpdateEmoteFades()
+        internal void UpdateEmoteFades()
         {
             float totalLifetime = EmoteVisibleDurationSeconds + EmoteFadeDurationSeconds;
             for (int i = _emoteFades.Count - 1; i >= 0; i--)

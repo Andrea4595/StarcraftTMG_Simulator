@@ -52,7 +52,7 @@ namespace TmgBoard
             }
         }
 
-        private void HandleDisplacementPlacementInput()
+        internal void HandleDisplacementPlacementInput()
         {
             if (TryGetLocalMouse(out var local))
             {

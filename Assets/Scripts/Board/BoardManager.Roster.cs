@@ -116,35 +116,21 @@ namespace TmgBoard
         // transferId별로 도착한 조각을 모은다 — BoardNetworkSync가 로스터
         // JSON을 TextChunkSize 단위로 쪼개 보내므로(한 RPC에 다 실으면
         // FastBufferWriter 오버플로우), 다 모일 때까지 여기서 들고 있는다.
-        private readonly Dictionary<int, RosterTransferBuffer> _rosterTransfersInProgress = new();
-        private class RosterTransferBuffer
-        {
-            public string Team;
-            public string[] Chunks;
-            public int ReceivedCount;
-        }
+        private readonly TextChunkAssembler _rosterTransferAssembler = new();
 
         /// <summary>BoardNetworkSync.ImportRosterChunkRpc가 조각을 방송할
         /// 때마다 호출한다(호스트 자신도 포함) — 같은 transferId의 조각이
-        /// 다 모이면 그제서야 이어붙여서 ApplyRosterImport로 적용한다.</summary>
+        /// 다 모이면 그제서야 이어붙여서 ApplyRosterImport로 적용한다. team은
+        /// 매 조각마다 동일하게 실려오므로(BoardNetworkSync), 따로 저장해둘
+        /// 필요 없이 완료된 이번 호출의 값을 그대로 쓴다.</summary>
         internal void ReceiveRosterChunk(int transferId, string team, int chunkIndex, int totalChunks, string chunk)
         {
-            if (!_rosterTransfersInProgress.TryGetValue(transferId, out var buffer))
-            {
-                buffer = new RosterTransferBuffer { Team = team, Chunks = new string[totalChunks] };
-                _rosterTransfersInProgress[transferId] = buffer;
-            }
-            if (buffer.Chunks[chunkIndex] == null)
-            {
-                buffer.Chunks[chunkIndex] = chunk;
-                buffer.ReceivedCount++;
-            }
-            if (buffer.ReceivedCount < totalChunks)
+            string rosterJson = _rosterTransferAssembler.AddChunk(transferId, chunkIndex, totalChunks, chunk);
+            if (rosterJson == null)
             {
                 return;
             }
-            _rosterTransfersInProgress.Remove(transferId);
-            ApplyRosterImport(buffer.Team, string.Concat(buffer.Chunks));
+            ApplyRosterImport(team, rosterJson);
         }
 
         /// <summary>토큰 정의는 유닛과 달리 목록에서 지우지 않는다 — 몇 번이든
@@ -163,7 +149,7 @@ namespace TmgBoard
                     _pendingRosterTokenDef.IsDisplacement);
         }
 
-        private void HandlePendingRosterTokenInput()
+        internal void HandlePendingRosterTokenInput()
         {
             if (Input.GetMouseButtonDown(1) && !IsPointerOverUi())
             {

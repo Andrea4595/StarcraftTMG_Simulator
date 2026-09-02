@@ -15,7 +15,7 @@ namespace TmgBoard
         /// 스페이스바 처리+_start_measuring/_stop_measuring/_update_measure_line
         /// 포팅. 이름/데미지/범위/메모 입력창에 포커스가 있을 때는 무시한다
         /// (그 필드에 스페이스 문자를 입력하는 것으로 취급).</summary>
-        private void HandleMeasureInput()
+        internal void HandleMeasureInput()
         {
             if (measureLayer == null || IsTextFieldFocused())
             {

@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using TMPro;
-using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -116,21 +115,10 @@ namespace TmgBoard
             _phaseStreakBase = baseIndex;
 
             string label = $"[점수판] 페이즈 {MatchState.PhaseNames[baseIndex]} -> {MatchState.PhaseNames[nextIndex]}";
-            board?.BeginUndoTransaction(label, "", PhaseCompositeKey);
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-            {
-                if (BoardNetworkSync.Instance == null)
-                {
-                    Debug.LogError("[PhaseBar] BoardNetworkSync.Instance가 없음 — 페이즈 변경 요청을 못 보냄");
-                    board?.DiscardUndoTransaction();
-                    return;
-                }
-                BoardNetworkSync.Instance.RequestSetPhaseServerRpc(nextIndex);
-                board?.CommitUndoTransaction();
-                return;
-            }
-            SetPhaseIndex(nextIndex);
-            board?.CommitUndoTransaction();
+            BoardManager.PerformNetworkedMutation(board, label, "페이즈 변경",
+                    () => BoardNetworkSync.Instance.RequestSetPhaseServerRpc(nextIndex),
+                    () => SetPhaseIndex(nextIndex),
+                    compositeKey: PhaseCompositeKey);
         }
 
         private void SetPhaseIndex(int index)

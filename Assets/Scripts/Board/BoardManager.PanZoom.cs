@@ -102,7 +102,7 @@ namespace TmgBoard
 
         /// <summary>가운데 버튼 드래그로 화면 이동, 마우스 휠로 커서 위치 기준
         /// 확대/축소. UI 패널 위에서 시작한 경우는 무시한다.</summary>
-        private void HandlePanAndZoom()
+        internal void HandlePanAndZoom()
         {
             if (mapArea == null)
             {
