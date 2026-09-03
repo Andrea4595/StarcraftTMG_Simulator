@@ -26,6 +26,7 @@ namespace TmgBoard
             board.UpdateMarkerMoveTweens();
             board.UpdatePieceMoveTweens();
             board.UpdateEmoteFades();
+            board.UpdateGifExport();
 
             board.UpdateEngageWarningForCurrentDrag();
 

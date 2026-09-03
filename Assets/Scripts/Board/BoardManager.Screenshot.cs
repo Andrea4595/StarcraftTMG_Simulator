@@ -105,7 +105,12 @@ namespace TmgBoard
         }
 
         /// <summary>지도 뷰포트(팀 패널 사이, 마커바 위)의 우측 하단 구석에
-        /// 붙인다 — 화면 절대 우측하단은 B팀 패널/마커바와 겹친다.</summary>
+        /// 붙인다 — 화면 절대 우측하단은 B팀 패널/마커바와 겹친다. 메인
+        /// 캔버스가 아니라 자기 전용의 항상-켜진 Canvas/GraphicRaycaster에
+        /// 짓는다(MultiplayerConnectDialog_Canvas와 같은 패턴, 2026-09-05
+        /// 수정) — 리플레이 중엔 메인 캔버스의 라캐스터가 꺼지는데(BoardManager.
+        /// Replay.cs) 이 토스트는 원래 그 캔버스 밑에 있어서 GIF 저장 뒤
+        /// 뜨는 토스트를 클릭해도 반응이 없던 버그가 있었다.</summary>
         private void EnsureScreenshotToast()
         {
             if (_screenshotToastGo != null)
@@ -113,10 +118,15 @@ namespace TmgBoard
                 return;
             }
 
-            var canvasParent = GetCanvasParent();
+            var canvasGo = new GameObject("ScreenshotToast_Canvas");
+            var toastCanvas = canvasGo.AddComponent<Canvas>();
+            toastCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            toastCanvas.sortingOrder = 60; // 리플레이용 캔버스들(50)보다도 위.
+            canvasGo.AddComponent<CanvasScaler>();
+            canvasGo.AddComponent<GraphicRaycaster>();
 
             var go = new GameObject("ScreenshotToast", typeof(RectTransform));
-            go.transform.SetParent(canvasParent, false);
+            go.transform.SetParent(canvasGo.transform, false);
             var rect = (RectTransform)go.transform;
             rect.anchorMin = new Vector2(1f, 0f);
             rect.anchorMax = new Vector2(1f, 0f);
@@ -158,6 +168,10 @@ namespace TmgBoard
             _screenshotToastGo.SetActive(false);
         }
 
+        /// <summary>탐색기로 폴더를 연다. "/select,"로 파일 자체를 선택된 채로
+        /// 열어보려 했으나(2026-09-05) 재현이 안 돼 되돌렸다 — 원래부터 이
+        /// 폴더-열기 방식이 스크린샷에서 그대로 잘 동작하던 방식이라, GIF
+        /// 토스트도 같은 방식을 그대로 쓴다.</summary>
         private void OpenScreenshotFolder()
         {
             if (string.IsNullOrEmpty(_lastScreenshotDirectory))

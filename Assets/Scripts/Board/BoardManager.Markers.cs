@@ -138,6 +138,15 @@ namespace TmgBoard
             }
         }
 
+        /// <summary>리플레이 모드 진입 시 이 바 전체를 숨기고 별도의 항상-켜진
+        /// 캔버스에 나가기/GIF 버튼만 새로 짓는다(BoardManager.Replay.cs) —
+        /// 이 바는 메인 캔버스(EnterReplayMode가 끄는 그 라캐스터) 아래에
+        /// 있어서, 라캐스터를 끈 뒤에는 여기 새 버튼을 지어도 클릭이 전혀
+        /// 안 먹는다(라캐스터 비활성은 캔버스 전체의 입력 라우팅을 막지,
+        /// 자식이 나중에 생겼는지는 상관없다) — 그래서 자식만 지우고
+        /// 다시 짓는 게 아니라 이 바 자체를 숨기는 방식을 쓴다.</summary>
+        private RectTransform _markerBarRect;
+
         /// <summary>화면 맨 아래를 가로지르는 바 — 마커 종류별 버튼은 중앙에
         /// 모아두고, 스크린샷 버튼은 우측 하단에 고정한다. 누르면
         /// StartMarkerPlacement()로 배치 모드에 들어간다. Godot판
@@ -152,6 +161,7 @@ namespace TmgBoard
             var barGo = new GameObject("MarkerBar", typeof(RectTransform));
             barGo.transform.SetParent(canvasParent, false);
             var barRect = (RectTransform)barGo.transform;
+            _markerBarRect = barRect;
             barRect.anchorMin = new Vector2(0f, 0f);
             barRect.anchorMax = new Vector2(1f, 0f);
             barRect.pivot = new Vector2(0.5f, 0f);
