@@ -60,7 +60,17 @@ namespace TmgBoard
                 piece.Center = ResolveDisplacementDragPosition(piece, local);
             }
 
-            if (Input.GetMouseButtonDown(0) && !IsPointerOverUi())
+            // FindBaseAtPoint/IsOverMissionObjective 예외: 다른 유닛/토큰이나
+            // 미션 마커 위에서 클릭해도 지금 따라가는 위치에 정상적으로
+            // 배치되게 한다(사용자 보고, 2026-09-03/04 — 유닛/토큰은 처음
+            // 보고에서, 미션 마커는 뒤이어 추가 보고). 새 드래그 자체는
+            // OnDragRequested의 HasDisplacementQueue 가드로 이미 막혔지만
+            // (BoardManager.cs), 그 가드만으론 이 아래 클릭이 IsPointerOverUi()에
+            // 걸려 그냥 씹힌다(조각/마커도 raycastTarget이라 그 위 클릭은 전부
+            // "UI 위"로 잡힘) — HandlePendingDeploymentInput의
+            // IsOverMissionObjective() 예외와 같은 패턴.
+            bool overExistingPiece = TryGetLocalMouse(out var hitPoint) && FindBaseAtPoint(hitPoint) != null;
+            if (Input.GetMouseButtonDown(0) && (!IsPointerOverUi() || overExistingPiece || IsOverMissionObjective()))
             {
                 // 방금 확정된 변위 베이스의 새 위치를 공유한다(사용자 요청,
                 // 2026-08-30) — 그 베이스가 속한 유닛은 지금 옮기는 중인

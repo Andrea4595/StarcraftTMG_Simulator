@@ -285,15 +285,10 @@ namespace TmgBoard
             _gridRect.sizeDelta = MapSize;
             gridGo.AddComponent<MapGridOverlay>();
 
-            var referenceLayerGo = new GameObject("ReferenceLayer", typeof(RectTransform));
-            referenceLayerGo.transform.SetParent(_mapArea, false);
-            _referenceLayer = (RectTransform)referenceLayerGo.transform;
-            _referenceLayer.anchorMin = Vector2.zero;
-            _referenceLayer.anchorMax = Vector2.zero;
-            _referenceLayer.pivot = Vector2.zero;
-            _referenceLayer.anchoredPosition = Vector2.zero;
-            _referenceLayer.sizeDelta = MapSize;
-
+            // TerrainLayer를 ReferenceLayer보다 먼저 만든다(사용자 보고,
+            // 2026-09-05 — "지형이 마커 위에 보이던데, 마커보다 아래로
+            // 보내달라") — Unity UI는 나중 형제가 위에 그려지므로, 참고
+            // 마커(ReferenceLayer)가 지형보다 나중에 있어야 그 위에 보인다.
             var terrainLayerGo = new GameObject("TerrainLayer", typeof(RectTransform));
             terrainLayerGo.transform.SetParent(_mapArea, false);
             _terrainLayer = (RectTransform)terrainLayerGo.transform;
@@ -302,6 +297,15 @@ namespace TmgBoard
             _terrainLayer.pivot = Vector2.zero;
             _terrainLayer.anchoredPosition = Vector2.zero;
             _terrainLayer.sizeDelta = MapSize;
+
+            var referenceLayerGo = new GameObject("ReferenceLayer", typeof(RectTransform));
+            referenceLayerGo.transform.SetParent(_mapArea, false);
+            _referenceLayer = (RectTransform)referenceLayerGo.transform;
+            _referenceLayer.anchorMin = Vector2.zero;
+            _referenceLayer.anchorMax = Vector2.zero;
+            _referenceLayer.pivot = Vector2.zero;
+            _referenceLayer.anchoredPosition = Vector2.zero;
+            _referenceLayer.sizeDelta = MapSize;
         }
 
         /// <summary>지도가 팔레트/상단 바를 뺀 남는 뷰포트 안에 정중앙으로
@@ -370,6 +374,15 @@ namespace TmgBoard
                 // 없어 실제로는 아무 일도 안 일어난다(게임 보드가 이미 쓰는
                 // 것과 같은 무해화 패턴 — BoardManager.MissionObjectives.cs 참고).
                 piece.AllowDrag = false;
+                // raycastTarget=false — 바로 위 DeploymentZonePiece와 같은
+                // 이유(사용자 보고, 2026-09-05): 이 마커는 이미 클릭에 완전히
+                // 무해하지만 raycastTarget이 켜져 있으면 (1) 지형 배치 클릭이
+                // IsPointerOverUi()에 "UI 위"로 잡혀 그냥 씹히고, (2) 지형을
+                // 마커보다 뒤로 보냈으니(TerrainLayer를 ReferenceLayer보다
+                // 먼저 만듦, 화면상 이 마커가 지형 위에 그려짐) raycastTarget이
+                // 켜진 채면 그 아래 지형의 자체 OnPointerDown(드래그 시작)까지
+                // 가로채 버린다.
+                piece.raycastTarget = false;
             }
         }
 

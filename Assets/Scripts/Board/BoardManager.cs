@@ -717,6 +717,18 @@ namespace TmgBoard
                 return;
             }
 
+            if (HasDisplacementQueue)
+            {
+                // 변위 배치 위치를 고르는 중엔 새 드래그를 시작하지 않는다
+                // (사용자 요청, 2026-09-03 버그 보고 — "변위 위치를 정할 때
+                // 다른 유닛/토큰을 클릭하면 그 모델을 이동시키려 해서 변위
+                // 배치가 안 됨"). 막지 않으면 이 클릭이 여기서 새 드래그를
+                // 먼저 시작해버리고, 다음 프레임부터 BoardInputController.
+                // RunFrame의 IsDraggingPiece 분기가 HasDisplacementQueue보다
+                // 먼저 걸려 변위 배치 자체가 영영 처리되지 않는다.
+                return;
+            }
+
             if (_unitMoveActive)
             {
                 if (_unitMovePhase == "leading" && piece == _unitMoveLeading)
