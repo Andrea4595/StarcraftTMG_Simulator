@@ -1,0 +1,10 @@
+{
+  "mission_name": "보급품 투하",
+  "mission_parameters": "모든 미션 마커가 비활성화 된다.\n\n라운드 시작 시(1~4라운드): 비활성화된 미션 마커(1~5) 중 무작위로 하나를 정해 활성화 상태로 뒤집는다.",
+  "scoring_conditions": "이번 라운드에 파괴한 적의 서플라이값 만큼 VP를 얻는다.\n\n2라운드 시작 시점부터 : 활성화된 상태의 점령 중인 미션 마커마다, 해당 미션 마커가 활성화 되었던 게임 라운드의 수치 만큼의 VP를 얻고 해당 마커를 제거한다.",
+  "additional_conditions": "특수 승리 조건 : 한 플레이어가 8 VP 이상 앞서고 있다면 게임이 즉시 종료된다.",
+  "base_supply": 4,
+  "supply_per_round": 1,
+  "round_length": 4,
+  "engagement_scale": "SKIRMISH LEVEL"
+}

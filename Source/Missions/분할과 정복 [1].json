@@ -1,0 +1,10 @@
+{
+  "mission_name": "분할과 정복",
+  "mission_parameters": "모든 미션 마커가 활성화된다\n배치카드에 표시된 대로 전장을 4개의 사분면으로 나눈다.\n",
+  "scoring_conditions": "이번 라운드에 파괴한 적의 서플라이 값만큼 VP를 얻는다.\n\n1라운드 시작 시점부터: 각 전장의 사분면에 남아있는 현재 서플라이 값의 총량을 계산한다.\n총 서플라이값이 상대보다 높은 사분면마다 1 VP를 얻는다.\n\n한 사분면 안에 완전히 들어와 있는 유닛만 이 판정에 서플라이값을 기여할 수 있다. 유닛이 미션 마커를 점령하고 있다면, 해당 유닛은 사분면 점령을 계산할 때 1의 추가 서플라이값을 지닌 것으로 친다.\n\n미션 마커 5를 점령하면 2 VP를 얻는다",
+  "additional_conditions": "특수 승리 조건 : 한 플레이어가 10 VP 이상 앞서고 있다면 게임이 즉시 종료된다.\n",
+  "base_supply": 8,
+  "supply_per_round": 2,
+  "round_length": 4,
+  "engagement_scale": "STANDARD ENGAGEMENT"
+}

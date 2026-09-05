@@ -1,0 +1,10 @@
+{
+  "mission_name": "최전선",
+  "mission_parameters": "모든 미션 마커가 활성화된다.",
+  "scoring_conditions": "이번 라운드에 파괴한 적의 서플라이값 만큼 VP를 얻는다.\n\n2라운드 시작 시점부터 : 점령 중인 미션 마커당 1 VP를 얻는다.\n\n이번 라운드에 상대방으로부터 미션 마커를 빼앗았다면 해당 마커에 대해 추가로 2 VP를 얻는다.",
+  "additional_conditions": "특수 승리 조건 : 한 플레이어가 8 VP 이상 앞서고 있다면 게임이 즉시 종료된다.",
+  "base_supply": 3,
+  "supply_per_round": 1,
+  "round_length": 5,
+  "engagement_scale": "SKIRMISH LEVEL"
+}

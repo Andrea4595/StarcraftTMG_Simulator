@@ -1,0 +1,10 @@
+{
+  "mission_name": "자원 쟁탈",
+  "mission_parameters": "모든 미션 마커가 활성화 된다.",
+  "scoring_conditions": "이번 라운드에 파괴한 적의 서플라이 값만큼 VP를 얻는다.\n\n2라운드 시작 시점부터 : 상대 플레이어의 색상이면서 자신이 점령 중인 미션 마커당 2 VP를 얻는다.",
+  "additional_conditions": "ASSAULT PHASE: 인게이지 상태가 아닌 유닛이 점령 중인 중립 미션 마커 혹은 상대 플레이어 색상인 마커의 3\" 안에 있다면, 유닛은 일반적인 액션을 하는 대신 수집 액션을 수행할 수 있다.\n수집 액션 : 1 VP를 얻는다.\n\n특수 승리 조건 : 한 플레이어가 10 VP 이상 앞서고 있다면 게임이 즉시 종료된다.\n",
+  "base_supply": 6,
+  "supply_per_round": 2,
+  "round_length": 5,
+  "engagement_scale": "STANDARD ENGAGEMENT"
+}
