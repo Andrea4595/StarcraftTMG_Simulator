@@ -24,6 +24,7 @@ namespace TmgBoard
             board.UpdateScreenshotToast();
             board.UpdateMultiplayerButtonState();
             board.UpdateMarkerMoveTweens();
+            board.RefreshBlastTemplateHighlights();
             board.UpdatePieceMoveTweens();
             board.UpdateEmoteFades();
             board.UpdateGifExport();

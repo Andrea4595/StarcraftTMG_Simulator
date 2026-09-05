@@ -30,6 +30,10 @@ namespace TmgBoard
         private const float CombatRowFrontOutlineWidth = 5f;
         private const float CombatRowSupportOutlineWidth = 3f;
         private static readonly Color EngageWarningColor = new Color(0.95f, 0.1f, 0.1f, 1f);
+        private static readonly Color BlastPrimaryOutlineColor = new Color(1f, 1f, 1f, 1f);
+        private static readonly Color BlastSecondaryOutlineColor = new Color(1f, 0.6f, 0f, 1f);
+        private const float BlastPrimaryOutlineWidth = 4f;
+        private const float BlastSecondaryOutlineWidth = 3.5f;
 
         public Unit Unit;
         public string Memo = "";
@@ -43,6 +47,8 @@ namespace TmgBoard
         private bool _coherencyWarning;
         private bool _highlighted;
         private bool _engageWarning;
+        private bool _blastPrimary;
+        private bool _blastSecondary;
 
         private RectTransform _rectTransform;
         private TextMeshProUGUI _nameLabel;
@@ -156,6 +162,44 @@ namespace TmgBoard
                     return;
                 }
                 _combatRow = value;
+                SetVerticesDirty();
+            }
+        }
+
+        /// <summary>블라스트 템플릿(BoardManager.BlastTemplate.cs)의 "주
+        /// 목표"(템플릿 중심이 정확히 스냅된 모델) 자신이거나, 그 주 목표와
+        /// 같은 유닛에 속하면서 범위 원 안에 걸치는 모델이면 흰 테두리로
+        /// 표시한다(사용자 요청, 2026-09-06 — 원래는 주 목표 모델 하나만
+        /// 빨간색이었다) — 매 프레임 RefreshBlastTemplateHighlights가 다시
+        /// 계산해서 갱신한다. Highlighted(호버, 노란색)와는 켜지는 조건이
+        /// 달라 별도 필드로 뒀다 — 마우스를 다른 유닛에 올려도 블라스트
+        /// 강조는 유지돼야 하기 때문.</summary>
+        public bool BlastPrimary
+        {
+            get => _blastPrimary;
+            set
+            {
+                if (_blastPrimary == value)
+                {
+                    return;
+                }
+                _blastPrimary = value;
+                SetVerticesDirty();
+            }
+        }
+
+        /// <summary>주 목표는 아니지만 블라스트 템플릿의 5" 범위 원 안에
+        /// 베이스 일부가 겹치는 모델 — 주황 테두리로 표시한다.</summary>
+        public bool BlastSecondary
+        {
+            get => _blastSecondary;
+            set
+            {
+                if (_blastSecondary == value)
+                {
+                    return;
+                }
+                _blastSecondary = value;
                 SetVerticesDirty();
             }
         }
@@ -297,6 +341,18 @@ namespace TmgBoard
             {
                 outlineColor = CombatRowOutlineColor;
                 outlineWidth = _combatRow == CombatRow.Front ? CombatRowFrontOutlineWidth : CombatRowSupportOutlineWidth;
+            }
+
+            if (_blastSecondary)
+            {
+                outlineColor = BlastSecondaryOutlineColor;
+                outlineWidth = BlastSecondaryOutlineWidth;
+            }
+
+            if (_blastPrimary)
+            {
+                outlineColor = BlastPrimaryOutlineColor;
+                outlineWidth = BlastPrimaryOutlineWidth;
             }
 
             if (_engageWarning)

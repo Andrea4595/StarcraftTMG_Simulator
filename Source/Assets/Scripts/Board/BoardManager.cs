@@ -210,6 +210,7 @@ namespace TmgBoard
             ("combat", "전투 마커"),
             ("buff", "버프 마커"),
             ("debuff", "디버프 마커"),
+            ("blast", "블라스트 템플릿"),
         };
 
         /// <summary>마커바 아이콘에 마우스를 올렸을 때 보여줄 조작법 —
@@ -224,6 +225,7 @@ namespace TmgBoard
             { "combat", "좌클릭: 배치 - 드래그: 이동 - 우클릭: 삭제" },
             { "buff", "좌클릭: 배치 - 드래그: 이동 - 우클릭: 삭제" },
             { "debuff", "좌클릭: 배치 - 드래그: 이동 - 우클릭: 삭제" },
+            { "blast", "좌클릭: 배치(근처 유닛에 자동 스냅) - 드래그: 이동(스냅) - 우클릭: 삭제" },
         };
 
         private TextMeshProUGUI _markerHintLabel;
@@ -714,6 +716,18 @@ namespace TmgBoard
             if (_pendingDeploymentDef != null)
             {
                 // 배치할 유닛을 놓을 자리를 고르는 중엔 기존 베이스를 잡아 끌 수 없다.
+                return;
+            }
+
+            if (IsPlacingMarker)
+            {
+                // 마커를 배치하는 중엔 유닛을 클릭해도 그 유닛을 옮기지 않는다
+                // (사용자 보고, 2026-09-06 — "BT를 배치할 때 유닛을 클릭하면
+                // 유닛 이동으로 처리되며 배치가 안 됨"). 위 _pendingDeploymentDef/
+                // 아래 HasDisplacementQueue 가드와 같은 이유 — 여기서 드래그를
+                // 시작해버리면 다음 프레임부터 BoardInputController.RunFrame의
+                // IsDraggingPiece 분기가 IsPlacingMarker보다 먼저 걸려 배치
+                // 자체가 영영 처리되지 않는다.
                 return;
             }
 

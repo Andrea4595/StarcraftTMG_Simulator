@@ -75,6 +75,13 @@ namespace TmgBoard
             {
                 return;
             }
+            if (!(NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening))
+            {
+                // 이모트는 상대에게 보여주는 소통 기능이라, 상대가 없는 싱글
+                // 플레이 중엔 다이얼 자체를 띄우지 않는다(사용자 요청,
+                // 2026-09-06).
+                return;
+            }
             _pendingEmoteBoardPoint = boardPoint;
             emotePickerPanel.Open(Input.mousePosition);
         }

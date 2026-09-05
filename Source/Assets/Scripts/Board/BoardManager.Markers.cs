@@ -199,6 +199,11 @@ namespace TmgBoard
                 {
                     "activation" => _activationMarkerPrefab != null ? _activationMarkerPrefab.texture : null,
                     "capture" => _captureMarkerPrefab != null ? _captureMarkerPrefab.texture : null,
+                    // 블라스트 템플릿은 프리팹 없이 코드로 짓는 마커라(아래
+                    // CreateBlastTemplateMarker) 마커바 아이콘도 여기서 직접
+                    // 텍스처를 불러온다 — 실제 배치되는 도형(BlastTemplate)과는
+                    // 다른, 버튼 전용 축소판(BlastTemplateButton)을 쓴다.
+                    "blast" => Resources.Load<Texture2D>("UI/BlastTemplateButton"),
                     _ => _iconMarkerPrefabsByKind != null && _iconMarkerPrefabsByKind.TryGetValue(entry.Kind, out var p) ? p.texture : null,
                 };
                 CreateMarkerBarButton(iconsRect, entry.Kind, icon);
@@ -588,7 +593,7 @@ namespace TmgBoard
             marker.color = c;
             if (TryGetLocalMouse(out var mouseLocal))
             {
-                marker.Center = mouseLocal;
+                marker.Center = kind == "blast" ? ResolveBlastTemplateCenter(mouseLocal) : mouseLocal;
             }
             _markerPlacementPreview = marker;
         }
@@ -613,11 +618,35 @@ namespace TmgBoard
                     return _activationMarkerPrefab != null ? Instantiate(_activationMarkerPrefab, parent, false) : null;
                 case "capture":
                     return _captureMarkerPrefab != null ? Instantiate(_captureMarkerPrefab, parent, false) : null;
+                case "blast":
+                    return CreateBlastTemplateMarker(parent);
                 default:
                     return _iconMarkerPrefabsByKind != null && _iconMarkerPrefabsByKind.TryGetValue(kind, out var prefab)
                             ? Instantiate(prefab, parent, false)
                             : null;
             }
+        }
+
+        /// <summary>블라스트 템플릿은 다른 아이콘 마커들과 달리 Resources/Markers/
+        /// 프리팹이 없다 — 지름 5"(고정 크기)짜리 원형 도형이라 크기를 프리팹에
+        /// 미리 박아둘 필요 없이 여기서 바로 계산해서 짓는다(ExitButton 등
+        /// 마커바 버튼들을 코드로 짓는 것과 같은 방식). IconMarker를 그대로
+        /// 쓰되 kind만 코드로 채운다(SetKind — 프리팹 인스펙터가 없으므로).
+        /// 텍스처는 불투명한 원이라 알파를 낮춰서 그 아래 유닛/베이스 강조
+        /// 테두리(BoardManager.BlastTemplate.cs)가 비쳐 보이게 한다.</summary>
+        private static readonly Vector2 BlastTemplateSizeMm = new Vector2(
+                GameConstants.MmPerInch * 5f, GameConstants.MmPerInch * 5f);
+
+        private MarkerBase CreateBlastTemplateMarker(Transform parent)
+        {
+            var go = new GameObject("BlastTemplateMarker", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var marker = go.AddComponent<IconMarker>();
+            marker.SetKind("blast");
+            marker.texture = Resources.Load<Texture2D>("UI/BlastTemplate");
+            marker.RectTransform.sizeDelta = BlastTemplateSizeMm;
+            marker.color = new Color(1f, 1f, 1f, 0.4f);
+            return marker;
         }
 
         /// <summary>배치 모드 중 마우스 클릭 처리 — 지도 위 왼쪽 버튼이면 실제로
@@ -630,12 +659,19 @@ namespace TmgBoard
         /// 취소돼버린다.</summary>
         internal void HandleMarkerPlacementInput()
         {
-            // IsOverMissionObjective() 예외: 미션 목표 마커의 3인치 점령 링
-            // 전체가 raycastTarget이라 그 위 클릭이 전부 "UI 위"로 잡혀서,
-            // 마커가 놓인 자리에는 다른 마커를 배치할 수조차 없던 버그(사용자
-            // 보고, 2026-09-02) — HandlePendingDeploymentInput의 같은 수정과
-            // 동일한 패턴.
-            if ((!IsPointerOverUi() || IsOverMissionObjective()) && (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1) || Input.GetMouseButtonDown(2)))
+            // IsOverMissionObjective()/IsOverBaseOrMarker() 예외: 미션 목표
+            // 마커의 3인치 점령 링, 유닛(Base), 이미 깔려있는 마커 전부
+            // raycastTarget이라 그 위 클릭이 "UI 위"로 잡혀서 그 자리에는
+            // 새 마커를 배치할 수조차 없던 버그(사용자 보고 — 미션 목표는
+            // 2026-09-02, 유닛/마커는 2026-09-06 — "BT를 배치할 때 유닛을
+            // 클릭하면 유닛 이동으로 처리되며 배치가 안 됨", "마커 위에
+            // 마커를 배치하려 하면 기존 마커를 옮기려 함") —
+            // HandlePendingDeploymentInput의 같은 수정과 동일한 패턴. 유닛/
+            // 마커 쪽 드래그 자체가 먼저 시작돼버리는 문제는 여기가 아니라
+            // OnDragRequested/OnMarkerDragRequested의 IsPlacingMarker 가드가
+            // 막는다 — 여긴 그 뒤 폴링 클릭이 "UI 위"로 막히지 않게 할
+            // 뿐이다.
+            if ((!IsPointerOverUi() || IsOverMissionObjective() || IsOverBaseOrMarker()) && (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1) || Input.GetMouseButtonDown(2)))
             {
                 if (Input.GetMouseButtonDown(0) && TryGetLocalMouse(out var mouseLocal))
                 {
@@ -648,8 +684,56 @@ namespace TmgBoard
 
             if (TryGetLocalMouse(out var hoverLocal) && _markerPlacementPreview != null)
             {
-                _markerPlacementPreview.Center = hoverLocal;
+                _markerPlacementPreview.Center = _placingMarkerKind == "blast"
+                        ? ResolveBlastTemplateCenter(hoverLocal)
+                        : hoverLocal;
             }
+        }
+
+        /// <summary>블라스트 템플릿 전용 스냅 — 마우스가 어떤 모델의 베이스
+        /// 위(타원 안)에 있으면 그 모델의 정확한 중심으로 스냅하고, 아니면
+        /// 마우스 위치를 그대로 쓴다(사용자 요청, 2026-09-06). FindBaseAtPoint를
+        /// 재사용한다 — BoardManager.Memo.cs의 호버 판정과 정확히 같은 기준
+        /// (회전된 타원 안쪽)이라 "이 유닛에 호버되면 스냅된다"는 감각이
+        /// 일관된다. RefreshBlastTemplateHighlights(BoardManager.BlastTemplate.cs)의
+        /// "주 목표" 판정도 같은 FindBaseAtPoint(marker.Center)를 쓰므로,
+        /// 스냅된 자리는 항상 그 모델이 주 목표로 강조된다.</summary>
+        private Vector2 ResolveBlastTemplateCenter(Vector2 mouseLocal)
+        {
+            var snapped = FindBaseAtPoint(mouseLocal);
+            return snapped != null ? snapped.Center : mouseLocal;
+        }
+
+        /// <summary>IsOverMissionObjective()와 같은 목적의 예외 판정 —
+        /// 마우스가 유닛(Base) 또는 이미 깔려있는 마커 위여도 그게 "진짜 UI
+        /// 패널"이 아니라 지도 위 조각일 뿐임을 나타낸다. HandleMarkerPlacementInput
+        /// (배치 클릭)과 HandlePanAndZoom(팬/줌, BoardManager.PanZoom.cs)
+        /// 양쪽에서 쓴다.</summary>
+        private bool IsOverBaseOrMarker()
+        {
+            return TryGetLocalMouse(out var local) && (FindBaseAtPoint(local) != null || IsPointOverAnyMarker(local));
+        }
+
+        /// <summary>point(baseLayer 기준 mm 좌표)가 실제로 깔려있는 마커
+        /// 아무거나의 사각 영역 안에 있는지 — 마커는 회전을 지원하지 않으므로
+        /// (Center만 있고 회전 없음) 축 정렬 사각형 판정으로 충분하다. 실제
+        /// UGUI 레이캐스터가 RawImage에 대해 판정하는 방식과도 같다.</summary>
+        private bool IsPointOverAnyMarker(Vector2 point)
+        {
+            foreach (var markerGo in EnumerateRealMarkers())
+            {
+                if (!markerGo.TryGetComponent<MarkerBase>(out var marker))
+                {
+                    continue;
+                }
+                Vector2 half = marker.RectTransform.sizeDelta / 2f;
+                Vector2 offset = point - marker.Center;
+                if (Mathf.Abs(offset.x) <= half.x && Mathf.Abs(offset.y) <= half.y)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private void PlaceMarker(string kind, Vector2 point)
@@ -808,6 +892,18 @@ namespace TmgBoard
 
         private void OnMarkerDragRequested(MarkerBase piece)
         {
+            if (IsPlacingMarker)
+            {
+                // 새 마커를 배치하는 중 클릭이 하필 이미 깔려있는 마커 위였어도
+                // 그 마커를 옮기지 않는다(사용자 보고, 2026-09-06 — "마커 위에
+                // 마커를 배치하려 하면 기존 마커를 옮기려 해서 배치가 안 됨").
+                // 여기서 드래그를 시작해버리면 다음 프레임부터 BoardInputController.
+                // RunFrame의 IsDraggingMarker 분기가 IsPlacingMarker보다 먼저
+                // 걸려 배치 자체가 영영 처리되지 않는다(BoardManager.cs의
+                // OnDragRequested·_pendingDeploymentDef/HasDisplacementQueue
+                // 가드와 같은 이유).
+                return;
+            }
             BeginUndoTransaction($"{DescribeMarkerKind(piece)} 이동");
             _draggingMarker = piece;
             if (TryGetLocalMouse(out var mouseLocal))
@@ -844,7 +940,13 @@ namespace TmgBoard
             }
             if (TryGetLocalMouse(out var mouseLocal))
             {
-                var desired = mouseLocal + _markerDragOffset;
+                // 블라스트 템플릿은 쥔 지점과 무관하게 항상 마우스 아래 유닛의
+                // 정확한 중심으로 스냅한다(그 외에는 일반 마커처럼 쥔 지점
+                // 오프셋을 유지) — ShowMarkerPlacementPreview의 배치 스냅과
+                // 같은 규칙(사용자 요청).
+                var desired = _draggingMarker is IconMarker draggingIcon && draggingIcon.Kind == "blast"
+                        ? ResolveBlastTemplateCenter(mouseLocal)
+                        : mouseLocal + _markerDragOffset;
                 _draggingMarker.Center = ClampMarkerToMap(_draggingMarker, desired);
             }
         }

@@ -14,5 +14,10 @@ namespace TmgBoard
         [SerializeField] private string kind = "";
 
         public string Kind => kind;
+
+        /// <summary>프리팹 없이 코드로 직접 짓는 마커(블라스트 템플릿 —
+        /// BoardManager.BlastTemplate.cs)용. 나머지 kind는 전부 Resources/Markers/
+        /// 프리팹의 인스펙터 값으로 채워지므로 이 세터가 필요 없다.</summary>
+        public void SetKind(string value) => kind = value;
     }
 }

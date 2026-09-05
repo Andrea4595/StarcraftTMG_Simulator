@@ -121,14 +121,17 @@ namespace TmgBoard
             }
             else if (Input.GetMouseButtonDown(2))
             {
-                // 유닛(Base)이나 미션 목표 마커 위에서 시작한 팬도 막히면 안
-                // 된다(사용자 보고, 2026-09-01) — 둘 다 raycastTarget=true라
-                // IsPointerOverUi()엔 "UI 위"로 잡히지만, 실제 UI 패널이 아니라
-                // 지도 위 조각일 뿐이므로(아래 줌 분기와 같은 방식) 직접 다시
-                // 확인한다. else 분기라 매 프레임이 아니라 가운데 버튼을 누른
-                // 그 프레임에만(그리고 위 조건이 막혔을 때만) 계산된다.
+                // 유닛(Base)이나 미션 목표 마커, 일반 마커(활성화/점령/아이콘/
+                // 블라스트 템플릿 등) 위에서 시작한 팬도 막히면 안 된다(사용자
+                // 보고, 2026-09-01 — 유닛/미션 목표, 2026-09-06 — 일반 마커
+                // 추가) — 셋 다 raycastTarget=true라 IsPointerOverUi()엔
+                // "UI 위"로 잡히지만, 실제 UI 패널이 아니라 지도 위 조각일
+                // 뿐이므로(아래 줌 분기와 같은 방식) 직접 다시 확인한다. else
+                // 분기라 매 프레임이 아니라 가운데 버튼을 누른 그 프레임에만
+                // (그리고 위 조건이 막혔을 때만) 계산된다.
                 bool overPanExemptPiece = TryGetLocalMouse(out var panDownLocal)
-                        && (FindBaseAtPoint(panDownLocal) != null || FindMissionObjectiveAtPoint(panDownLocal) != null);
+                        && (FindBaseAtPoint(panDownLocal) != null || FindMissionObjectiveAtPoint(panDownLocal) != null
+                                || IsPointOverAnyMarker(panDownLocal));
                 if (overPanExemptPiece)
                 {
                     _panning = true;
@@ -171,16 +174,20 @@ namespace TmgBoard
                 else
                 {
                     // 드래그/회전 중이 아니라면, 마우스가 베이스나 미션 목표
-                    // 마커 위에 있어도 줌은 평소처럼 동작해야 한다(사용자 요청,
-                    // 마커는 2026-09-01 보고 버그로 추가) — 둘 다 레이캐스트
-                    // 가능한 UI라 IsPointerOverUi()가 true로 잡히지만, 그게
-                    // "실제 UI 패널 위"인지 "그냥 지도 위 조각 위"인지는
-                    // 구분해야 한다. FindBaseAtPoint/FindMissionObjectiveAtPoint로
-                    // 직접 다시 확인한다 — _hoveredBase는 이 함수가
-                    // UpdateHoveredUnit()보다 먼저 불려서 한 프레임 지난
-                    // 값이라 여기선 못 믿는다.
+                    // 마커, 일반 마커(활성화/점령/아이콘/블라스트 템플릿 등)
+                    // 위에 있어도 줌은 평소처럼 동작해야 한다(사용자 요청,
+                    // 미션 목표는 2026-09-01 보고 버그로 추가, 일반 마커는
+                    // 2026-09-06 — "BT, 그리고 다른 마커 위에서 휠을 굴릴 때
+                    // 화면 줌 변경이 안됨") — 셋 다 레이캐스트 가능한 UI라
+                    // IsPointerOverUi()가 true로 잡히지만, 그게 "실제 UI 패널
+                    // 위"인지 "그냥 지도 위 조각 위"인지는 구분해야 한다.
+                    // FindBaseAtPoint/FindMissionObjectiveAtPoint/
+                    // IsPointOverAnyMarker로 직접 다시 확인한다 — _hoveredBase는
+                    // 이 함수가 UpdateHoveredUnit()보다 먼저 불려서 한 프레임
+                    // 지난 값이라 여기선 못 믿는다.
                     bool overExemptPiece = TryGetLocalMouse(out var hoverLocal)
-                            && (FindBaseAtPoint(hoverLocal) != null || FindMissionObjectiveAtPoint(hoverLocal) != null);
+                            && (FindBaseAtPoint(hoverLocal) != null || FindMissionObjectiveAtPoint(hoverLocal) != null
+                                    || IsPointOverAnyMarker(hoverLocal));
                     if (!IsPointerOverUi() || overExemptPiece)
                     {
                         float factor = scroll > 0f ? ZoomStep : 1f / ZoomStep;
