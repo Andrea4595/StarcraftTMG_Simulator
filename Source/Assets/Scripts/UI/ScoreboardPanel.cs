@@ -468,7 +468,15 @@ namespace TmgBoard
         {
             int oldValue = MatchState.RoundNumber;
             bool composite = _board != null && _board.IsTopUndoEntryComposite(RoundCompositeKey);
-            int baseValue = composite ? _roundStreakBase : oldValue;
+            // _roundStreakBase는 -1로 시작한다 — 이 컴포넌트가 로컬에서 한
+            // 번도 라운드를 누른 적 없는 채로 composite만 true인 경우(세이브
+            // 로드/멀티 상대의 되돌리기 항목이 이미 스택 맨 위를 차지),
+            // 초기화 안 된 -1을 그대로 라벨에 쓰면 "라운드 -1 -> N"처럼
+            // 틀린 값이 찍힌다 — PhaseBar.AdvancePhase의 같은 문제(거긴
+            // 배열 인덱싱이라 크래시까지 났다, 2026-09-09)와 동일한 원인.
+            // 미션/킬 VP 스테퍼가 이미 쓰는 "로컬에 실제로 값이 있을 때만
+            // 신뢰" 패턴과 같은 이유로 방어.
+            int baseValue = (composite && _roundStreakBase >= 0) ? _roundStreakBase : oldValue;
             _roundStreakBase = baseValue;
 
             BoardManager.PerformNetworkedMutation(_board, $"[점수판] 라운드 {baseValue} -> {roundNumber}", "라운드 변경",

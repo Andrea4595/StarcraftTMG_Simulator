@@ -136,6 +136,34 @@ namespace TmgBoard
             _openChatNextFrame = true;
         }
 
+        /// <summary>사용자 보고 — 버튼 등 UI를 한 번 조작한 뒤 채팅을 열려고
+        /// 엔터를 누르면, 그 버튼이 EventSystem에 "선택된 상태"로 계속 남아
+        /// 있다가 유니티 기본 Submit 액션(엔터에 매핑됨)에 의해 다시 눌려버려
+        /// 의도치 않은 조작이 한 번 더 일어난다. LateUpdate는 EventSystem
+        /// 자신의 Update(Submit 판정 포함)보다 항상 나중에 실행되므로,
+        /// 클릭이 일어난 바로 그 프레임에 선택을 지워두면 실행 순서와
+        /// 무관하게 다음 프레임부터는 안전하다 — 채팅 입력창 자신과 다른
+        /// 입력창(TMP_InputField, 이름 짓기 등)은 계속 선택 상태를 유지해야
+        /// 타이핑이 끊기지 않으므로 제외한다.</summary>
+        private void LateUpdate()
+        {
+            var es = EventSystem.current;
+            if (es == null)
+            {
+                return;
+            }
+            var selected = es.currentSelectedGameObject;
+            if (selected == null || selected == _chatInputGo)
+            {
+                return;
+            }
+            if (selected.GetComponent<TMP_InputField>() != null)
+            {
+                return;
+            }
+            es.SetSelectedGameObject(null);
+        }
+
         /// <summary>다른 입력창이 지금 이 엔터를 가져가야 하는지 판단한다.
         /// 채팅 자신의 입력창은 반드시 제외해야 한다 — 닫혀 있어도(CanvasGroup
         /// 으로 숨김/비활성 처리만 하고 GameObject 자체는 계속 살아있음,

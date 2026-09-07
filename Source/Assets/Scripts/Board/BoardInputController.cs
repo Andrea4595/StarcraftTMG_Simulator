@@ -44,6 +44,12 @@ namespace TmgBoard
                 return;
             }
 
+            if (board.IsClickCandidatePending)
+            {
+                board.HandleClickCandidateInput();
+                return;
+            }
+
             if (board.IsDraggingFollower)
             {
                 board.HandleFollowerDragInput();

@@ -111,7 +111,14 @@ namespace TmgBoard
             int nextIndex = (MatchState.PhaseIndex + 1) % MatchState.PhaseNames.Length;
             var board = Board();
             bool composite = board != null && board.IsTopUndoEntryComposite(PhaseCompositeKey);
-            int baseIndex = composite ? _phaseStreakBase : MatchState.PhaseIndex;
+            // _phaseStreakBase는 -1로 시작한다 — 이 컴포넌트가 로컬에서 한
+            // 번도 페이즈를 누른 적 없는 채로(세이브 로드나 멀티 상대의
+            // 되돌리기 항목이 이미 스택 맨 위를 "phase" 키로 차지하고 있어서)
+            // composite만 true인 경우, 초기화 안 된 -1을 그대로 배열
+            // 인덱스로 쓰면 IndexOutOfRangeException이 난다(사용자 보고,
+            // 2026-09-09). ScoreboardPanel의 미션/킬 VP 스테퍼가 이미 쓰는
+            // "로컬에 실제로 값이 있을 때만 신뢰" 패턴과 같은 이유로 방어.
+            int baseIndex = (composite && _phaseStreakBase >= 0) ? _phaseStreakBase : MatchState.PhaseIndex;
             _phaseStreakBase = baseIndex;
 
             string label = $"[점수판] 페이즈 {MatchState.PhaseNames[baseIndex]} -> {MatchState.PhaseNames[nextIndex]}";

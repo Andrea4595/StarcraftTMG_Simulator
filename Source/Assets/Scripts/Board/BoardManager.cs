@@ -107,6 +107,16 @@ namespace TmgBoard
         private Base _draggingFollower;
         private Vector2 _dragOffset;
 
+        // 일반 드래그(유닛 이동 중이 아닐 때) 전용 — 클릭과 드래그를 구분한다
+        // (사용자 보고, 2026-09-09: "유닛 정보 확인하려는데 이동됨"). 마우스를
+        // 누른 순간 바로 _draggingPiece를 세우지 않고, 이 임계값을 넘는
+        // 움직임이 실제로 있어야만 진짜 드래그로 승격한다 — 그 전까지는
+        // 클릭(상세 패널 선택은 OnDragRequested 맨 앞에서 이미 무조건
+        // 처리됨)일 뿐, 되돌리기 트랜잭션도 위치 재계산도 하지 않는다.
+        private const float ClickVsDragThresholdMm = 3f;
+        private Base _clickCandidatePiece;
+        private Vector2 _clickCandidateMouseDownLocal;
+
         private bool _unitMoveActive;
         private Base _unitMoveLeading;
         private Unit _unitMoveUnit;
@@ -593,6 +603,7 @@ namespace TmgBoard
 
         internal bool IsUnitMoveActive => _unitMoveActive;
         internal bool IsDraggingPiece => _draggingPiece != null;
+        internal bool IsClickCandidatePending => _clickCandidatePiece != null;
         internal bool IsDraggingFollower => _draggingFollower != null;
         internal bool HasDisplacementQueue => _displacementQueue.Count > 0;
         internal bool HasPendingDeployment => _pendingDeploymentDef != null;
@@ -615,6 +626,37 @@ namespace TmgBoard
                 engageCheckPiece = _draggingFollower;
             }
             UpdateEngageWarning(engageCheckPiece);
+        }
+
+        /// <summary>일반 드래그(유닛 이동 중이 아닐 때)에서 클릭과 드래그를
+        /// 구분한다 — OnDragRequested가 마우스를 누른 순간 여기로 넘겨준
+        /// "후보"를, ClickVsDragThresholdMm을 넘게 움직였을 때만 진짜
+        /// 드래그(되돌리기 트랜잭션 시작 + _draggingPiece 승격)로 바꾼다.
+        /// 그 전에 마우스를 떼면 순수 클릭으로 끝난다 — 상세 패널 선택은
+        /// OnDragRequested 맨 앞에서 이미 처리됐으므로 여기선 아무것도 더
+        /// 안 해도 된다(위치 재계산도, 되돌리기 기록도, 네트워크 브로드캐스트도
+        /// 전혀 없음).</summary>
+        internal void HandleClickCandidateInput()
+        {
+            if (Input.GetMouseButtonUp(0))
+            {
+                _clickCandidatePiece = null;
+                return;
+            }
+            if (!TryGetLocalMouse(out var local))
+            {
+                return;
+            }
+            if (Vector2.Distance(local, _clickCandidateMouseDownLocal) < ClickVsDragThresholdMm)
+            {
+                return;
+            }
+            var piece = _clickCandidatePiece;
+            _clickCandidatePiece = null;
+            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 이동", piece.Unit?.Team);
+            _draggingPiece = piece;
+            _dragOffset = piece.Center - local;
+            piece.transform.SetAsLastSibling();
         }
 
         internal void HandlePieceDragInput()
@@ -760,13 +802,14 @@ namespace TmgBoard
                 return;
             }
 
-            // 유닛 이동 중이 아닌 일반 드래그 — 여기서 되돌리기 트랜잭션을 열고,
-            // 마우스를 뗄 때(EndPieceDrag) 실제로 뭔가 바뀌었으면 커밋한다.
-            BeginUndoTransaction($"{DescribeUnit(piece.Unit)} 이동", piece.Unit?.Team);
-            _draggingPiece = piece;
-            TryGetLocalMouse(out var localFree);
-            _dragOffset = piece.Center - localFree;
-            piece.transform.SetAsLastSibling();
+            // 유닛 이동 중이 아닌 일반 드래그 — 클릭인지 드래그인지 아직
+            // 모르므로 바로 드래그를 시작하지 않고 "클릭 후보"로만 기록한다.
+            // ClickVsDragThresholdMm을 넘는 움직임이 실제로 확인되면
+            // HandleClickCandidateInput이 그때 되돌리기 트랜잭션을 열고
+            // _draggingPiece로 승격한다.
+            TryGetLocalMouse(out var candidateLocal);
+            _clickCandidatePiece = piece;
+            _clickCandidateMouseDownLocal = candidateLocal;
         }
 
         private void EndPieceDrag()
@@ -1034,6 +1077,10 @@ namespace TmgBoard
                 if (_draggingPiece == model)
                 {
                     _draggingPiece = null;
+                }
+                if (_clickCandidatePiece == model)
+                {
+                    _clickCandidatePiece = null;
                 }
                 _pieces.Remove(model);
                 Destroy(model.gameObject);
