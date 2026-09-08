@@ -59,6 +59,7 @@ namespace TmgBoard
         private const int ChatMessageMaxLength = 120;
 
         private GameObject _chatLogGo;
+        private Image _chatLogBackground;
         private CanvasGroup _chatLogCanvasGroup;
         private RectTransform _chatLogViewport;
         private RectTransform _chatLogContent;
@@ -361,8 +362,8 @@ namespace TmgBoard
             // 생기면 PushLogEntry가 UpdateChatLogSize로 실제 크기를 잡는다.
             logRect.sizeDelta = new Vector2(ChatLogWidth, 0f);
 
-            var bg = _chatLogGo.AddComponent<Image>();
-            bg.color = new Color(0.1f, 0.1f, 0.1f, 0.85f);
+            _chatLogBackground = _chatLogGo.AddComponent<Image>();
+            _chatLogBackground.color = new Color(0.1f, 0.1f, 0.1f, 0.85f);
 
             _chatLogCanvasGroup = _chatLogGo.AddComponent<CanvasGroup>();
 
@@ -518,6 +519,7 @@ namespace TmgBoard
         private void UpdateChatLayout()
         {
             GetCorner(out float baseX, out float cornerY);
+            bool onGameBoard = SceneManager.GetActiveScene().name == GameConstants.GameBoardSceneName;
 
             if (_chatInputGo != null)
             {
@@ -529,28 +531,34 @@ namespace TmgBoard
                 ((RectTransform)_chatLogGo.transform).anchoredPosition = new Vector2(baseX, cornerY + ChatInputHeight + ChatLogGap);
             }
 
-            UpdateChatLogFade();
+            // 게임판(GameBoard) 화면에서는 배경 없이, 절대 안 사라지게 —
+            // 다른 화면(CardPrep/CardDraft/TerrainSetup)에서는 기존처럼
+            // 배경 있고 비활동 시 페이드(사용자 지정, 2026-09-09).
+            if (_chatLogBackground != null)
+            {
+                _chatLogBackground.enabled = !onGameBoard;
+            }
+            UpdateChatLogFade(onGameBoard);
         }
 
-        /// <summary>마지막 활동(새 메시지 수신 또는 채팅 입력창 열기)으로부터
-        /// ChatLogFadeDelaySeconds 동안은 완전히 보이고, 그 뒤
-        /// ChatLogFadeDurationSeconds에 걸쳐 서서히 투명해진다(사용자 요청,
-        /// 2026-09-09 — "항상 떠 있지 말고"). 완전히 투명해지면 뒤에 있는
-        /// 보드 클릭이 막히지 않도록 blocksRaycasts도 함께 끈다(입력창을
-        /// 숨길 때 CanvasGroup으로 처리하는 것과 같은 이유).</summary>
-        private void UpdateChatLogFade()
+        /// <summary>게임판 화면(onGameBoard)에서는 항상 완전히 보이게 고정
+        /// (사용자 요청 — "아예 사라지지 않게 해줘"). 그 외 화면에서는 기존
+        /// 규칙 그대로: 채팅 입력창이 열려 있는 동안(타이핑 중이든 그냥
+        /// 열어만 두었든)은 계속 켜져 있고, 아니면 마지막 활동(새 메시지
+        /// 수신 또는 입력창 열기)으로부터 ChatLogFadeDelaySeconds 동안만
+        /// 완전히 보이다가 ChatLogFadeDurationSeconds에 걸쳐 서서히
+        /// 투명해진다. 완전히 투명해지면 뒤에 있는 보드 클릭이 막히지
+        /// 않도록 blocksRaycasts도 함께 끈다(입력창을 숨길 때 CanvasGroup으로
+        /// 처리하는 것과 같은 이유).</summary>
+        private void UpdateChatLogFade(bool onGameBoard)
         {
             if (_chatLogCanvasGroup == null)
             {
                 return;
             }
             float alpha;
-            if (_chatOpen)
+            if (onGameBoard || _chatOpen)
             {
-                // 입력창을 띄워둔 채 가만히 있는 동안은(아직 안 보내고 타이핑
-                // 중이든, 그냥 열어만 두었든) 로그가 계속 켜져 있어야 한다
-                // (사용자 요청, 2026-09-09) — 경과 시간과 무관하게 항상 완전히
-                // 보이게 고정.
                 alpha = 1f;
             }
             else
