@@ -968,11 +968,11 @@ namespace TmgBoard
             {
                 return;
             }
-            float radius = _unitMovePhase == "followers"
-                    ? CoherencyBoundaryRadiusMm()
-                    : _unitMoveLeading.BoundingRadius;
+            bool isFollowerPhase = _unitMovePhase == "followers";
+            float radius = isFollowerPhase ? CoherencyBoundaryRadiusMm() : _unitMoveLeading.BoundingRadius;
+            float margin = isFollowerPhase ? UnitMoveConfirmIconFollowerMarginMm : UnitMoveConfirmIconMarginMm;
             _unitMoveConfirmIcon.anchoredPosition = _unitMoveLeading.Center
-                    + new Vector2(0f, radius + UnitMoveConfirmIconMarginMm);
+                    + new Vector2(0f, radius + margin);
         }
 
     }
