@@ -88,7 +88,10 @@ namespace TmgBoard
             _menuTarget = null;
             UpdateLeadingMoveBoundary();
             UpdateUnitMoveDistanceLabel();
-            ShowUnitMovePanel(true);
+            // 이동 확정 패널(경고 라벨 전용)은 팔로워 단계에서만 필요하다 —
+            // 리딩 단계의 확정은 이제 리딩 모델 위에 뜨는 체크 아이콘이
+            // 맡는다(사용자 요청, 2026-09-09).
+            ShowUnitMoveConfirmIcon(true);
             BroadcastUnitMoveGuidelineIfNetworked(true);
         }
 
@@ -387,6 +390,7 @@ namespace TmgBoard
             guideline.LabelText = $"{distMm / GameConstants.MmPerInch:F1}\"";
             guideline.LabelPos = _unitMoveLeading.Center + new Vector2(0f, _unitMoveLeading.BoundingRadius + 14f);
             UpdateUnitMovePathVisual();
+            UpdateUnitMoveConfirmIconPosition();
         }
 
         private void FinishLeadingMove()
@@ -418,6 +422,11 @@ namespace TmgBoard
             // 말고 팔로워 단계 중간중간도 상대에게 보여달라.
             BroadcastUnitIfNetworked(_unitMoveUnit);
             ShowUnitMovePanel(true);
+            // 배치(deployment)는 여기가 확정 아이콘을 처음 보여주는 시점이다
+            // (StartUnitMove를 안 거치므로) — 재이동은 이미 리딩 단계부터
+            // 떠 있었지만, 다시 불러도 안전하다(그냥 같은 위치로 재갱신).
+            ShowUnitMoveConfirmIcon(true);
+            UpdateUnitMoveConfirmIconPosition();
         }
 
         /// <summary>배치의 리딩 모델이 실제로 놓인 뒤에야 나머지 모델을 만든다 —
@@ -820,6 +829,7 @@ namespace TmgBoard
             _displacementQueue.Clear();
             _displacementResumeLeadingFinish = false;
             ShowUnitMovePanel(false);
+            ShowUnitMoveConfirmIcon(false);
             guideline.ClearBand();
         }
 
@@ -863,7 +873,7 @@ namespace TmgBoard
             _unitMovePanel.anchorMax = new Vector2(0.5f, 0f);
             _unitMovePanel.pivot = new Vector2(0.5f, 0f);
             _unitMovePanel.anchoredPosition = new Vector2(0f, 70f);
-            _unitMovePanel.sizeDelta = new Vector2(260f, 90f);
+            _unitMovePanel.sizeDelta = new Vector2(260f, 0f);
 
             var bg = panelGo.AddComponent<Image>();
             bg.color = new Color(0.15f, 0.15f, 0.15f, 0.95f);
@@ -875,6 +885,11 @@ namespace TmgBoard
             layout.childForceExpandWidth = true;
             layout.childControlHeight = true;
             layout.childForceExpandHeight = false;
+            // "이동 확정" 버튼이 없어진 뒤로 이 패널엔 경고 라벨 하나만
+            // 남는다(2026-09-09, 아래 확정 체크 아이콘으로 대체됨) — 고정
+            // 높이 대신 내용에 맞춰 자동으로 크기를 잡는다.
+            var fitter = panelGo.AddComponent<ContentSizeFitter>();
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             var warningGo = new GameObject("Warning", typeof(RectTransform));
             warningGo.transform.SetParent(panelGo.transform, false);
@@ -885,29 +900,61 @@ namespace TmgBoard
             _unitMoveWarningLabel.textWrappingMode = TextWrappingModes.Normal;
             warningGo.SetActive(false);
 
-            var btnGo = new GameObject("CompleteButton", typeof(RectTransform));
-            btnGo.transform.SetParent(panelGo.transform, false);
-            var btnLe = btnGo.AddComponent<LayoutElement>();
-            btnLe.preferredHeight = 32f;
-            var btnImg = btnGo.AddComponent<Image>();
-            btnImg.color = new Color(0.3f, 0.3f, 0.3f, 1f);
-            var btn = btnGo.AddComponent<Button>();
-            btn.onClick.AddListener(OnUnitMoveCompletePressed);
-            var btnLabelGo = new GameObject("Label", typeof(RectTransform));
-            btnLabelGo.transform.SetParent(btnGo.transform, false);
-            var btnLabelRect = (RectTransform)btnLabelGo.transform;
-            btnLabelRect.anchorMin = Vector2.zero;
-            btnLabelRect.anchorMax = Vector2.one;
-            btnLabelRect.offsetMin = Vector2.zero;
-            btnLabelRect.offsetMax = Vector2.zero;
-            var btnLabel = btnLabelGo.AddComponent<TextMeshProUGUI>();
-            btnLabel.text = "이동 확정";
-            btnLabel.alignment = TextAlignmentOptions.Center;
-            btnLabel.fontSize = 16f;
-            btnLabel.color = Color.white;
-            btnLabel.raycastTarget = false;
-
             panelGo.SetActive(false);
+        }
+
+        /// <summary>"이동 확정" 역할을 하는 체크 아이콘(ComfirmDial.png) —
+        /// 예전엔 화면 하단 고정 패널의 버튼이었는데, 사용자 요청(2026-09-09)
+        /// 으로 이동시킨(리딩) 모델 바로 위에 뜨는 보드 공간 아이콘으로
+        /// 바뀌었다. 클릭 동작은 그대로 OnUnitMoveCompletePressed를 재사용
+        /// (리딩 단계면 FinishLeadingMove, 팔로워 단계면 CompleteUnitMove) —
+        /// 어느 UI가 눌렀는지만 바뀌었을 뿐 로직은 그대로다.</summary>
+        private void BuildUnitMoveConfirmIcon()
+        {
+            var go = new GameObject("UnitMoveConfirmIcon", typeof(RectTransform));
+            go.transform.SetParent(baseLayer, false);
+            _unitMoveConfirmIcon = (RectTransform)go.transform;
+            _unitMoveConfirmIcon.sizeDelta = new Vector2(UnitMoveConfirmIconSizeMm, UnitMoveConfirmIconSizeMm);
+
+            var img = go.AddComponent<RawImage>();
+            img.texture = Resources.Load<Texture2D>("UI/ComfirmDial");
+
+            var btn = go.AddComponent<Button>();
+            btn.targetGraphic = img;
+            btn.onClick.AddListener(OnUnitMoveCompletePressed);
+
+            go.SetActive(false);
+        }
+
+        private void ShowUnitMoveConfirmIcon(bool show)
+        {
+            if (_unitMoveConfirmIcon == null)
+            {
+                return;
+            }
+            _unitMoveConfirmIcon.gameObject.SetActive(show);
+            if (show)
+            {
+                // baseLayer의 다른 조각(유닛)들보다 위에 그려져야 클릭도
+                // 막히지 않는다 — 이 아이콘은 Start() 때 한 번만 만들어져서
+                // 그 뒤에 생기는 유닛 조각들보다 항상 형제 순서가 앞선다.
+                _unitMoveConfirmIcon.SetAsLastSibling();
+            }
+        }
+
+        /// <summary>리딩 모델의 테두리(BoundingRadius) 바로 위에 아이콘을
+        /// 띄운다 — 리딩 단계에서 드래그/웨이포인트로 위치가 바뀔 때마다
+        /// (UpdateUnitMoveDistanceLabel 경유) 다시 불린다. 팔로워 단계에서는
+        /// 리딩 모델이 더 이상 움직이지 않으므로 FinishLeadingMove에서 한
+        /// 번만 다시 불러주면 충분하다.</summary>
+        private void UpdateUnitMoveConfirmIconPosition()
+        {
+            if (_unitMoveConfirmIcon == null || _unitMoveLeading == null)
+            {
+                return;
+            }
+            _unitMoveConfirmIcon.anchoredPosition = _unitMoveLeading.Center
+                    + new Vector2(0f, _unitMoveLeading.BoundingRadius + UnitMoveConfirmIconMarginMm);
         }
 
     }
