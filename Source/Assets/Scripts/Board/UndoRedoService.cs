@@ -819,6 +819,25 @@ namespace TmgBoard
             _undoHistoryVersion++;
         }
 
+        /// <summary>상대와의 연결이 끊겨 멀티 세션이 끝났을 때 부른다
+        /// (DisconnectNoticeController.OnClientDisconnected) — 위 잠금을 푼다.
+        /// 잠금 자체가 "멀티 플레이 중 사고(중복 생성) 방지" 목적으로만
+        /// 걸리는 것이라(사용자 지정: "잠기는건 오직 멀티 플레이에서 사고를
+        /// 방지하기 위한 조치니까"), 세션이 끝나면 그 위험도 같이 끝난다 —
+        /// 계속 잠긴 채로 남겨둘 이유가 없다.</summary>
+        internal void UnlockAllUndoHistoryAfterMultiplayerEnded()
+        {
+            foreach (var entry in _undoStack)
+            {
+                entry.Locked = false;
+            }
+            foreach (var entry in _redoStack)
+            {
+                entry.Locked = false;
+            }
+            _undoHistoryVersion++;
+        }
+
         // ── 되돌리기 토스트(2026-09-02 신설, 사용자 요청) ────────────────
         // 조작이 하나 기록되거나(CommitUndoTransaction) 되돌리기/복원
         // 카스케이드가 일어날 때마다 화면 좌측 하단 구석에 잠깐 띄운다.

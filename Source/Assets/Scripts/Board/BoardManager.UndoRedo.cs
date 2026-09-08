@@ -125,6 +125,11 @@ namespace TmgBoard
             _undoRedo.LockExistingUndoHistoryForMidGameJoin();
         }
 
+        internal void UnlockAllUndoHistoryAfterMultiplayerEnded()
+        {
+            _undoRedo.UnlockAllUndoHistoryAfterMultiplayerEnded();
+        }
+
         /// <summary>진행 중인 트랜잭션이 있으면(드래그/유닛 이동/변위 배치 등) 그
         /// 중간 상태를 되돌리기로 덮어써서 망가뜨리면 안 되므로 무시한다.
         /// 다이얼로그나 다이얼 메뉴가 떠 있을 때도 마찬가지 — 그 뒤에서 보드가

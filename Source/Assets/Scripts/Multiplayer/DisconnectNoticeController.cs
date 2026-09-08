@@ -94,7 +94,24 @@ namespace TmgBoard
                 return; // 아직 상대와 제대로 붙은 적이 없다 — 연결 시도/취소 중일 뿐, 진짜 이탈이 아니다.
             }
             _wasFullyConnected = false;
+            UnlockUndoHistoryIfOnGameBoard();
             ShowNotice();
+        }
+
+        /// <summary>진짜 상대 이탈이 확정된 시점(위)에 한 번 부른다 —
+        /// LockExistingUndoHistoryForMidGameJoin이 건 잠금을 푼다. 잠금은
+        /// "멀티 플레이 중 사고 방지" 목적으로만 걸리므로(사용자 지정 —
+        /// [[project_multiplayer_architecture]]) 세션이 끝나면 필요 없다.
+        /// 이후 사용자가 "나가기"를 눌러 씬을 떠나든, "X"로 닫고 그 자리에서
+        /// 솔로로 계속하든(BoardManager 인스턴스가 그대로 살아남는 경우) 둘 다
+        /// 커버된다 — 어느 쪽이든 이 시점 이후로는 되돌리기를 다시 쓸 수
+        /// 있어야 한다. GameBoard가 아닌 다른 씬(CardPrep/CardDraft/
+        /// TerrainSetup)에서 끊기면 BoardManager 자체가 없으므로 조용히
+        /// 아무 일도 안 한다(풀어줄 되돌리기 히스토리가 애초에 없음).</summary>
+        private static void UnlockUndoHistoryIfOnGameBoard()
+        {
+            var board = Object.FindFirstObjectByType<BoardManager>();
+            board?.UnlockAllUndoHistoryAfterMultiplayerEnded();
         }
 
         private void ShowNotice()
