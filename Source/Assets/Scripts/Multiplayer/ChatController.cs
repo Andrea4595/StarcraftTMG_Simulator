@@ -55,7 +55,7 @@ namespace TmgBoard
         // 서서히 투명해진다.
         private const float ChatLogFadeDelaySeconds = 5f;
         private const float ChatLogFadeDurationSeconds = 3f;
-        private const float CornerMargin = 16f; // GameBoard가 아닌 씬(패널/마커바가 없음)에서의 화면 가장자리 여백.
+        private const float CornerMargin = 0f; // GameBoard가 아닌 씬(패널/마커바가 없음)에서도 화면 모서리에 딱 붙인다.
         private const int ChatMessageMaxLength = 120;
 
         private GameObject _chatLogGo;
@@ -332,17 +332,17 @@ namespace TmgBoard
 
         /// <summary>GameBoard 씬은 팀 A 로스터 패널(왼쪽 가장자리)과 마커바
         /// (아래쪽 가장자리)가 화면 진짜 모서리를 덮고 있어서, 그 안쪽(지도가
-        /// 실제로 보이는 영역의 모서리)에 자리를 잡아야 한다(예전
-        /// BoardManager.ToastStack.cs가 쓰던 계산 그대로 재사용). 다른 씬
+        /// 실제로 보이는 영역의 모서리)에 자리를 잡아야 한다. 다른 씬
         /// (CardPrep/CardDraft/TerrainSetup)엔 그 패널/바가 아예 없으므로
         /// (조사 확인 — 그 씬들의 컨트롤러는 GameConstants.PendingPanelWidth/
-        /// MarkerBarHeight를 전혀 참조하지 않는다) 화면 진짜 모서리에서 작은
-        /// 여백만 두면 된다.</summary>
+        /// MarkerBarHeight를 전혀 참조하지 않는다) 화면 진짜 모서리를 그대로
+        /// 쓴다. 어느 쪽이든 그 경계에 딱 붙인다(여백 없음 — 사용자 요청,
+        /// 2026-09-09 "왼쪽 하단에 딱 붙이자").</summary>
         private static void GetCorner(out float x, out float y)
         {
             bool onGameBoard = SceneManager.GetActiveScene().name == GameConstants.GameBoardSceneName;
-            x = onGameBoard ? GameConstants.PendingPanelWidth + 16f : CornerMargin;
-            y = onGameBoard ? GameConstants.MarkerBarHeight + 16f : CornerMargin;
+            x = onGameBoard ? GameConstants.PendingPanelWidth : CornerMargin;
+            y = onGameBoard ? GameConstants.MarkerBarHeight : CornerMargin;
         }
 
         /// <summary>채팅 입력창 바로 위, 예전 토스트 스택이 뜨던 자리에 고정
