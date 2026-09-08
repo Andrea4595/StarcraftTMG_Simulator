@@ -51,8 +51,14 @@ namespace TmgBoard
         private const float CoherencyEpsilonMm = 0.5f; // 경계에 스냅됐을 때 부동소수점 오차로 오탐지되는 것 방지
         private const float FollowerSnapThresholdMm = 6f;
         private const float RayOriginOffsetMm = 1f; // 배치 밴드 경계 위 점에서 반직선을 쏠 때, 자기 자신이 속한 변과의 자기교차(t≈0) 방지
-        private const float UnitMoveConfirmIconSizeMm = 24f; // "이동 확정" 체크 아이콘(ComfirmDial.png) 크기
-        private const float UnitMoveConfirmIconMarginMm = 16f; // 리딩 모델 테두리로부터 위로 띄우는 여백
+        // "이동 확정" 체크 아이콘(ComfirmDial.png) 크기 — 사용자 요청으로
+        // 기존 24mm의 2배(2026-09-09, "버튼 크기를 지금의 2배로").
+        private const float UnitMoveConfirmIconSizeMm = 48f;
+        // 리딩 모델 테두리로부터 위로 띄우는 여백 — 이동 거리 인치 라벨
+        // (guideline.LabelPos, 테두리+14mm)과 겹친다는 사용자 보고로 크게
+        // 올렸다(2026-09-09, "지금보다 훨씬 위로") — 라벨보다 한참 위,
+        // 커진 아이콘 크기(48mm)까지 감안한 여유.
+        private const float UnitMoveConfirmIconMarginMm = 70f;
 
         // ── 전열/지원열 하이라이팅 + 인게이지 경고 ───────────────────────
         // EngageDistanceMm은 둘 다 공유한다(같은 룰북 개념 — 인게이지 거리 1").
