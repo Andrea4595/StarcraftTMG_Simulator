@@ -41,20 +41,31 @@ namespace TmgBoard
         public static ChatController Instance { get; private set; }
 
         // ── 채팅/로그 창 ────────────────────────────────────────────────
-        private const float ChatInputWidth = 260f;
+        private const float ChatInputWidth = 340f;
         private const float ChatInputHeight = 32f;
         private const float ChatLogWidth = ChatInputWidth; // 입력창과 폭을 맞춰 시각적으로 하나의 패널처럼 보이게.
         private const float ChatLogHeight = 200f;
         private const float ChatLogGap = 8f; // 입력창 위쪽 끝과 로그 창 아래쪽 끝 사이 여백.
         private const float ChatLogEntrySpacing = 2f;
         private const int ChatLogMaxEntries = 200; // 넘으면 오래된 줄부터 지운다(메모리/성능 — 사용자 지정).
+        // 로그 창은 항상 떠 있지 않는다(사용자 요청, 2026-09-09) — 마지막
+        // 활동(새 메시지 수신 또는 채팅 입력창 열기) 후 ChatLogFadeDelaySeconds
+        // 동안은 그대로 보이고, 그 뒤 ChatLogFadeDurationSeconds에 걸쳐
+        // 서서히 투명해진다.
+        private const float ChatLogFadeDelaySeconds = 5f;
+        private const float ChatLogFadeDurationSeconds = 3f;
         private const float CornerMargin = 16f; // GameBoard가 아닌 씬(패널/마커바가 없음)에서의 화면 가장자리 여백.
         private const int ChatMessageMaxLength = 120;
 
         private GameObject _chatLogGo;
+        private CanvasGroup _chatLogCanvasGroup;
         private RectTransform _chatLogViewport;
         private RectTransform _chatLogContent;
         private ScrollRect _chatLogScrollRect;
+        // 0으로 시작 — 아직 아무 활동도 없었으면 처음부터 숨겨진 채로
+        // 시작한다(Time.time과의 차이가 항상 크므로 자연히 alpha=0으로
+        // 계산됨, 별도 초기화 불필요).
+        private float _lastLogActivityTime;
         private readonly List<GameObject> _chatLogEntries = new List<GameObject>();
 
         private GameObject _chatInputGo;
@@ -185,6 +196,9 @@ namespace TmgBoard
 
         private void OpenChatInput()
         {
+            // 채팅 입력창을 열면 로그도 즉시 다시 보인다(사용자 요청,
+            // 2026-09-09) — 이미 투명해져 있었더라도.
+            _lastLogActivityTime = Time.time;
             _chatOpen = true;
             _chatInputField.text = "";
             _chatInputGroup.alpha = 1f;
@@ -338,6 +352,8 @@ namespace TmgBoard
             var bg = _chatLogGo.AddComponent<Image>();
             bg.color = new Color(0.1f, 0.1f, 0.1f, 0.85f);
 
+            _chatLogCanvasGroup = _chatLogGo.AddComponent<CanvasGroup>();
+
             var scrollRect = _chatLogGo.AddComponent<ScrollRect>();
             scrollRect.horizontal = false;
             scrollRect.vertical = true;
@@ -358,6 +374,15 @@ namespace TmgBoard
             _chatLogContent.anchorMin = new Vector2(0f, 1f);
             _chatLogContent.anchorMax = new Vector2(1f, 1f);
             _chatLogContent.pivot = new Vector2(0.5f, 1f);
+            // sizeDelta를 명시적으로 0으로 리셋해야 한다 — 새로 만든
+            // RectTransform의 기본 sizeDelta는 (100,100)인데, 가로로 꽉 채운
+            // (anchorMin.x=0/anchorMax.x=1) 상태에서 그 기본값이 그대로
+            // 남으면 실제 너비가 뷰포트보다 100px 더 넓어져서 가운데 정렬된
+            // 채 양쪽으로 삐져나온다 — 왼쪽으로 삐져나온 부분이 Viewport의
+            // RectMask2D에 잘려 "로그 왼쪽이 잘려 보인다"는 버그로 나타났다
+            // (사용자 보고, 2026-09-09). sizeDelta.y는 곧바로 아래
+            // ContentSizeFitter가 실제 콘텐츠 높이로 덮어쓰므로 0이어도 무방.
+            _chatLogContent.sizeDelta = Vector2.zero;
             _chatLogContent.anchoredPosition = Vector2.zero;
 
             var layout = contentGo.AddComponent<VerticalLayoutGroup>();
@@ -393,6 +418,7 @@ namespace TmgBoard
         /// 다시 0으로 스냅해준다.</summary>
         internal void PushLogEntry(string message, string team = "")
         {
+            _lastLogActivityTime = Time.time;
             bool wasAtBottom = IsScrolledToBottom();
 
             var rowGo = new GameObject("LogRow", typeof(RectTransform));
@@ -474,6 +500,29 @@ namespace TmgBoard
             {
                 ((RectTransform)_chatLogGo.transform).anchoredPosition = new Vector2(baseX, cornerY + ChatInputHeight + ChatLogGap);
             }
+
+            UpdateChatLogFade();
+        }
+
+        /// <summary>마지막 활동(새 메시지 수신 또는 채팅 입력창 열기)으로부터
+        /// ChatLogFadeDelaySeconds 동안은 완전히 보이고, 그 뒤
+        /// ChatLogFadeDurationSeconds에 걸쳐 서서히 투명해진다(사용자 요청,
+        /// 2026-09-09 — "항상 떠 있지 말고"). 완전히 투명해지면 뒤에 있는
+        /// 보드 클릭이 막히지 않도록 blocksRaycasts도 함께 끈다(입력창을
+        /// 숨길 때 CanvasGroup으로 처리하는 것과 같은 이유).</summary>
+        private void UpdateChatLogFade()
+        {
+            if (_chatLogCanvasGroup == null)
+            {
+                return;
+            }
+            float elapsed = Time.time - _lastLogActivityTime;
+            float alpha = elapsed <= ChatLogFadeDelaySeconds
+                    ? 1f
+                    : 1f - Mathf.Clamp01((elapsed - ChatLogFadeDelaySeconds) / ChatLogFadeDurationSeconds);
+            _chatLogCanvasGroup.alpha = alpha;
+            _chatLogCanvasGroup.blocksRaycasts = alpha > 0f;
+            _chatLogCanvasGroup.interactable = alpha > 0f;
         }
     }
 }
