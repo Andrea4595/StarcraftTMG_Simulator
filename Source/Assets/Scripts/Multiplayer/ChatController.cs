@@ -47,6 +47,7 @@ namespace TmgBoard
         private const float ChatLogHeight = 200f;
         private const float ChatLogGap = 8f; // 입력창 위쪽 끝과 로그 창 아래쪽 끝 사이 여백.
         private const float ChatLogEntrySpacing = 2f;
+        private const float ChatLogPadding = 6f; // Viewport 안쪽 여백 — 창 높이를 콘텐츠에 맞출 때도 같은 값을 더해준다.
         private const int ChatLogMaxEntries = 200; // 넘으면 오래된 줄부터 지운다(메모리/성능 — 사용자 지정).
         // 로그 창은 항상 떠 있지 않는다(사용자 요청, 2026-09-09) — 마지막
         // 활동(새 메시지 수신 또는 채팅 입력창 열기) 후 ChatLogFadeDelaySeconds
@@ -62,9 +63,11 @@ namespace TmgBoard
         private RectTransform _chatLogViewport;
         private RectTransform _chatLogContent;
         private ScrollRect _chatLogScrollRect;
-        // 0으로 시작 — 아직 아무 활동도 없었으면 처음부터 숨겨진 채로
-        // 시작한다(Time.time과의 차이가 항상 크므로 자연히 alpha=0으로
-        // 계산됨, 별도 초기화 불필요).
+        // 앱을 막 시작한 시점엔 Time.time 자체가 0에 가까워서(0부터
+        // 세기 시작함), 필드 기본값 0을 그대로 두면 "지금과의 차이"가
+        // 작게 나와 로그가 시작부터 켜져 보이는 버그가 있었다(사용자 보고,
+        // 2026-09-09) — Awake에서 HideLogImmediately()로 명시적으로
+        // "충분히 오래전"으로 세팅한다.
         private float _lastLogActivityTime;
         private readonly List<GameObject> _chatLogEntries = new List<GameObject>();
 
@@ -104,6 +107,7 @@ namespace TmgBoard
 
             BuildChatLog();
             BuildChatInput();
+            HideLogImmediately();
         }
 
         private void OnDestroy()
@@ -237,6 +241,11 @@ namespace TmgBoard
             text = text.Trim();
             if (text.Length == 0)
             {
+                // 아무것도 입력하지 않고 엔터만 누른 경우 — 입력창을 닫는
+                // 것뿐 아니라 로그도 바로 꺼진다(사용자 요청, 2026-09-09 —
+                // "채팅창에 아무것도 입력하지 않고 그냥 엔터 키를 누르면
+                // 입력창 제거와 함께 채팅창도 꺼줘").
+                HideLogImmediately();
                 return;
             }
             if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening
@@ -347,7 +356,10 @@ namespace TmgBoard
             logRect.anchorMin = new Vector2(0f, 0f);
             logRect.anchorMax = new Vector2(0f, 0f);
             logRect.pivot = new Vector2(0f, 0f);
-            logRect.sizeDelta = new Vector2(ChatLogWidth, ChatLogHeight);
+            // 높이는 0에서 시작 — 아직 아무 줄도 없으므로(사용자 요청,
+            // 2026-09-09: 콘텐츠에 맞춰 아래쪽 정렬로 딱 맞게). 첫 줄이
+            // 생기면 PushLogEntry가 UpdateChatLogSize로 실제 크기를 잡는다.
+            logRect.sizeDelta = new Vector2(ChatLogWidth, 0f);
 
             var bg = _chatLogGo.AddComponent<Image>();
             bg.color = new Color(0.1f, 0.1f, 0.1f, 0.85f);
@@ -364,8 +376,8 @@ namespace TmgBoard
             _chatLogViewport = (RectTransform)viewportGo.transform;
             _chatLogViewport.anchorMin = Vector2.zero;
             _chatLogViewport.anchorMax = Vector2.one;
-            _chatLogViewport.offsetMin = new Vector2(6f, 6f);
-            _chatLogViewport.offsetMax = new Vector2(-6f, -6f);
+            _chatLogViewport.offsetMin = new Vector2(ChatLogPadding, ChatLogPadding);
+            _chatLogViewport.offsetMax = new Vector2(-ChatLogPadding, -ChatLogPadding);
             viewportGo.AddComponent<RectMask2D>();
 
             var contentGo = new GameObject("Content", typeof(RectTransform));
@@ -445,10 +457,24 @@ namespace TmgBoard
             // 아래 IsScrolledToBottom/스냅이 방금 추가한 줄을 포함한 최신
             // 크기 기준으로 정확히 계산된다.
             Canvas.ForceUpdateCanvases();
+            UpdateChatLogSize();
             if (wasAtBottom)
             {
                 _chatLogScrollRect.verticalNormalizedPosition = 0f;
             }
+        }
+
+        /// <summary>로그 창 자체의 높이를 콘텐츠에 맞춰 위쪽 끝만 움직인다 —
+        /// 창은 하단(입력창 바로 위)에 고정된 채(pivot=(0,0)) 내용이 적으면
+        /// 짧게, ChatLogHeight까지는 내용만큼 자라다가 그 이상은 기존처럼
+        /// 스크롤된다(사용자 요청, 2026-09-09 — "채팅창은 하단 정렬로,
+        /// 배경인 검은색을 핏하게 아래로 줄여줘"). Content 자체의 실제 높이
+        /// (ContentSizeFitter가 계산한 값)에 Viewport 안쪽 여백(위+아래)을
+        /// 다시 더해야 창 전체 높이가 나온다.</summary>
+        private void UpdateChatLogSize()
+        {
+            float height = Mathf.Min(_chatLogContent.rect.height + ChatLogPadding * 2f, ChatLogHeight);
+            ((RectTransform)_chatLogGo.transform).sizeDelta = new Vector2(ChatLogWidth, height);
         }
 
         /// <summary>content가 viewport보다 짧아 아직 스크롤할 게 없으면
@@ -479,6 +505,8 @@ namespace TmgBoard
                 }
             }
             _chatLogEntries.Clear();
+            Canvas.ForceUpdateCanvases();
+            UpdateChatLogSize();
         }
 
         /// <summary>매 프레임 폴링(코루틴 없음, 이 프로젝트 관례) — 채팅
@@ -516,13 +544,35 @@ namespace TmgBoard
             {
                 return;
             }
-            float elapsed = Time.time - _lastLogActivityTime;
-            float alpha = elapsed <= ChatLogFadeDelaySeconds
-                    ? 1f
-                    : 1f - Mathf.Clamp01((elapsed - ChatLogFadeDelaySeconds) / ChatLogFadeDurationSeconds);
+            float alpha;
+            if (_chatOpen)
+            {
+                // 입력창을 띄워둔 채 가만히 있는 동안은(아직 안 보내고 타이핑
+                // 중이든, 그냥 열어만 두었든) 로그가 계속 켜져 있어야 한다
+                // (사용자 요청, 2026-09-09) — 경과 시간과 무관하게 항상 완전히
+                // 보이게 고정.
+                alpha = 1f;
+            }
+            else
+            {
+                float elapsed = Time.time - _lastLogActivityTime;
+                alpha = elapsed <= ChatLogFadeDelaySeconds
+                        ? 1f
+                        : 1f - Mathf.Clamp01((elapsed - ChatLogFadeDelaySeconds) / ChatLogFadeDurationSeconds);
+            }
             _chatLogCanvasGroup.alpha = alpha;
             _chatLogCanvasGroup.blocksRaycasts = alpha > 0f;
             _chatLogCanvasGroup.interactable = alpha > 0f;
+        }
+
+        /// <summary>_lastLogActivityTime을 "충분히 오래전"으로 세팅해 다음
+        /// UpdateChatLogFade에서 즉시(페이드 없이) 완전히 투명해지게 한다 —
+        /// Time.time의 절대값이 앱 시작 시점엔 0에 가까울 수 있으므로,
+        /// 고정된 과거 시각이 아니라 항상 "지금 기준 충분히 오래전"으로
+        /// 상대적으로 계산한다.</summary>
+        private void HideLogImmediately()
+        {
+            _lastLogActivityTime = Time.time - (ChatLogFadeDelaySeconds + ChatLogFadeDurationSeconds + 1f);
         }
     }
 }

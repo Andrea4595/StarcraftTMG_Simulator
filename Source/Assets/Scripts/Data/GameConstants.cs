@@ -90,17 +90,30 @@ namespace TmgBoard
             TeamColors["neutral"] = DefaultTeamColorNeutral;
         }
 
+        // 텍스트용으로 보정할 때 강제할 최소 명도(V, HSV) — 플레이어가
+        // 스코어보드에서 팀 색을 아주 어둡게 고르면(검정에 가깝게) 그 색
+        // 그대로는 어두운 배경(채팅/로그 창 등) 위에서 텍스트가 거의 안
+        // 보이게 된다(사용자 보고, 2026-09-09). 이미 밝은 색은 이 값보다
+        // 명도가 높으므로 전혀 안 바뀐다 — "너무 어두울 때만" 끌어올리는
+        // 효과.
+        private const float MinTextColorValue = 0.85f;
+
         /// <summary>팀 코드("A"/"B" 등)로 텍스트에 칠할 색을 찾는다 — 되돌리기
         /// 토스트/되돌리기 목록 텍스트를 행위자 팀 색으로 칠하기 위해 쓴다
         /// (2026-09-04, 사용자 요청). team이 비어있거나 TeamColors에 없는
         /// 값(마커처럼 팀 소유가 뚜렷하지 않은 행동)이면 흰색으로 대체한다.
         /// TeamColors 자체는 유닛 채우기용으로 알파 0.85가 섞여 있어(반투명),
-        /// 텍스트 가독성을 위해 항상 알파 1로 강제한다.</summary>
+        /// 텍스트 가독성을 위해 항상 알파 1로 강제한다. 명도(HSV의 V)도
+        /// MinTextColorValue 밑으로는 못 내려가게 끌어올린다 — 색상(Hue)/
+        /// 채도는 그대로 두고 명도만 보정하므로 팀 색의 정체성은 유지하면서
+        /// 어두운 색을 골랐을 때만 텍스트가 실제로 보이게 한다.</summary>
         public static Color ResolveTeamTextColor(string team)
         {
             if (!string.IsNullOrEmpty(team) && TeamColors.TryGetValue(team, out var c))
             {
-                return new Color(c.r, c.g, c.b, 1f);
+                Color.RGBToHSV(c, out float h, out float s, out float v);
+                var boosted = Color.HSVToRGB(h, s, Mathf.Max(v, MinTextColorValue));
+                return new Color(boosted.r, boosted.g, boosted.b, 1f);
             }
             return Color.white;
         }
