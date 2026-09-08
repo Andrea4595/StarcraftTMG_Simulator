@@ -78,23 +78,282 @@ namespace TmgBoard
                 _unitMoveOriginalPositions[model] = model.Center;
             }
 
-            // "베이스 테두리로부터 이동거리만큼"을 나타내야 하므로, 리딩 모델의
-            // 시작 시점 타원 테두리를 실제 법선 방향으로 밀어낸 곡선을 그린다
-            // (EllipseOffsetPolygonAt — 코헤런시 링과 같은 기법). 원형 베이스일
-            // 때는 이 곡선이 그냥 원과 같아 보이지만, 타원형 베이스는 방향마다
-            // 진짜 테두리로부터의 거리가 달라야 정확하다(사용자 지적 — 예전엔
-            // 이걸 반지름 하나로만 근사한 원을 그렸었다). 모델이 하나뿐인
-            // 유닛은 코헤런시만큼 이동력이 늘어난다(팔로워를 코헤런시 안에
-            // 배치할 필요가 없으므로).
-            float moveMm = EffectiveMoveInch(_unitMoveUnit) * GameConstants.MmPerInch;
-            var boundary = EllipseMath.EllipseOffsetPolygonAt(_unitMoveStartPoint, leading.SizeMm, leading.RotationRadians, moveMm);
+            // 리딩 모델은 이제 한 번의 드래그로 끝나지 않는다 — 뗄 때마다
+            // (CommitLeadingWaypoint) 그 지점이 웨이포인트로 쌓이고, 다시
+            // 집어서 계속 옮길 수 있다. "이동 확정" 버튼(팔로워 단계 전용이던
+            // 패널을 여기서부터 띄운다)을 눌러야 FinishLeadingMove로 넘어간다
+            // (사용자 요청, 2026-09-08 백로그 — 이동에도 확정 기능).
+            _unitMoveWaypoints.Clear();
+            _unitMoveLastAnchor = _unitMoveStartPoint;
+            _menuTarget = null;
+            UpdateLeadingMoveBoundary();
+            UpdateUnitMoveDistanceLabel();
+            ShowUnitMovePanel(true);
+            BroadcastUnitMoveGuidelineIfNetworked(true);
+        }
+
+        /// <summary>리딩 모델을 뗄 때마다(드래그 종료) 불린다 — 그 지점을
+        /// 웨이포인트로 확정하고, 리딩 단계 자체는 계속 이어간다(다시 집어서
+        /// 옮길 수 있음). "이동 확정" 버튼을 눌러야 FinishLeadingMove로
+        /// 넘어간다.</summary>
+        private void CommitLeadingWaypoint()
+        {
+            _unitMoveWaypoints.Add(_unitMoveLeading.Center);
+            _unitMoveWaypointGhosts.Add(BuildWaypointGhost(_unitMoveLeading, _unitMoveLeading.Center));
+            _unitMoveLastAnchor = _unitMoveLeading.Center;
+            UpdateLeadingMoveBoundary();
+            UpdateUnitMoveDistanceLabel();
+            BroadcastUnitMoveGuidelineIfNetworked(true);
+        }
+
+        /// <summary>웨이포인트 지점에 남기는 반투명 고스트 — 배치 미리보기
+        /// (BoardManager.Roster.cs의 ShowBasePlacementPreview)와 같은 패턴으로
+        /// 만든다: template과 같은 크기/색(반투명)/회전, raycastTarget 꺼서
+        /// 클릭/드래그 대상이 되지 않는다. 로컬 웨이포인트(template=
+        /// _unitMoveLeading)와 상대 웨이포인트(template=상대 유닛의 리딩
+        /// 모델) 둘 다 이 하나를 공유해서 만든다.</summary>
+        private Base BuildWaypointGhost(Base template, Vector2 center)
+        {
+            var go = new GameObject("UnitMoveWaypointGhost", typeof(RectTransform));
+            go.transform.SetParent(baseLayer, false);
+            var ghost = go.AddComponent<Base>();
+            ghost.SizeMm = template.SizeMm;
+            var mutedColor = template.FillColor;
+            mutedColor.a *= 0.5f;
+            ghost.FillColor = mutedColor;
+            ghost.IsDisplacement = template.IsDisplacement;
+            ghost.RotationDegrees = template.RotationDegrees;
+            ghost.raycastTarget = false;
+            ghost.Center = center;
+            ghost.Refresh();
+            return ghost;
+        }
+
+        private void ClearWaypointGhosts()
+        {
+            foreach (var ghost in _unitMoveWaypointGhosts)
+            {
+                if (ghost != null)
+                {
+                    Destroy(ghost.gameObject);
+                }
+            }
+            _unitMoveWaypointGhosts.Clear();
+        }
+
+        /// <summary>우클릭 처리 — 리딩 단계에서 웨이포인트가 하나라도 있으면
+        /// 마지막 한 점만 되돌리고(리딩 모델도 그 이전 지점으로 되돌아감),
+        /// 더 되돌릴 웨이포인트가 없으면(=아직 시작점 그대로) 이동 전체를
+        /// 취소한다. 팔로워 단계에서는(웨이포인트 개념이 없다) 예전과 같이
+        /// 항상 전체 취소.</summary>
+        internal void HandleUnitMoveRightClick()
+        {
+            if (_unitMovePhase == "leading" && _unitMoveWaypoints.Count > 0)
+            {
+                if (_draggingPiece == _unitMoveLeading)
+                {
+                    _draggingPiece = null;
+                }
+                _unitMoveWaypoints.RemoveAt(_unitMoveWaypoints.Count - 1);
+                var lastGhost = _unitMoveWaypointGhosts[_unitMoveWaypointGhosts.Count - 1];
+                _unitMoveWaypointGhosts.RemoveAt(_unitMoveWaypointGhosts.Count - 1);
+                if (lastGhost != null)
+                {
+                    Destroy(lastGhost.gameObject);
+                }
+                _unitMoveLastAnchor = _unitMoveWaypoints.Count > 0
+                        ? _unitMoveWaypoints[_unitMoveWaypoints.Count - 1]
+                        : _unitMoveStartPoint;
+                _unitMoveLeading.Center = _unitMoveLastAnchor;
+                UpdateLeadingMoveBoundary();
+                UpdateUnitMoveDistanceLabel();
+                BroadcastUnitMoveGuidelineIfNetworked(true);
+            }
+            else
+            {
+                CancelUnitMove();
+            }
+        }
+
+        /// <summary>지금까지 확정된 웨이포인트 구간들의 총 길이만 잰다 — 지금
+        /// 드래그 중인 마지막 구간은 포함하지 않는다(호출부가 필요하면 따로
+        /// 더한다). 측정 기준은 "시작 지점 베이스의 끄트머리(진행 방향
+        /// 쪽)로부터 도착 지점 베이스의 가장 먼 곳(같은 방향 쪽)까지"
+        /// (사용자 지정) — 리딩 모델은 두 지점에서 크기/회전이 똑같으므로,
+        /// 이 정의는 대수적으로 정확히 두 중심점 사이의 직선 거리와 같다
+        /// (양쪽 다 "+ 같은 방향으로 반지름만큼" 만큼 밀려나 있어 서로
+        /// 상쇄됨). 그래서 그냥 Vector2.Distance면 충분하다 — 굳이 반지름을
+        /// 계산해 더했다 뺄 필요가 없다.</summary>
+        private float ComputeUsedMoveMm()
+        {
+            return ComputeUsedMoveMm(_unitMoveStartPoint, _unitMoveWaypoints);
+        }
+
+        /// <summary>로컬(위)과 상대(ApplyRemoteUnitMoveGuideline) 둘 다 공유하는
+        /// 순수 계산 — 시작점부터 웨이포인트를 순서대로 잇는 구간 길이의 합.</summary>
+        private static float ComputeUsedMoveMm(Vector2 startPoint, IReadOnlyList<Vector2> waypoints)
+        {
+            float usedMm = 0f;
+            Vector2 prev = startPoint;
+            foreach (var wp in waypoints)
+            {
+                usedMm += Vector2.Distance(prev, wp);
+                prev = wp;
+            }
+            return usedMm;
+        }
+
+        /// <summary>anchor를 중심으로, 남은 이동력(remainingMm, 음수면 0으로
+        /// 취급)만큼 밀어낸 테두리 폴리곤을 만든다 — 로컬 이동력 링
+        /// (UpdateLeadingMoveBoundary)과 상대 이동력 링(ApplyRemoteUnitMoveGuideline)
+        /// 둘 다 이 하나를 공유한다.</summary>
+        private static Vector2[] BuildMoveBoundaryRing(Vector2 anchor, Vector2 sizeMm, float rotationRadians, float remainingMm)
+        {
+            var boundary = EllipseMath.EllipseOffsetPolygonAt(anchor, sizeMm, rotationRadians, Mathf.Max(0f, remainingMm));
             var closed = new Vector2[boundary.Length + 1];
             boundary.CopyTo(closed, 0);
             closed[boundary.Length] = boundary[0];
+            return closed;
+        }
+
+        /// <summary>남은 이동력만큼 _unitMoveLastAnchor(마지막 확정 웨이포인트,
+        /// 없으면 시작점)를 중심으로 한 테두리를 그린다 — 웨이포인트를 찍을
+        /// 때마다 다시 계산해야 한다(이미 쓴 만큼 남은 반경이 줄어듦). 이
+        /// 테두리는 어디까지나 참고용 시각 요소이고, 실제 제한(clamp)은
+        /// Shift를 누르고 있을 때만 ClampTowardCenter가 건다(사용자 요청 —
+        /// 기본은 자유이동, 이 게임 다른 배치/이동 스냅과 같은 정책).</summary>
+        private void UpdateLeadingMoveBoundary()
+        {
+            float totalMoveMm = EffectiveMoveInch(_unitMoveUnit) * GameConstants.MmPerInch;
+            float remainingMm = totalMoveMm - ComputeUsedMoveMm();
             guideline.RadiusMm = 0f;
-            guideline.BandPolylines = new List<Vector2[]> { closed };
-            _menuTarget = null;
-            UpdateUnitMoveDistanceLabel();
+            guideline.BandPolylines = new List<Vector2[]> { BuildMoveBoundaryRing(_unitMoveLastAnchor, _unitMoveLeading.SizeMm, _unitMoveLeading.RotationRadians, remainingMm) };
+        }
+
+        /// <summary>확정된 웨이포인트들 + 지금 드래그 중인 마지막 구간을 잇는
+        /// 선을 그린다. 각 구간은 "시작 지점의 진행방향 쪽 끄트머리부터
+        /// 도착 지점의 같은 방향 가장 먼 곳까지"(사용자 지정, ComputeUsedMoveMm
+        /// 참고) 그린다 — 그래서 선이 도착 지점의 고스트 위로 겹쳐 지나간다
+        /// (의도된 모습, 고스트가 반투명이라 선이 그 위로 보임).</summary>
+        private void UpdateUnitMovePathVisual()
+        {
+            var segments = new List<Vector2[]>();
+            Vector2 prev = _unitMoveStartPoint;
+            foreach (var wp in _unitMoveWaypoints)
+            {
+                segments.Add(PathSegmentEndpoints(prev, wp, _unitMoveLeading.SizeMm, _unitMoveLeading.RotationRadians));
+                prev = wp;
+            }
+            segments.Add(PathSegmentEndpoints(prev, _unitMoveLeading.Center, _unitMoveLeading.SizeMm, _unitMoveLeading.RotationRadians));
+            guideline.PathSegments = segments;
+        }
+
+        /// <summary>로컬 웨이포인트 경로선(위)과 상대 웨이포인트 경로선
+        /// (ApplyRemoteUnitMoveGuideline) 둘 다 공유하는 순수 계산 — sizeMm/
+        /// rotationRadians를 인자로 받으므로 어느 쪽 리딩 모델이든 쓸 수
+        /// 있다.</summary>
+        private static Vector2[] PathSegmentEndpoints(Vector2 a, Vector2 b, Vector2 sizeMm, float rotationRadians)
+        {
+            Vector2 offset = b - a;
+            float dist = offset.magnitude;
+            if (dist < 0.0001f)
+            {
+                return new[] { a, b };
+            }
+            Vector2 dir = offset / dist;
+            float radius = EllipseMath.EllipseRadiusInDirection(sizeMm, rotationRadians, dir);
+            return new[] { a + dir * radius, b + dir * radius };
+        }
+
+        /// <summary>상대가 자신의 리딩 모델 웨이포인트 경로를 갱신할 때마다
+        /// BoardNetworkSync를 거쳐 온다(BroadcastUnitMoveGuidelineIfNetworked
+        /// 참고) — 로컬 게임 상태는 전혀 안 바꾸고, "구경용" 고스트+경로선만
+        /// 갱신한다. active=false면 그 시각 요소를 지운다(리딩 단계 종료/
+        /// 취소).</summary>
+        internal void ApplyRemoteUnitMoveGuideline(int networkUnitId, int leadingModelIndex, Vector2 startPoint, Vector2[] waypoints, bool active)
+        {
+            if (!active)
+            {
+                ClearRemoteUnitMoveGuideline();
+                return;
+            }
+            if (!_networkedUnits.TryGet(networkUnitId, out var unit)
+                    || leadingModelIndex < 0 || leadingModelIndex >= unit.Models.Count)
+            {
+                return;
+            }
+            var leading = unit.Models[leadingModelIndex];
+
+            // 다른 유닛의 이동으로 넘어왔으면(상대가 이 유닛 이동을 확정/취소
+            // 하지 않고 바로 다른 유닛을 골랐다는 뜻은 사실 없다 — 한 번에
+            // 하나만 이동 가능 — 하지만 방어적으로 대비) 이전 고스트부터 정리.
+            if (_remoteUnitMoveNetworkId != networkUnitId)
+            {
+                ClearRemoteUnitMoveGhostsOnly();
+                _remoteUnitMoveNetworkId = networkUnitId;
+            }
+
+            // 고스트 개수를 웨이포인트 개수에 맞춘다 — 모자라면 만들고
+            // (매번 통째로 다시 만들지 않는다, 부드러운 트윈 등은 필요
+            // 없지만 매 방송마다 파괴+재생성하면 깜빡임만 생김), 넘치면
+            // 지운다(상대가 우클릭으로 마지막 점을 되돌린 경우 자연히 여기로
+            // 온다).
+            while (_remoteUnitMoveGhosts.Count < waypoints.Length)
+            {
+                _remoteUnitMoveGhosts.Add(BuildWaypointGhost(leading, waypoints[_remoteUnitMoveGhosts.Count]));
+            }
+            while (_remoteUnitMoveGhosts.Count > waypoints.Length)
+            {
+                var last = _remoteUnitMoveGhosts[_remoteUnitMoveGhosts.Count - 1];
+                _remoteUnitMoveGhosts.RemoveAt(_remoteUnitMoveGhosts.Count - 1);
+                if (last != null)
+                {
+                    Destroy(last.gameObject);
+                }
+            }
+            for (int i = 0; i < waypoints.Length; i++)
+            {
+                if (_remoteUnitMoveGhosts[i] != null)
+                {
+                    _remoteUnitMoveGhosts[i].Center = waypoints[i];
+                }
+            }
+
+            var segments = new List<Vector2[]>();
+            Vector2 prev = startPoint;
+            foreach (var wp in waypoints)
+            {
+                segments.Add(PathSegmentEndpoints(prev, wp, leading.SizeMm, leading.RotationRadians));
+                prev = wp;
+            }
+            guideline.RemotePathSegments = segments;
+
+            // 남은 이동력 링도 로컬과 같은 방식으로 — unit.MoveInch는 이미
+            // 기존 유닛 동기화로 알고 있으므로 새로 보낼 값이 없다(웨이포인트
+            // 목록만으로 여기서 그대로 다시 계산 가능).
+            Vector2 anchor = waypoints.Length > 0 ? waypoints[waypoints.Length - 1] : startPoint;
+            float totalMoveMm = EffectiveMoveInch(unit) * GameConstants.MmPerInch;
+            float remainingMm = totalMoveMm - ComputeUsedMoveMm(startPoint, waypoints);
+            guideline.RemoteBandPolylines = new List<Vector2[]> { BuildMoveBoundaryRing(anchor, leading.SizeMm, leading.RotationRadians, remainingMm) };
+        }
+
+        private void ClearRemoteUnitMoveGhostsOnly()
+        {
+            foreach (var ghost in _remoteUnitMoveGhosts)
+            {
+                if (ghost != null)
+                {
+                    Destroy(ghost.gameObject);
+                }
+            }
+            _remoteUnitMoveGhosts.Clear();
+        }
+
+        private void ClearRemoteUnitMoveGuideline()
+        {
+            ClearRemoteUnitMoveGhostsOnly();
+            _remoteUnitMoveNetworkId = -1;
+            guideline.ClearRemoteBand();
         }
 
         private float EffectiveMoveInch(Unit unit)
@@ -112,14 +371,34 @@ namespace TmgBoard
             {
                 return;
             }
-            float distMm = Vector2.Distance(_unitMoveLeading.Center, _unitMoveStartPoint);
+            // 배치(신규 유닛 최초 배치)는 웨이포인트 개념이 없다 — 배치는
+            // StartUnitMove를 안 거치고 BeginDeploymentDrag가 상태를 직접
+            // 세팅하므로 _unitMoveStartPoint/_unitMoveLastAnchor가 채워지지
+            // 않는다. 그 값들을 써서 거리 라벨이나 경로 선을 그리면 엉뚱한
+            // 값이 나오므로 배치 중에는 아예 건드리지 않는다.
+            if (_unitMoveIsDeployment)
+            {
+                return;
+            }
+            // 총 거리는 지금까지 확정된 웨이포인트 구간 합 + 지금 드래그 중인
+            // (또는 마지막으로 놓인) 마지막 구간 — 라벨은 그 합계 하나만
+            // 마지막 구간 위에 표시한다(사용자 요청).
+            float distMm = ComputeUsedMoveMm() + Vector2.Distance(_unitMoveLastAnchor, _unitMoveLeading.Center);
             guideline.LabelText = $"{distMm / GameConstants.MmPerInch:F1}\"";
             guideline.LabelPos = _unitMoveLeading.Center + new Vector2(0f, _unitMoveLeading.BoundingRadius + 14f);
+            UpdateUnitMovePathVisual();
         }
 
         private void FinishLeadingMove()
         {
             _unitMovePhase = "followers";
+            // 리딩 단계가 끝났으니 지금까지의 웨이포인트 고스트도 정리한다 —
+            // 최종 위치만 남으면 된다(배치는 애초에 고스트가 안 생기므로
+            // 여기선 아무 일도 안 함). 상대에게도 "이제 그만 지워도 된다"고
+            // 알린다 — 이후 최종 위치는 기존 유닛 방송(BroadcastUnitIfNetworked)
+            // 경로로 따로 전달된다.
+            ClearWaypointGhosts();
+            BroadcastUnitMoveGuidelineIfNetworked(false);
             if (_unitMoveIsDeployment && _pendingFollowerCount > 0)
             {
                 SpawnDeploymentFollowers();
@@ -211,6 +490,9 @@ namespace TmgBoard
             guideline.RadiusMm = 0f;
             guideline.BandPolylines = new List<Vector2[]> { closed };
             guideline.LabelText = "";
+            // 팔로워 단계로 넘어오면 리딩 단계의 웨이포인트 경로 선은 더 이상
+            // 필요 없다.
+            guideline.PathSegments = new List<Vector2[]>();
         }
 
         private void UpdateUnitMoveWarning()
@@ -360,7 +642,10 @@ namespace TmgBoard
             {
                 return SnapToGuidelineBoundary(desired, _unitMoveLeading.SizeMm, _unitMoveLeading.RotationRadians);
             }
-            return ClampTowardCenter(desired, _unitMoveStartPoint, _unitMoveLeading.SizeMm, _unitMoveLeading.RotationRadians);
+            // 웨이포인트 도입 이후: 고정 기준점은 시작점이 아니라 "마지막으로
+            // 확정된 웨이포인트"다 — 이미 쓴 이동력만큼 guideline.BandPolylines
+            // 반경도 줄어들어 있다(UpdateLeadingMoveBoundary).
+            return ClampTowardCenter(desired, _unitMoveLastAnchor, _unitMoveLeading.SizeMm, _unitMoveLeading.RotationRadians);
         }
 
         /// <summary>guideline.BandPolylines 경계 근처에서 (sizeMm/rotationRadians로
@@ -427,11 +712,21 @@ namespace TmgBoard
 
         private void OnUnitMoveCompletePressed()
         {
-            if (!_unitMoveActive || _unitMovePhase != "followers")
+            if (!_unitMoveActive)
             {
                 return;
             }
-            CompleteUnitMove();
+            // 리딩 단계에서 누르면 지금까지 찍은 웨이포인트 경로를 마무리하고
+            // 팔로워 단계(또는 1모델 유닛이면 바로 완료)로 넘어간다. 팔로워
+            // 단계에서 누르면 예전처럼 전체 이동을 확정한다.
+            if (_unitMovePhase == "leading")
+            {
+                FinishLeadingMove();
+            }
+            else if (_unitMovePhase == "followers")
+            {
+                CompleteUnitMove();
+            }
         }
 
         /// <summary>코헤런시 밖에 남은 팔로워가 있어도 모델을 지우지 않는다 —
@@ -489,6 +784,11 @@ namespace TmgBoard
             // 취소는 원래 상태로 되돌렸을 뿐 새로운 변화가 없으므로, 열어둔
             // 되돌리기 트랜잭션은 커밋하지 않고 그냥 버린다.
             DiscardUndoTransaction();
+            // 리딩 단계 도중 취소됐을 수 있다 — 상대 화면에 남아있을 수 있는
+            // 웨이포인트 고스트/경로선을 지우라고 알린다(배치 취소는 이
+            // 안에서 자동으로 무시됨 — BroadcastUnitMoveGuidelineIfNetworked
+            // 참고).
+            BroadcastUnitMoveGuidelineIfNetworked(false);
             EndUnitMove();
         }
 
@@ -507,6 +807,11 @@ namespace TmgBoard
             _unitMoveLeading = null;
             _unitMoveUnit = null;
             _unitMovePhase = "";
+            _unitMoveWaypoints.Clear();
+            _unitMoveLastAnchor = default;
+            // 리딩 단계 도중 취소된 경우(FinishLeadingMove를 거치지 않음)를
+            // 대비한 안전망 — 이미 비어 있으면 아무 일도 안 한다.
+            ClearWaypointGhosts();
             _unitMoveOriginalPositions.Clear();
             _unitMoveIsDeployment = false;
             _deploymentDefSnapshot = null;

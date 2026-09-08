@@ -34,7 +34,10 @@ namespace TmgBoard
 
             if (board.IsUnitMoveActive && Input.GetMouseButtonDown(1))
             {
-                board.CancelUnitMove();
+                // 리딩 단계에서 웨이포인트가 하나라도 찍혀 있으면 그 마지막
+                // 한 점만 되돌리고, 없으면(=아직 시작점) 이동 전체를 취소한다
+                // (사용자 요청).
+                board.HandleUnitMoveRightClick();
                 return;
             }
 

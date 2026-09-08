@@ -122,6 +122,23 @@ namespace TmgBoard
         private Unit _unitMoveUnit;
         private string _unitMovePhase = ""; // "leading" / "followers"
         private Vector2 _unitMoveStartPoint;
+        // 리딩 모델 웨이포인트 경로 — 뗄 때마다(드래그 종료) 그 지점이 여기
+        // 쌓이고, 리딩 단계는 끝나지 않는다("이동 확정" 버튼을 눌러야
+        // FinishLeadingMove로 넘어감). _unitMoveLastAnchor는 마지막으로
+        // 확정된 지점(웨이포인트 중 마지막, 없으면 시작점) — Shift 스냅
+        // 밴드의 중심이자 지금 드래그 중인 마지막 구간의 시작점이다.
+        private readonly List<Vector2> _unitMoveWaypoints = new List<Vector2>();
+        private Vector2 _unitMoveLastAnchor;
+        // 웨이포인트마다 그 자리에 남는 반투명 고스트(리딩 모델과 같은 크기/
+        // 색/회전) — ShowBasePlacementPreview와 같은 패턴(사용자 요청).
+        private readonly List<Base> _unitMoveWaypointGhosts = new List<Base>();
+
+        // 상대가 자신의 리딩 모델을 재이동시키는 동안 보여주는 "구경용"
+        // 고스트 — 위 _unitMoveWaypointGhosts와 완전히 별개 목록(사용자
+        // 요청: 상대 이동/가이드라인도 공유). -1이면 지금 표시 중인 상대
+        // 이동이 없다는 뜻.
+        private readonly List<Base> _remoteUnitMoveGhosts = new List<Base>();
+        private int _remoteUnitMoveNetworkId = -1;
         private readonly Dictionary<Base, Vector2> _unitMoveOriginalPositions = new Dictionary<Base, Vector2>();
 
         private RectTransform _unitMovePanel;
@@ -814,18 +831,28 @@ namespace TmgBoard
 
         private void EndPieceDrag()
         {
-            bool finishedLeading = _unitMoveActive && _unitMovePhase == "leading" && _draggingPiece == _unitMoveLeading;
+            bool wasLeadingDrag = _unitMoveActive && _unitMovePhase == "leading" && _draggingPiece == _unitMoveLeading;
             var movedPiece = _draggingPiece;
             _draggingPiece = null;
 
             var overlapping = FindOverlappingDisplacementBases(movedPiece);
             if (overlapping.Count > 0)
             {
-                StartDisplacementPlacement(movedPiece, overlapping, finishedLeading);
+                StartDisplacementPlacement(movedPiece, overlapping, wasLeadingDrag);
             }
-            else if (finishedLeading)
+            else if (wasLeadingDrag)
             {
-                FinishLeadingMove();
+                // 배치(신규 유닛을 처음 놓는 것)는 예전처럼 한 번의 드래그로
+                // 바로 끝난다 — 웨이포인트 경로는 이미 배치된 유닛을 다시
+                // 옮길 때만 적용된다(사용자 요청 범위).
+                if (_unitMoveIsDeployment)
+                {
+                    FinishLeadingMove();
+                }
+                else
+                {
+                    CommitLeadingWaypoint();
+                }
             }
             else
             {

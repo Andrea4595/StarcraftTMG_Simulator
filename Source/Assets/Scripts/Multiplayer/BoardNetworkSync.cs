@@ -1058,6 +1058,43 @@ namespace TmgBoard
             board.SpawnLocalEmote(spriteIndex, point);
         }
 
+        // ── 유닛 이동 웨이포인트 가이드라인 동기화(2026-09-08 신설) ─────────
+        // 리딩 모델을 재이동시키는 동안(BoardManager.UnitMove.cs) 웨이포인트가
+        // 바뀔 때마다 상대에게도 "구경용" 고스트/경로선을 보여준다(사용자
+        // 요청). 값이 작아(좌표 몇 개) 청크가 필요 없다 — Vector2[] 배열도
+        // NGO RPC가 그대로 직렬화한다. 라운드/페이즈와 같은 이유로 절대
+        // 상태값(그 시점까지의 웨이포인트 목록 전체)을 매번 통째로 보낸다 —
+        // 메시지 순서가 안 맞아도 항상 최신 상태로 수렴한다. 되돌리기 방송과
+        // 같은 이유로 senderId를 실어 자기 메아리를 걸러낸다(안 그러면 내
+        // 화면에 내 고스트가 중복으로 또 생긴다).
+        public void RequestSetUnitMoveGuideline(int networkUnitId, int leadingModelIndex, Vector2 startPoint, Vector2[] waypoints, bool active)
+        {
+            ulong senderId = NetworkManager.Singleton.LocalClientId;
+            RequestSetUnitMoveGuidelineServerRpc(senderId, networkUnitId, leadingModelIndex, startPoint, waypoints, active);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        private void RequestSetUnitMoveGuidelineServerRpc(ulong senderId, int networkUnitId, int leadingModelIndex, Vector2 startPoint, Vector2[] waypoints, bool active)
+        {
+            SetUnitMoveGuidelineRpc(senderId, networkUnitId, leadingModelIndex, startPoint, waypoints, active);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetUnitMoveGuidelineRpc(ulong senderId, int networkUnitId, int leadingModelIndex, Vector2 startPoint, Vector2[] waypoints, bool active)
+        {
+            if (senderId == NetworkManager.Singleton.LocalClientId)
+            {
+                return; // 내가 보낸 것의 메아리 — 내 화면은 이미 로컬에서 직접 그렸다.
+            }
+            var board = Object.FindFirstObjectByType<BoardManager>();
+            if (board == null)
+            {
+                Debug.LogError("[BoardNetworkSync] BoardManager를 못 찾음 — 이동 가이드라인을 못 반영함");
+                return;
+            }
+            board.ApplyRemoteUnitMoveGuideline(networkUnitId, leadingModelIndex, startPoint, waypoints, active);
+        }
+
         // ── 채팅(2026-09-04 신설) ──────────────────────────────────────────
         // 이모트와 같은 이유로 청크가 필요 없다(짧은 한 줄 텍스트,
         // ChatController가 입력창 글자 수 제한으로 이미 짧게 보장한다). 이걸

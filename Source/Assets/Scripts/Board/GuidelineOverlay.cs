@@ -30,6 +30,19 @@ namespace TmgBoard
         private Vector2 _centerMm;
         private float _radiusMm;
         private List<Vector2[]> _bandPolylines = new List<Vector2[]>();
+        // 유닛 이동 웨이포인트 경로 전용 — BandPolylines와 달리 서로 겹침
+        // 클리핑 없이(각 구간이 독립적인 선분) 그냥 그대로 그린다. 각 원소는
+        // 2점짜리 배열(테두리에서 테두리로 다듬어진 한 구간).
+        private List<Vector2[]> _pathSegments = new List<Vector2[]>();
+        // 상대(원격) 플레이어가 지금 웨이포인트로 옮기고 있는 경로 — 로컬
+        // PathSegments와 완전히 독립적인 별도 목록이다(둘 다 동시에 활성일
+        // 수 있으므로 서로 덮어쓰면 안 된다, 사용자 요청: 상대 이동/가이드
+        // 라인도 공유).
+        private List<Vector2[]> _remotePathSegments = new List<Vector2[]>();
+        // 상대의 남은 이동력 테두리 — 로컬 BandPolylines와 완전히 독립적인
+        // 별도 목록(둘 다 동시에 활성일 수 있음, 사용자 요청: 이동력 링도
+        // 공유).
+        private List<Vector2[]> _remoteBandPolylines = new List<Vector2[]>();
         private TextMeshProUGUI _label;
 
         public Vector2 CenterMm { get => _centerMm; set { _centerMm = value; SetVerticesDirty(); } }
@@ -39,6 +52,24 @@ namespace TmgBoard
         {
             get => _bandPolylines;
             set { _bandPolylines = value ?? new List<Vector2[]>(); SetVerticesDirty(); }
+        }
+
+        public List<Vector2[]> PathSegments
+        {
+            get => _pathSegments;
+            set { _pathSegments = value ?? new List<Vector2[]>(); SetVerticesDirty(); }
+        }
+
+        public List<Vector2[]> RemotePathSegments
+        {
+            get => _remotePathSegments;
+            set { _remotePathSegments = value ?? new List<Vector2[]>(); SetVerticesDirty(); }
+        }
+
+        public List<Vector2[]> RemoteBandPolylines
+        {
+            get => _remoteBandPolylines;
+            set { _remoteBandPolylines = value ?? new List<Vector2[]>(); SetVerticesDirty(); }
         }
 
         public string LabelText
@@ -81,6 +112,7 @@ namespace TmgBoard
         {
             _radiusMm = 0f;
             _bandPolylines = new List<Vector2[]>();
+            _pathSegments = new List<Vector2[]>();
             LabelText = "";
             SetVerticesDirty();
         }
@@ -121,6 +153,38 @@ namespace TmgBoard
                     AddPolyline(vh, band, false);
                 }
             }
+
+            foreach (var seg in _pathSegments)
+            {
+                if (seg.Length >= 2)
+                {
+                    AddLineQuad(vh, seg[0], seg[1], LineWidth / 2f);
+                }
+            }
+
+            foreach (var seg in _remotePathSegments)
+            {
+                if (seg.Length >= 2)
+                {
+                    AddLineQuad(vh, seg[0], seg[1], LineWidth / 2f);
+                }
+            }
+
+            foreach (var band in _remoteBandPolylines)
+            {
+                AddPolyline(vh, band, false);
+            }
+        }
+
+        /// <summary>ClearBand()와 별개다 — ClearBand()는 로컬 이동이 끝날 때
+        /// (BandPolylines/LabelText/PathSegments) 쓰고, 이건 원격(상대)
+        /// 이동이 끝났다는 방송을 받았을 때만 쓴다. 서로 독립적이어야
+        /// 한쪽이 끝나도 다른 쪽 시각 요소가 안 지워진다.</summary>
+        public void ClearRemoteBand()
+        {
+            _remotePathSegments = new List<Vector2[]>();
+            _remoteBandPolylines = new List<Vector2[]>();
+            SetVerticesDirty();
         }
 
         private static void AddPolyline(VertexHelper vh, Vector2[] points, bool closed)

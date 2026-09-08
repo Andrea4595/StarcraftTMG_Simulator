@@ -110,6 +110,40 @@ namespace TmgBoard
             BoardNetworkSync.Instance.RequestBroadcastUnit(unitJson);
         }
 
+        /// <summary>리딩 모델 재이동 중 웨이포인트가 바뀔 때마다(BoardManager.
+        /// UnitMove.cs — StartUnitMove/CommitLeadingWaypoint/HandleUnitMoveRightClick/
+        /// FinishLeadingMove/CancelUnitMove) 호출한다. 실제 게임 상태(유닛
+        /// 위치)는 이미 각자 로컬로 반영돼 있으므로, 이 방송은 순전히 상대
+        /// 화면에 "구경용" 고스트/경로선을 보여주기 위한 것이다(사용자 요청,
+        /// 2026-09-08: "이동과 가이드라인이 상대 플레이어에게도 공유됐으면").
+        /// active=false는 그 시각 요소를 지우라는 신호. 배치(신규 유닛 최초
+        /// 배치)는 웨이포인트 개념이 없으므로 조용히 무시한다.</summary>
+        internal void BroadcastUnitMoveGuidelineIfNetworked(bool active)
+        {
+            if (_unitMoveIsDeployment || _unitMoveUnit == null || _unitMoveLeading == null)
+            {
+                return;
+            }
+            if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
+            {
+                return;
+            }
+            if (_unitMoveUnit.NetworkUnitId < 0)
+            {
+                // 한 번도 방송된 적 없는 유닛(상대가 존재 자체를 모름) —
+                // network_unit_id로 지목할 방법이 없으므로 조용히 포기한다.
+                return;
+            }
+            if (BoardNetworkSync.Instance == null)
+            {
+                Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 이동 가이드라인을 못 보냄");
+                return;
+            }
+            int leadingIndex = _unitMoveUnit.Models.IndexOf(_unitMoveLeading);
+            BoardNetworkSync.Instance.RequestSetUnitMoveGuideline(
+                    _unitMoveUnit.NetworkUnitId, leadingIndex, _unitMoveStartPoint, _unitMoveWaypoints.ToArray(), active);
+        }
+
         /// <summary>유닛 이동/배치 워크플로우가 우클릭으로 취소될 때
         /// (BoardManager.UnitMove.cs의 CancelUnitMove, 배치 중 취소 분기)
         /// 호출한다 — 로컬 파괴는 CancelUnitMove가 이미 무조건 해뒀고

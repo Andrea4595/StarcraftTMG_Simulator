@@ -86,10 +86,18 @@ namespace TmgBoard
                     _displacementResumeLeadingFinish = false;
                     if (resume)
                     {
-                        // 유닛 이동/배치 중에 변위를 통과한 경우 — 그 트랜잭션을 이어서
-                        // 마무리한다(anchor 자신의 공유는 FinishLeadingMove 이후
-                        // 이어지는 CompleteUnitMove 경로에서 자연히 일어난다).
-                        FinishLeadingMove();
+                        // 배치(신규 유닛을 처음 놓는 것)는 예전처럼 여기서 바로
+                        // 끝난다. 이미 배치된 유닛을 다시 옮기는 중이었다면, 이
+                        // 지점을 웨이포인트로 확정하고 리딩 단계를 계속한다
+                        // (사용자 요청 범위 — EndPieceDrag의 같은 분기 참고).
+                        if (_unitMoveIsDeployment)
+                        {
+                            FinishLeadingMove();
+                        }
+                        else
+                        {
+                            CommitLeadingWaypoint();
+                        }
                     }
                     else
                     {
