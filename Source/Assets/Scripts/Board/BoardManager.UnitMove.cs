@@ -421,7 +421,11 @@ namespace TmgBoard
             // — 사용자 요청(2026-08-30): 전체 배치가 다 끝날 때까지 기다리지
             // 말고 팔로워 단계 중간중간도 상대에게 보여달라.
             BroadcastUnitIfNetworked(_unitMoveUnit);
-            ShowUnitMovePanel(true);
+            // 패널(경고 라벨 전용)은 더 이상 여기서 무조건 켜지 않는다 —
+            // UpdateUnitMoveWarning()이 경고가 실제로 있을 때만 켠다(사용자
+            // 보고, 2026-09-09: "팔로워 옮길 때 화면 하단에 예전 버튼
+            // 흔적이 남아있어, 백그라운드 박스가 작게 보여" — 경고가 없어도
+            // 패딩만 있는 빈 상자가 계속 떠 있던 게 원인).
             // 배치(deployment)는 여기가 확정 아이콘을 처음 보여주는 시점이다
             // (StartUnitMove를 안 거치므로) — 재이동은 이미 리딩 단계부터
             // 떠 있었지만, 다시 불러도 안전하다(그냥 같은 위치로 재갱신).
@@ -526,6 +530,15 @@ namespace TmgBoard
             if (_unitMoveWarningLabel != null)
             {
                 _unitMoveWarningLabel.gameObject.SetActive(anyOut);
+            }
+            // 패널(경고 라벨을 담는 배경 상자) 자체도 경고가 실제로 있을
+            // 때만 보인다 — 예전엔 팔로워 단계 내내 항상 켜져 있었는데
+            // ("이동 확정" 버튼이 거기 있었으므로), 버튼이 빠진 지금은
+            // 경고 없이 계속 켜두면 패딩만 있는 빈 상자가 화면 하단에
+            // 남는다(사용자 보고, 2026-09-09).
+            if (_unitMovePanel != null)
+            {
+                _unitMovePanel.gameObject.SetActive(anyOut);
             }
         }
 
@@ -942,19 +955,24 @@ namespace TmgBoard
             }
         }
 
-        /// <summary>리딩 모델의 테두리(BoundingRadius) 바로 위에 아이콘을
+        /// <summary>리딩 모델 테두리(리딩 단계) 또는 코헤런시 가이드라인
+        /// (팔로워 단계, CoherencyBoundaryRadiusMm — 사용자 요청, 2026-09-09:
+        /// "팔로워 옮길 땐 코헤런시 가이드라인 위에 뜨게") 바로 위에 아이콘을
         /// 띄운다 — 리딩 단계에서 드래그/웨이포인트로 위치가 바뀔 때마다
         /// (UpdateUnitMoveDistanceLabel 경유) 다시 불린다. 팔로워 단계에서는
-        /// 리딩 모델이 더 이상 움직이지 않으므로 FinishLeadingMove에서 한
-        /// 번만 다시 불러주면 충분하다.</summary>
+        /// 리딩 모델이 더 이상 움직이지 않으므로(코헤런시 링 반경도 고정)
+        /// FinishLeadingMove에서 한 번만 다시 불러주면 충분하다.</summary>
         private void UpdateUnitMoveConfirmIconPosition()
         {
             if (_unitMoveConfirmIcon == null || _unitMoveLeading == null)
             {
                 return;
             }
+            float radius = _unitMovePhase == "followers"
+                    ? CoherencyBoundaryRadiusMm()
+                    : _unitMoveLeading.BoundingRadius;
             _unitMoveConfirmIcon.anchoredPosition = _unitMoveLeading.Center
-                    + new Vector2(0f, _unitMoveLeading.BoundingRadius + UnitMoveConfirmIconMarginMm);
+                    + new Vector2(0f, radius + UnitMoveConfirmIconMarginMm);
         }
 
     }
