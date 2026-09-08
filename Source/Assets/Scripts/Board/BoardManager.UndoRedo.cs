@@ -110,9 +110,9 @@ namespace TmgBoard
             return _undoRedo.GetCombinedHistoryForDisplay();
         }
 
-        internal Dictionary<string, object> BuildUndoHistoryTree()
+        internal Dictionary<string, object> BuildUndoHistoryTree(bool includeLocked)
         {
-            return _undoRedo.BuildUndoHistoryTree();
+            return _undoRedo.BuildUndoHistoryTree(includeLocked);
         }
 
         internal void ApplySeededUndoHistory(Dictionary<string, object> root)

@@ -735,26 +735,43 @@ namespace TmgBoard
             return list;
         }
 
-        /// <summary>게임 도중 멀티 합류(BoardManager.MidGameHandoff.cs) 전용 —
-        /// 지금 내 되돌리기 스택 전체(라벨+스냅샷+Locked, 순서 그대로)를
-        /// 상대에게 그대로 넘겨준다. 2026-09-04부터(사용자 요청 — "되돌리기
-        /// 리스트를 지울 필욘 없어") 호출부(BroadcastFullStateForMidGameJoin)가
-        /// 이 메서드를 부르기 *직전에* 하던 일이 "통째로 비우기"에서 "합류
-        /// 이전 항목을 Locked로 표시"로 바뀌었다 — 그래서 이제 이 트리는
-        /// 실제 히스토리 전체(과거분은 Locked=true인 채로)를 담아 보낸다.</summary>
-        internal Dictionary<string, object> BuildUndoHistoryTree()
+        /// <summary>되돌리기 스택 전체(라벨+스냅샷, 순서 그대로)를 트리로
+        /// 만든다. 두 호출부가 있고 includeLocked로 갈린다:
+        /// - 게임 도중 멀티 합류 전송(BoardManager.MidGameHandoff.cs,
+        ///   includeLocked: true) — 합류 직전 LockExistingUndoHistoryForMidGameJoin
+        ///   이 표시해둔 Locked를 그대로 실어 보내야, 받는 쪽도 같은 항목을
+        ///   조작 대상에서 뺄 수 있다.
+        /// - 저장 파일(BoardManager.Save.cs, includeLocked: false) — Locked는
+        ///   "지금 이 멀티 세션이 살아있는 동안만" 의미 있는 런타임 플래그일
+        ///   뿐, 저장 데이터에 들어갈 이유가 없다(사용자 지적, 2026-09-09 —
+        ///   "세이브 파일엔 잠금 여부가 포함될 이유가 없지 않아?"). 아예 그
+        ///   키 자체를 안 쓴다 — ApplySeededUndoHistory가 이미 GameSaveIO.
+        ///   GetBool(..., fallback: false)로 읽으므로, 키가 없으면 그냥 항상
+        ///   Locked=false로 불러와진다(옛 저장 파일과 똑같이 처리됨, 코드
+        ///   변경 불필요).</summary>
+        internal Dictionary<string, object> BuildUndoHistoryTree(bool includeLocked)
         {
             var undoList = new List<object>();
             foreach (var entry in _undoStack)
             {
-                undoList.Add(new Dictionary<string, object> { { "label", entry.Label }, { "team", entry.Team }, { "locked", entry.Locked }, { "snapshot", BuildSnapshotTree(entry.Snapshot) } });
+                undoList.Add(BuildUndoEntryTree(entry, includeLocked));
             }
             var redoList = new List<object>();
             foreach (var entry in _redoStack)
             {
-                redoList.Add(new Dictionary<string, object> { { "label", entry.Label }, { "team", entry.Team }, { "locked", entry.Locked }, { "snapshot", BuildSnapshotTree(entry.Snapshot) } });
+                redoList.Add(BuildUndoEntryTree(entry, includeLocked));
             }
             return new Dictionary<string, object> { { "undo_stack", undoList }, { "redo_stack", redoList } };
+        }
+
+        private static Dictionary<string, object> BuildUndoEntryTree(UndoEntry entry, bool includeLocked)
+        {
+            var tree = new Dictionary<string, object> { { "label", entry.Label }, { "team", entry.Team }, { "snapshot", BuildSnapshotTree(entry.Snapshot) } };
+            if (includeLocked)
+            {
+                tree["locked"] = entry.Locked;
+            }
+            return tree;
         }
 
         /// <summary>BuildUndoHistoryTree의 역과정 — 게임 도중 멀티 합류로 막

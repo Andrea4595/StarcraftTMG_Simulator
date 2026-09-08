@@ -49,7 +49,7 @@ namespace TmgBoard
             var wrapper = new Dictionary<string, object>
             {
                 { "full_state", BuildFullStateTree() },
-                { "undo_history", BuildUndoHistoryTree() },
+                { "undo_history", BuildUndoHistoryTree(includeLocked: true) },
             };
             string json = MiniJson.Write(wrapper);
             BoardNetworkSync.Instance.RequestBroadcastMidGameState(json);

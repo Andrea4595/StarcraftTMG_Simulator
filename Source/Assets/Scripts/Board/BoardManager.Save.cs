@@ -55,7 +55,12 @@ namespace TmgBoard
             };
             if (includeUndoHistory)
             {
-                tree["undo_history"] = BuildUndoHistoryTree();
+                // Locked는 저장 데이터에 넣지 않는다 — 그 잠금은 "지금 이 멀티
+                // 세션이 살아있는 동안만" 의미 있는 런타임 플래그일 뿐이라
+                // (UndoRedoService.BuildUndoHistoryTree 참고), 저장 파일을
+                // 나중에 불러오면 항상 풀린 상태로 시작해야 한다(사용자 지적,
+                // 2026-09-09).
+                tree["undo_history"] = BuildUndoHistoryTree(includeLocked: false);
             }
             return tree;
         }
