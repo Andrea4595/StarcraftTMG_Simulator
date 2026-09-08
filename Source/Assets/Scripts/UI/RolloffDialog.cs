@@ -54,6 +54,30 @@ namespace TmgBoard
         private float _flashStartA = -1f;
         private float _flashStartB = -1f;
 
+        // 재굴림 쿨다운(사용자 요청, 2026-09-09) — 각 사각형 독립(둘 중
+        // 하나를 굴려도 다른 쪽엔 영향 없음). ApplyRoll에서만 갱신한다(굴린
+        // 쪽 자신도 방송 루프백으로 여길 거치므로) — 그래서 클릭한 쪽/받은
+        // 쪽 양쪽 화면에서 자연히 똑같은 시각에 쿨다운이 시작된다. 사용자
+        // 지적대로 "값 갱신이 일어날 때 걸면" 되므로 별도 동기화 RPC가
+        // 필요 없다 — 굴림 자체가 이미 동기화돼 있어서(RequestRollDiceServerRpc
+        // → ApplyRemoteRoll → ApplyRoll, 마커/유닛과 같은 방송 루프백 패턴)
+        // 쿨다운 시작 시각도 공짜로 양쪽에서 일치한다.
+        private const float RollCooldownSeconds = 1f;
+        private float _lastRollTimeA = -1000f;
+        private float _lastRollTimeB = -1000f;
+
+        // 호버 확대(사용자 요청, 2026-09-09) — 지금 실제로 굴릴 수 있을 때만
+        // (쿨다운 중이 아닐 때만) 살짝 커진다. 쿨다운(1초)이 항상 반짝임
+        // 애니메이션(0.3초)보다 오래가므로 "쿨다운 아님=false"인 최종
+        // 판정 자체는 반짝임 진행 중에도 항상 맞지만, UpdateHoverScale은
+        // 그래도 flashStart가 살아있는 동안은 아예 손을 떼도록 따로
+        // 가드한다 — 안 그러면 매 프레임 무조건 스케일을 쓰는 이 함수가
+        // UpdateFlash가 그 프레임에 계산해둔 중간값(확대→수렴 애니메이션)을
+        // 곧바로 되덮어써서 반짝임 연출 자체가 안 보이게 된다.
+        private const float HoverScale = 1.08f;
+        private HoverTracker _hoverA;
+        private HoverTracker _hoverB;
+
         private Texture2D _squareTexture;
         private Texture2D[] _diceTextures;
 
@@ -221,6 +245,32 @@ namespace TmgBoard
         {
             UpdateFlash(_faceA, "A", ref _flashStartA);
             UpdateFlash(_faceB, "B", ref _flashStartB);
+            UpdateHoverScale(_faceA, _hoverA, "A", _flashStartA);
+            UpdateHoverScale(_faceB, _hoverB, "B", _flashStartB);
+        }
+
+        private bool IsOnCooldown(string team)
+        {
+            float lastRollTime = team == "A" ? _lastRollTimeA : _lastRollTimeB;
+            return Time.time - lastRollTime < RollCooldownSeconds;
+        }
+
+        /// <summary>호버 중 + 지금 굴릴 수 있음(쿨다운 아님) 둘 다일 때만
+        /// 살짝 키운다. flashStart가 아직 살아있으면(반짝임 애니메이션
+        /// 진행 중) 아예 손대지 않는다 — UpdateFlash가 매 프레임 직접 계산한
+        /// 스케일을 이 함수가 무조건 1로 덮어써버리면 반짝임의 확대→수렴
+        /// 연출이 안 보이게 된다. 쿨다운(1초)이 항상 반짝임(0.3초)보다
+        /// 길므로, 그 창 밖(flashStart<0)에서는 이미 쿨다운도 유지되고
+        /// 있어 grow가 자연히 false로 나온다 — 이 가드는 그 사이 짧은
+        /// 구간에서 값을 두 번 덮어쓰지 않기 위한 것.</summary>
+        private void UpdateHoverScale(RawImage face, HoverTracker hover, string team, float flashStart)
+        {
+            if (flashStart >= 0f)
+            {
+                return;
+            }
+            bool grow = hover != null && hover.IsHovering && !IsOnCooldown(team);
+            face.rectTransform.localScale = Vector3.one * (grow ? HoverScale : 1f);
         }
 
         /// <summary>색상(흰색→팀 색)과 크기(1.15→1) 둘 다 같은 진행률
@@ -275,6 +325,16 @@ namespace TmgBoard
             btn.targetGraphic = face;
             btn.onClick.AddListener(() => RollSquare(face, team));
 
+            var hover = squareGo.AddComponent<HoverTracker>();
+            if (team == "A")
+            {
+                _hoverA = hover;
+            }
+            else
+            {
+                _hoverB = hover;
+            }
+
             return face;
         }
 
@@ -283,6 +343,11 @@ namespace TmgBoard
             face.texture = _squareTexture;
             face.color = MutedTeamColor(team);
             face.rectTransform.localScale = Vector3.one;
+            var hover = team == "A" ? _hoverA : _hoverB;
+            if (hover != null)
+            {
+                hover.IsHovering = false;
+            }
         }
 
         /// <summary>클릭한 사각형을 다시 굴린다 — 멀티 연결 중이면(2026-08-31
@@ -294,6 +359,13 @@ namespace TmgBoard
         /// (판정은 안 함, 결과 공유만) 그대로.</summary>
         private void RollSquare(RawImage face, string team)
         {
+            if (IsOnCooldown(team))
+            {
+                // 연타 스팸 방지(사용자 요청, 2026-09-09) — 어느 쪽이 눌렀는지는
+                // 안 가린다(누구나 아무 사각형이나 계속 굴릴 수 있음, 그대로
+                // 유지), 같은 사각형을 너무 빨리 다시 누르는 것만 막는다.
+                return;
+            }
             int value = Random.Range(1, 7);
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
@@ -323,10 +395,12 @@ namespace TmgBoard
             if (team == "A")
             {
                 _flashStartA = Time.time;
+                _lastRollTimeA = Time.time;
             }
             else
             {
                 _flashStartB = Time.time;
+                _lastRollTimeB = Time.time;
             }
         }
 
@@ -353,6 +427,16 @@ namespace TmgBoard
             {
                 eventData.Use();
             }
+        }
+
+        /// <summary>사각형 위 마우스 호버 여부만 기록하는 컴포넌트 — 실제
+        /// 확대 여부(쿨다운까지 감안)는 Update()의 UpdateHoverScale이
+        /// 매 프레임 판단한다.</summary>
+        private class HoverTracker : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
+        {
+            public bool IsHovering;
+            public void OnPointerEnter(PointerEventData eventData) => IsHovering = true;
+            public void OnPointerExit(PointerEventData eventData) => IsHovering = false;
         }
     }
 }
