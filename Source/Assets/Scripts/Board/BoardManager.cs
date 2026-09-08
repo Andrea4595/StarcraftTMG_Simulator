@@ -283,6 +283,12 @@ namespace TmgBoard
 
         private void Start()
         {
+            // ChatController는 씬 전환을 넘어 계속 사는 싱글턴이라(DontDestroyOnLoad),
+            // 새 GameBoard 세션(신규 게임/불러오기/게임 도중 합류 전부 포함)이
+            // 시작될 때마다 이전 세션의 채팅/액션 로그를 지워야 섞여 보이지
+            // 않는다(사용자 지정, 2026-09-09).
+            ChatController.Instance?.ClearLog();
+
             // Awake가 아니라 Start에서 구독한다 — 코드로 씬을 구성할 때(부트스트랩
             // 등) Configure()가 AddComponent 직후 동기적으로 불리는데, 그게 Awake
             // 이후·Start 이전에 끝나므로 여기서는 항상 필드가 채워져 있다.

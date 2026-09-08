@@ -143,7 +143,7 @@ namespace TmgBoard
             }
             _redoStack.Clear();
             _undoHistoryVersion++;
-            ShowUndoToast(_undoPendingLabel, _undoPendingTeam);
+            ShowUndoLogEntry(_undoPendingLabel, _undoPendingTeam);
             // 멀티 연결 중이면 상대의 되돌리기 스택에도 똑같이 반영해달라고
             // 방송한다 — 이게 없으면 상대가 한 조작은 내 스택에, 내가 한
             // 조작은 상대 스택에 전혀 안 남아서, 나중에 누구든 카스케이드로
@@ -237,7 +237,7 @@ namespace TmgBoard
             BroadcastUndoCascadeIfNetworked(false, stackIndex);
             if (stepCount > 0)
             {
-                ShowUndoCascadeToast(isRedo: false, stepCount, topLabel, topTeam);
+                ShowUndoCascadeLogEntry(isRedo: false, stepCount, topLabel, topTeam);
             }
         }
 
@@ -268,7 +268,7 @@ namespace TmgBoard
             BroadcastUndoCascadeIfNetworked(true, stackIndex);
             if (stepCount > 0)
             {
-                ShowUndoCascadeToast(isRedo: true, stepCount, topLabel, topTeam);
+                ShowUndoCascadeLogEntry(isRedo: true, stepCount, topLabel, topTeam);
             }
         }
 
@@ -309,7 +309,7 @@ namespace TmgBoard
             _undoStack.Add(new UndoEntry { Snapshot = ParseSnapshotTree(root), Label = label, Team = team ?? "", CompositeKey = compositeKey ?? "" });
             _redoStack.Clear();
             _undoHistoryVersion++;
-            ShowUndoToast(label, team);
+            ShowUndoLogEntry(label, team);
         }
 
         /// <summary>연속 편집을 합치는 중일 때(CommitUndoTransaction의
@@ -346,7 +346,7 @@ namespace TmgBoard
             _undoStack[_undoStack.Count - 1].Label = label;
             _undoStack[_undoStack.Count - 1].Team = team ?? "";
             _undoHistoryVersion++;
-            ShowUndoToast(label, team);
+            ShowUndoLogEntry(label, team);
         }
 
         /// <summary>되돌리기 카스케이드(CancelOperationsDownTo/
@@ -392,7 +392,7 @@ namespace TmgBoard
                 }
                 if (stepCount > 0)
                 {
-                    ShowUndoCascadeToast(isRedo: true, stepCount, topLabel, topTeam);
+                    ShowUndoCascadeLogEntry(isRedo: true, stepCount, topLabel, topTeam);
                 }
             }
             else
@@ -406,7 +406,7 @@ namespace TmgBoard
                 }
                 if (stepCount > 0)
                 {
-                    ShowUndoCascadeToast(isRedo: false, stepCount, topLabel, topTeam);
+                    ShowUndoCascadeLogEntry(isRedo: false, stepCount, topLabel, topTeam);
                 }
             }
         }
@@ -855,29 +855,33 @@ namespace TmgBoard
             _undoHistoryVersion++;
         }
 
-        // ── 되돌리기 토스트(2026-09-02 신설, 사용자 요청) ────────────────
+        // ── 되돌리기 로그(2026-09-02 신설, 2026-09-09 토스트→영구 로그로
+        // 교체) ─────────────────────────────────────────────────────────
         // 조작이 하나 기록되거나(CommitUndoTransaction) 되돌리기/복원
-        // 카스케이드가 일어날 때마다 화면 좌측 하단 구석에 잠깐 띄운다.
-        // 실제 GameObject 생성/페이드/쌓기는 ChatController(영구 싱글턴,
-        // Multiplayer/ChatController.cs)의 공용 토스트 스택이 담당한다.
-        // 멀티 연결 중이면 상대 화면에도 똑같이 뜬다(2026-09-02, 사용자
-        // 요청으로 확장) — 새 RPC 없이, 이미 스택 동기화를 위해 흐르고 있던
-        // 데이터를 재사용한다: 커밋은 ApplyRemoteUndoPush가 받은 label을,
-        // 카스케이드는 ApplyRemoteUndoCascade가 (두 스택이 이미 상대와 같은
-        // 내용이므로) CancelOperationsDownTo/RestoreOperationsDownTo와
-        // 똑같은 방식으로 직접 계산한 stepCount/topLabel을 그대로 써서
-        // 로컬에서 한 번 더 ShowUndoToast/ShowUndoCascadeToast를 부른다.
+        // 카스케이드가 일어날 때마다 화면 좌측 하단 채팅/로그 창에 한 줄
+        // 남긴다. 실제 GameObject 생성/스크롤은 ChatController(영구 싱글턴,
+        // Multiplayer/ChatController.cs)의 공용 로그가 담당한다(원래는
+        // 잠깐 떴다 사라지는 토스트였는데, 사용자 요청으로 채팅과 합쳐
+        // 스크롤 가능한 영구 로그가 됐다 — PushToast였던 자리가 이제
+        // PushLogEntry). 멀티 연결 중이면 상대 화면에도 똑같이 뜬다
+        // (2026-09-02, 사용자 요청으로 확장) — 새 RPC 없이, 이미 스택
+        // 동기화를 위해 흐르고 있던 데이터를 재사용한다: 커밋은
+        // ApplyRemoteUndoPush가 받은 label을, 카스케이드는
+        // ApplyRemoteUndoCascade가 (두 스택이 이미 상대와 같은 내용이므로)
+        // CancelOperationsDownTo/RestoreOperationsDownTo와 똑같은 방식으로
+        // 직접 계산한 stepCount/topLabel을 그대로 써서 로컬에서 한 번 더
+        // ShowUndoLogEntry/ShowUndoCascadeLogEntry를 부른다.
 
-        private void ShowUndoToast(string message, string team = "")
+        private void ShowUndoLogEntry(string message, string team = "")
         {
-            ChatController.Instance?.PushToast(message, team);
+            ChatController.Instance?.PushLogEntry(message, team);
         }
 
-        private void ShowUndoCascadeToast(bool isRedo, int stepCount, string topLabel, string topTeam)
+        private void ShowUndoCascadeLogEntry(bool isRedo, int stepCount, string topLabel, string topTeam)
         {
             string verb = isRedo ? "복원" : "되돌림";
             string message = stepCount > 1 ? $"{verb}: {topLabel} 외 {stepCount - 1}건" : $"{verb}: {topLabel}";
-            ShowUndoToast(message, topTeam);
+            ShowUndoLogEntry(message, topTeam);
         }
     }
 }

@@ -11,51 +11,51 @@ namespace TmgBoard
     /// <summary>
     /// 화면 좌측 하단 채팅(2026-09-04 신설, 사용자 요청) — 엔터를 누르면
     /// 입력창이 뜨고 자동 포커싱되며, 입력 후 엔터로 전송하면 입력창은
-    /// 닫힌다. 사용자 지정대로 "채팅은 토스트 메시지를 그대로 활용" —
-    /// 원래 BoardManager.ToastStack.cs에 있던 토스트 스택(되돌리기/전술카드
-    /// 사용 알림용)을 그대로 이 클래스로 옮겨와서, 채팅 메시지도 같은
-    /// 스택에 같은 페이드/쌓기 규칙으로 함께 뜬다. 채팅 메시지는 팀
-    /// 이름표를 붙여("[A] 안녕" 형태 — [유닛]/[택티컬] 대괄호 표기와 같은
-    /// 문법) 그 팀 색으로 칠해 누가 말했는지 구분한다(사용자 지정).
+    /// 닫힌다. 채팅 메시지는 팀 이름표를 붙여("[A] 안녕" 형태 —
+    /// [유닛]/[택티컬] 대괄호 표기와 같은 문법) 그 팀 색으로 칠해 누가
+    /// 말했는지 구분한다(사용자 지정).
     ///
-    /// BoardManager는 GameBoard 씬에서만(코드로) 지어지는 반면, 채팅은
+    /// **2026-09-09, 토스트→영구 스크롤 로그로 교체(사용자 요청)**: 원래는
+    /// 채팅도 되돌리기/전술카드 알림과 같은 잠깐 떴다 사라지는 토스트
+    /// 스택을 공유했는데, 사용자가 "토스트 대신 스크롤 가능한 영구 채팅
+    /// 로그 창"으로 바꿔달라고 요청 — 입력창 위 자리(예전 토스트 자리)에
+    /// 고정 크기의 스크롤 창(ScrollRect)이 대신 뜨고, `PushToast`를 부르던
+    /// 모든 곳(채팅 수신 + 되돌리기/전술카드 등 모든 액션 알림,
+    /// UndoRedoService.ShowUndoLogEntry)이 이제 `PushLogEntry`로 로그 한
+    /// 줄을 영구히 추가한다. 스크롤이 맨 아래에 있었다면 새 줄이 생겨도
+    /// 계속 맨 아래를 따라가고, 위로 스크롤해서 과거를 보고 있었다면 그
+    /// 자리 그대로 유지된다(BuildChatLog/PushLogEntry 참고).
+    ///
+    /// BoardManager는 GameBoard 씬에서만(코드로) 지어지는 반면, 채팅/로그는
     /// 멀티가 진행되는 모든 화면(CardPrep/CardDraft/TerrainSetup/GameBoard)
     /// 에서 다 떠야 한다는 요구라 — MultiplayerConnectDialog/
     /// DisconnectNoticeController와 완전히 같은 이유로 GameFlowBootstrap이
     /// 앱 시작 시 한 번만 만들고 DontDestroyOnLoad + Instance로 승격했다.
-    /// BoardManager.UndoRedo.cs의 ShowUndoToast는 이제 이 컴포넌트의
-    /// PushToast를 직접 부른다.
+    /// 씬 전환을 넘어 계속 살아있으므로, 새 게임판(GameBoard) 세션이
+    /// 시작될 때마다 BoardManager.Start()가 ClearLog()를 불러 이전 세션의
+    /// 로그가 섞여 보이지 않게 한다(사용자 지정).
     /// </summary>
     [RequireComponent(typeof(RectTransform))]
     public class ChatController : MonoBehaviour
     {
         public static ChatController Instance { get; private set; }
 
-        // ── 토스트 스택(원래 BoardManager.ToastStack.cs) ───────────────────
-        private const float ToastStackVisibleDurationSeconds = 5f;
-        private const float ToastStackFadeDurationSeconds = 0.3f;
-        // 실제 렌더링된 높이를 매 프레임 읽는 대신 고정값을 쓴다(레이아웃
-        // 그룹이 생성 첫 프레임엔 크기를 아직 확정 안 해서). 사용자가
-        // 에디터에서 실측한 값 — ToastStackGap이 0인 상태에서 이 값이 실제
-        // 렌더 높이와 다르면 그만큼 빈틈/겹침이 생긴다. 폰트 크기나
-        // 패딩(HorizontalLayoutGroup.padding)을 바꾸면 다시 실측해서 맞출 것.
-        private const float ToastStackRowHeight = 31.52f;
-        private const float ToastStackGap = 0f; // 사용자 요청 — 토스트끼리 간격 없이 딱 붙게.
-
-        // ── 채팅 입력창 ─────────────────────────────────────────────────
+        // ── 채팅/로그 창 ────────────────────────────────────────────────
         private const float ChatInputWidth = 260f;
         private const float ChatInputHeight = 32f;
-        private const float ChatToastGap = 8f; // 입력창 위쪽 끝과 그 위 첫 토스트 사이 여백.
+        private const float ChatLogWidth = ChatInputWidth; // 입력창과 폭을 맞춰 시각적으로 하나의 패널처럼 보이게.
+        private const float ChatLogHeight = 200f;
+        private const float ChatLogGap = 8f; // 입력창 위쪽 끝과 로그 창 아래쪽 끝 사이 여백.
+        private const float ChatLogEntrySpacing = 2f;
+        private const int ChatLogMaxEntries = 200; // 넘으면 오래된 줄부터 지운다(메모리/성능 — 사용자 지정).
         private const float CornerMargin = 16f; // GameBoard가 아닌 씬(패널/마커바가 없음)에서의 화면 가장자리 여백.
         private const int ChatMessageMaxLength = 120;
 
-        private sealed class ToastStackEntry
-        {
-            public GameObject Go;
-            public CanvasGroup Group;
-            public float HideTime;
-        }
-        private readonly List<ToastStackEntry> _toastStackEntries = new List<ToastStackEntry>();
+        private GameObject _chatLogGo;
+        private RectTransform _chatLogViewport;
+        private RectTransform _chatLogContent;
+        private ScrollRect _chatLogScrollRect;
+        private readonly List<GameObject> _chatLogEntries = new List<GameObject>();
 
         private GameObject _chatInputGo;
         private CanvasGroup _chatInputGroup;
@@ -91,6 +91,7 @@ namespace TmgBoard
             rect.offsetMin = Vector2.zero;
             rect.offsetMax = Vector2.zero;
 
+            BuildChatLog();
             BuildChatInput();
         }
 
@@ -104,7 +105,7 @@ namespace TmgBoard
 
         private void Update()
         {
-            UpdateToastStack();
+            UpdateChatLayout();
 
             if (_openChatNextFrame)
             {
@@ -237,7 +238,7 @@ namespace TmgBoard
         /// 패턴) 호출한다.</summary>
         internal void ReceiveChatMessage(string team, string message)
         {
-            PushToast($"[{team}] {message}", team);
+            PushLogEntry($"[{team}] {message}", team);
         }
 
         private void BuildChatInput()
@@ -307,10 +308,10 @@ namespace TmgBoard
 
         /// <summary>GameBoard 씬은 팀 A 로스터 패널(왼쪽 가장자리)과 마커바
         /// (아래쪽 가장자리)가 화면 진짜 모서리를 덮고 있어서, 그 안쪽(지도가
-        /// 실제로 보이는 영역의 모서리)에 자리를 잡아야 한다(BoardManager.
-        /// ToastStack.cs가 원래 쓰던 계산 그대로 재사용). 다른 씬(CardPrep/
-        /// CardDraft/TerrainSetup)엔 그 패널/바가 아예 없으므로(조사 확인 —
-        /// 그 씬들의 컨트롤러는 GameConstants.PendingPanelWidth/
+        /// 실제로 보이는 영역의 모서리)에 자리를 잡아야 한다(예전
+        /// BoardManager.ToastStack.cs가 쓰던 계산 그대로 재사용). 다른 씬
+        /// (CardPrep/CardDraft/TerrainSetup)엔 그 패널/바가 아예 없으므로
+        /// (조사 확인 — 그 씬들의 컨트롤러는 GameConstants.PendingPanelWidth/
         /// MarkerBarHeight를 전혀 참조하지 않는다) 화면 진짜 모서리에서 작은
         /// 여백만 두면 된다.</summary>
         private static void GetCorner(out float x, out float y)
@@ -320,84 +321,148 @@ namespace TmgBoard
             y = onGameBoard ? GameConstants.MarkerBarHeight + 16f : CornerMargin;
         }
 
-        /// <summary>화면 좌측 하단 구석에 토스트를 하나 새로 띄운다. team이
-        /// 유효한 팀 코드("A"/"B")면 그 팀 색으로, 아니면(빈 문자열 — 팀
-        /// 소유가 뚜렷하지 않은 행동) 흰색으로 텍스트를 칠한다.
-        /// BoardManager.UndoRedo.cs(되돌리기/전술카드 알림)와 이 클래스
-        /// 자신(채팅, ReceiveChatMessage 경유)이 함께 부른다.</summary>
-        internal void PushToast(string message, string team = "")
+        /// <summary>채팅 입력창 바로 위, 예전 토스트 스택이 뜨던 자리에 고정
+        /// 크기의 스크롤 가능한 로그 창을 짓는다(ScrollRect+Viewport+Content,
+        /// 표준 uGUI 구성) — PushLogEntry가 Content의 마지막 자식으로 한
+        /// 줄씩 추가한다.</summary>
+        private void BuildChatLog()
         {
-            var go = new GameObject("Toast", typeof(RectTransform));
-            go.transform.SetParent(transform, false);
-            var rect = (RectTransform)go.transform;
-            rect.anchorMin = new Vector2(0f, 0f);
-            rect.anchorMax = new Vector2(0f, 0f);
-            rect.pivot = new Vector2(0f, 0f);
+            _chatLogGo = new GameObject("ChatLog", typeof(RectTransform));
+            _chatLogGo.transform.SetParent(transform, false);
+            var logRect = (RectTransform)_chatLogGo.transform;
+            logRect.anchorMin = new Vector2(0f, 0f);
+            logRect.anchorMax = new Vector2(0f, 0f);
+            logRect.pivot = new Vector2(0f, 0f);
+            logRect.sizeDelta = new Vector2(ChatLogWidth, ChatLogHeight);
 
-            var img = go.AddComponent<Image>();
-            img.color = new Color(0.15f, 0.15f, 0.15f, 0.95f);
+            var bg = _chatLogGo.AddComponent<Image>();
+            bg.color = new Color(0.1f, 0.1f, 0.1f, 0.85f);
 
-            // 배경/라벨 색을 각각 건드리지 않고 통째로 페이드시키려고
-            // CanvasGroup.alpha 하나로 처리한다(ScreenshotToast와 동일한 이유).
-            var group = go.AddComponent<CanvasGroup>();
+            var scrollRect = _chatLogGo.AddComponent<ScrollRect>();
+            scrollRect.horizontal = false;
+            scrollRect.vertical = true;
+            scrollRect.movementType = ScrollRect.MovementType.Clamped;
 
-            var layout = go.AddComponent<HorizontalLayoutGroup>();
-            layout.padding = new RectOffset(12, 12, 8, 8);
+            var viewportGo = new GameObject("Viewport", typeof(RectTransform));
+            viewportGo.transform.SetParent(_chatLogGo.transform, false);
+            _chatLogViewport = (RectTransform)viewportGo.transform;
+            _chatLogViewport.anchorMin = Vector2.zero;
+            _chatLogViewport.anchorMax = Vector2.one;
+            _chatLogViewport.offsetMin = new Vector2(6f, 6f);
+            _chatLogViewport.offsetMax = new Vector2(-6f, -6f);
+            viewportGo.AddComponent<RectMask2D>();
+
+            var contentGo = new GameObject("Content", typeof(RectTransform));
+            contentGo.transform.SetParent(_chatLogViewport, false);
+            _chatLogContent = (RectTransform)contentGo.transform;
+            _chatLogContent.anchorMin = new Vector2(0f, 1f);
+            _chatLogContent.anchorMax = new Vector2(1f, 1f);
+            _chatLogContent.pivot = new Vector2(0.5f, 1f);
+            _chatLogContent.anchoredPosition = Vector2.zero;
+
+            var layout = contentGo.AddComponent<VerticalLayoutGroup>();
+            layout.childAlignment = TextAnchor.UpperLeft;
             layout.childControlWidth = true;
             layout.childControlHeight = true;
-            layout.childForceExpandWidth = false;
+            layout.childForceExpandWidth = true;
             layout.childForceExpandHeight = false;
-            var fitter = go.AddComponent<ContentSizeFitter>();
-            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            layout.spacing = ChatLogEntrySpacing;
+            var fitter = contentGo.AddComponent<ContentSizeFitter>();
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            var labelGo = new GameObject("Label", typeof(RectTransform));
-            labelGo.transform.SetParent(go.transform, false);
-            var label = labelGo.AddComponent<TextMeshProUGUI>();
+            scrollRect.viewport = _chatLogViewport;
+            scrollRect.content = _chatLogContent;
+            _chatLogScrollRect = scrollRect;
+        }
+
+        /// <summary>로그 창에 한 줄을 영구히 추가한다(더 이상 페이드/사라짐
+        /// 없음 — 사용자 요청, 2026-09-09). team이 유효한 팀 코드("A"/"B")면
+        /// 그 팀 색으로, 아니면(빈 문자열 — 팀 소유가 뚜렷하지 않은 행동)
+        /// 흰색으로 텍스트를 칠한다. UndoRedoService.ShowUndoLogEntry(되돌리기/
+        /// 전술카드 등 모든 액션 알림)와 이 클래스 자신(채팅, ReceiveChatMessage
+        /// 경유)이 함께 부른다.
+        ///
+        /// 스크롤 동작(사용자 지정): 추가하기 *전에* 이미 맨 아래를 보고
+        /// 있었으면, 추가한 뒤에도 다시 맨 아래로 스크롤한다(새 메시지가
+        /// 계속 보임). 맨 아래가 아니었으면(과거 스크롤 중) 아무 것도 안
+        /// 건드린다 — Content가 위쪽(pivot=top)에 고정된 채 아래로만
+        /// 늘어나므로, 끝에 새 줄을 추가해도 이미 보고 있던 부분의 화면상
+        /// 위치는 원래 안 움직인다(따로 보정할 필요 없음); 다만 ScrollRect의
+        /// 정규화된 스크롤 값 자체는(전체 높이가 늘어났으므로) "맨 아래"
+        /// 기준에서 살짝 밀려나므로, 맨 아래였던 경우에만 명시적으로
+        /// 다시 0으로 스냅해준다.</summary>
+        internal void PushLogEntry(string message, string team = "")
+        {
+            bool wasAtBottom = IsScrolledToBottom();
+
+            var rowGo = new GameObject("LogRow", typeof(RectTransform));
+            rowGo.transform.SetParent(_chatLogContent, false);
+            var label = rowGo.AddComponent<TextMeshProUGUI>();
             label.text = message;
             label.fontSize = 13f;
             label.color = GameConstants.ResolveTeamTextColor(team);
-            label.textWrappingMode = TextWrappingModes.NoWrap;
+            label.textWrappingMode = TextWrappingModes.Normal;
             label.raycastTarget = false;
 
-            go.transform.SetAsLastSibling();
-
-            _toastStackEntries.Add(new ToastStackEntry
+            _chatLogEntries.Add(rowGo);
+            while (_chatLogEntries.Count > ChatLogMaxEntries)
             {
-                Go = go,
-                Group = group,
-                HideTime = Time.time + ToastStackVisibleDurationSeconds,
-            });
-        }
-
-        /// <summary>매 프레임 폴링(코루틴 없음, 이 프로젝트 관례) — 토스트
-        /// 페이드/제거/재배치와, 채팅 입력창·토스트 스택 시작 높이를 매
-        /// 프레임 다시 계산해 배치한다(씬이 바뀌면 GetCorner의 기준 좌표
-        /// 자체가 바뀌므로). 채팅 입력창이 열려있든 닫혀있든 토스트 시작
-        /// 높이는 항상 입력창 높이+여백만큼 위로 고정 이동해둔다(사용자
-        /// 요청 — "기존 토스트 메시지 출력 높이를 위로 살짝 높이고, 그
-        /// 자리에 채팅창을 넣는거야") — 입력창 여닫음에 따라 토스트 위치가
-        /// 들쭉날쭉하지 않도록.</summary>
-        private void UpdateToastStack()
-        {
-            for (int i = _toastStackEntries.Count - 1; i >= 0; i--)
-            {
-                var e = _toastStackEntries[i];
-                if (e.Go == null)
+                var oldest = _chatLogEntries[0];
+                _chatLogEntries.RemoveAt(0);
+                if (oldest != null)
                 {
-                    _toastStackEntries.RemoveAt(i);
-                    continue;
+                    Destroy(oldest);
                 }
-                float fadeElapsed = Time.time - e.HideTime;
-                if (fadeElapsed >= ToastStackFadeDurationSeconds)
-                {
-                    Destroy(e.Go);
-                    _toastStackEntries.RemoveAt(i);
-                    continue;
-                }
-                e.Group.alpha = fadeElapsed <= 0f ? 1f : 1f - fadeElapsed / ToastStackFadeDurationSeconds;
             }
 
+            // Content 높이가 즉시 재계산돼야(다음 프레임까지 기다리지 않고)
+            // 아래 IsScrolledToBottom/스냅이 방금 추가한 줄을 포함한 최신
+            // 크기 기준으로 정확히 계산된다.
+            Canvas.ForceUpdateCanvases();
+            if (wasAtBottom)
+            {
+                _chatLogScrollRect.verticalNormalizedPosition = 0f;
+            }
+        }
+
+        /// <summary>content가 viewport보다 짧아 아직 스크롤할 게 없으면
+        /// (메시지가 몇 줄 안 쌓였을 때) 무조건 "맨 아래"로 취급한다 —
+        /// ScrollRect.verticalNormalizedPosition의 경계값 동작(스크롤 불가
+        /// 상태에서 0/1 중 뭘 돌려주는지)에 기대지 않기 위한 방어적 처리.
+        /// 그 외에는 0에 가까운지(약간의 여유를 두고) 본다.</summary>
+        private bool IsScrolledToBottom()
+        {
+            if (_chatLogContent.rect.height <= _chatLogViewport.rect.height + 0.5f)
+            {
+                return true;
+            }
+            return _chatLogScrollRect.verticalNormalizedPosition <= 0.01f;
+        }
+
+        /// <summary>BoardManager.Start()가 새 GameBoard 세션(신규 게임/불러오기/
+        /// 게임 도중 합류 전부 포함)이 시작될 때마다 부른다 — ChatController는
+        /// 씬 전환을 넘어 계속 사는 싱글턴이라, 안 지우면 이전 세션의 로그가
+        /// 새 세션 로그와 섞여 보인다(사용자 지정, 2026-09-09).</summary>
+        internal void ClearLog()
+        {
+            foreach (var go in _chatLogEntries)
+            {
+                if (go != null)
+                {
+                    Destroy(go);
+                }
+            }
+            _chatLogEntries.Clear();
+        }
+
+        /// <summary>매 프레임 폴링(코루틴 없음, 이 프로젝트 관례) — 채팅
+        /// 입력창·로그 창 위치를 매 프레임 다시 계산해 배치한다(씬이 바뀌면
+        /// GetCorner의 기준 좌표 자체가 바뀌므로). 채팅 입력창이 열려있든
+        /// 닫혀있든 로그 창 위치는 항상 입력창 높이+여백만큼 위로 고정
+        /// 이동해둔다(입력창 여닫음에 따라 로그 위치가 들쭉날쭉하지 않도록,
+        /// 예전 토스트 위치 계산과 같은 이유).</summary>
+        private void UpdateChatLayout()
+        {
             GetCorner(out float baseX, out float cornerY);
 
             if (_chatInputGo != null)
@@ -405,12 +470,9 @@ namespace TmgBoard
                 ((RectTransform)_chatInputGo.transform).anchoredPosition = new Vector2(baseX, cornerY);
             }
 
-            float y = cornerY + ChatInputHeight + ChatToastGap;
-            for (int i = _toastStackEntries.Count - 1; i >= 0; i--)
+            if (_chatLogGo != null)
             {
-                var rect = (RectTransform)_toastStackEntries[i].Go.transform;
-                rect.anchoredPosition = new Vector2(baseX, y);
-                y += ToastStackRowHeight + ToastStackGap;
+                ((RectTransform)_chatLogGo.transform).anchoredPosition = new Vector2(baseX, cornerY + ChatInputHeight + ChatLogGap);
             }
         }
     }
