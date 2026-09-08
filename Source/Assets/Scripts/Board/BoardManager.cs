@@ -62,7 +62,10 @@ namespace TmgBoard
         // 팔로워 단계는 거리 라벨이 아예 없으므로 그렇게 멀리 띄울 필요가
         // 없다 — 코헤런시 가이드라인 링에 적당히 붙여서 보여준다(사용자
         // 요청, 2026-09-09: "이때는 거리 표시가 없으니까 적당히 붙여서").
-        private const float UnitMoveConfirmIconFollowerMarginMm = 20f;
+        // 처음엔 20mm로 했는데, 아이콘 반지름(48mm의 절반=24mm)보다 작아서
+        // 링과 아이콘이 실제로 겹쳤다 — 사용자가 "너무 바짝 붙었다"고 재보고,
+        // 살짝 더 띄웠다.
+        private const float UnitMoveConfirmIconFollowerMarginMm = 40f;
 
         // ── 전열/지원열 하이라이팅 + 인게이지 경고 ───────────────────────
         // EngageDistanceMm은 둘 다 공유한다(같은 룰북 개념 — 인게이지 거리 1").
