@@ -110,9 +110,64 @@ namespace TmgBoard
             var bg = gameObject.AddComponent<Image>();
             bg.color = new Color(0.1f, 0.1f, 0.1f, 0.95f);
 
+            // 활성 플레이어 배경 둘 다(사용 안 하는 쪽은 꺼진 채) 다른 모든
+            // 내용보다 먼저 지어서 항상 맨 뒤에 그려지게 한다(2026-09-09
+            // 버그 수정, 사용자 보고 — 활성 배경이 넓어지면서 상대 팀
+            // 패널이나 중앙 라운드/미션 버튼 위로 덮여 보이던 문제).
+            BuildActivePlayerBackground("A", left: true);
+            BuildActivePlayerBackground("B", left: false);
+
             BuildTeamSide("A", left: true);
             BuildCenter();
             BuildTeamSide("B", left: false);
+        }
+
+        /// <summary>활성 플레이어 배경(ActivePlayer.png) — 스코어보드 바
+        /// 자체(이 컴포넌트의 루트 RectTransform, 정확히 GameConstants.
+        /// ScoreboardHeight 높이로 화면 좌우 끝까지 스트레치)에 직접
+        /// 붙인다. 처음엔 팀 패널(sideRect) 안에 넣었었는데, sideRect는
+        /// 이름/VP 텍스트 크기에 맞춰 타이트하게 auto-fit되고 20px 인셋까지
+        /// 있어서, 그 안에 넣으면 배경이 스코어보드 바의 진짜 가장자리보다
+        /// 왼쪽/위/아래로 살짝 띄워져 보였다(사용자 보고, 2026-09-09 버그
+        /// 수정) — 이 루트에 직접 붙이면 그 문제가 없다.</summary>
+        private void BuildActivePlayerBackground(string team, bool left)
+        {
+            var activeBgGo = new GameObject($"ActiveBg_{team}", typeof(RectTransform));
+            activeBgGo.transform.SetParent(transform, false);
+            var activeBgRect = (RectTransform)activeBgGo.transform;
+            var activeBgImg = activeBgGo.AddComponent<RawImage>();
+            var activeBgTexture = Resources.Load<Texture2D>("UI/ActivePlayer");
+            activeBgImg.texture = activeBgTexture;
+            activeBgImg.raycastTarget = false;
+
+            // 세로는 스코어보드 바 높이에 꽉 채워 늘리고(Stretch), 가로는
+            // 그 높이 기준으로 이미지 비율 그대로 환산한 고정 폭을
+            // 쓴다(Point) — 그 폭 그대로 화면의 진짜 바깥쪽 가장자리에
+            // 붙인다. 왼쪽(A)은 화면 왼쪽(로컬 x=0)이라 pivot도 0으로
+            // 안쪽(오른쪽)을 향해 뻗어나가고, 오른쪽(B)은 화면 오른쪽
+            // (로컬 x=1)이라 pivot도 1로 안쪽(왼쪽)을 향해 뻗어나간다.
+            // 이미지 자신을 더 넓게/좁게 바꿔도 이 코드를 다시 고칠 필요
+            // 없이 자동으로 따라간다.
+            float outerAnchorX = left ? 0f : 1f;
+            activeBgRect.anchorMin = new Vector2(outerAnchorX, 0f);
+            activeBgRect.anchorMax = new Vector2(outerAnchorX, 1f);
+            activeBgRect.pivot = new Vector2(outerAnchorX, 0.5f);
+            activeBgRect.anchoredPosition = Vector2.zero;
+            float bgWidth = activeBgTexture != null && activeBgTexture.height > 0
+                    ? activeBgTexture.width * (GameConstants.ScoreboardHeight / activeBgTexture.height)
+                    : GameConstants.ScoreboardHeight;
+            activeBgRect.sizeDelta = new Vector2(bgWidth, 0f);
+
+            if (!left)
+            {
+                // B팀(오른쪽)은 좌우 반전해서 오른쪽에 붙는 모양으로 보이게
+                // 한다(사용자 지정) — RawImage는 uvRect의 U축을 뒤집으면
+                // (폭을 -1로) 레이아웃/앵커에 전혀 영향 없이 텍스처만 좌우
+                // 반전된다(localScale을 -1로 뒤집는 방식과 달리 자식
+                // RectTransform 좌표계를 건드리지 않는다).
+                activeBgImg.uvRect = new Rect(1f, 0f, -1f, 1f);
+            }
+            _activeBgImages[team] = activeBgImg;
         }
 
         /// <summary>팀 한 쪽 전체 — 위: 이름/미션VP/파괴VP/종합VP 한 줄, 아래:
@@ -128,24 +183,6 @@ namespace TmgBoard
             sideRect.anchorMax = new Vector2(xAnchor, 0.5f);
             sideRect.pivot = new Vector2(xAnchor, 0.5f);
             sideRect.anchoredPosition = new Vector2(left ? 20f : -20f, 0f);
-
-            // 활성 플레이어 배경(ActivePlayer.png, 2026-09-09) — 이 팀
-            // 패널 전체를 덮는 배경. sideRect 자신은 ContentSizeFitter로
-            // 컨텐츠에 맞춰 자동으로 크기가 잡히므로, 레이아웃 계산에서
-            // 빼고(ignoreLayout) 그 결과 크기에 그냥 맞춰 늘어나게 한다 —
-            // 맨 처음 자식으로 넣어 다른 내용보다 뒤에 그려지게 한다.
-            var activeBgGo = new GameObject("ActiveBg", typeof(RectTransform));
-            activeBgGo.transform.SetParent(sideRect, false);
-            var activeBgRect = (RectTransform)activeBgGo.transform;
-            activeBgRect.anchorMin = Vector2.zero;
-            activeBgRect.anchorMax = Vector2.one;
-            activeBgRect.offsetMin = Vector2.zero;
-            activeBgRect.offsetMax = Vector2.zero;
-            activeBgGo.AddComponent<LayoutElement>().ignoreLayout = true;
-            var activeBgImg = activeBgGo.AddComponent<RawImage>();
-            activeBgImg.texture = Resources.Load<Texture2D>("UI/ActivePlayer");
-            activeBgImg.raycastTarget = false;
-            _activeBgImages[team] = activeBgImg;
 
             // "활성 종료" 버튼 — 이 패널의 안쪽(화면 중앙 쪽) 가장자리에
             // 붙는다(사용자 지정 — "해당 플레이어 영역에서, 화면 중앙에
