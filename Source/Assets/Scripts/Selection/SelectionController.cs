@@ -74,6 +74,13 @@ namespace TmgBoard
 
         private void Start()
         {
+            // 새 게임(솔로)의 첫 화면 — 지난 판에서 바꾼 플레이어 색이 남아있으면
+            // 안 되므로 여기서 기본값으로 되돌린다(2026-09-09 버그 수정, 사용자
+            // 보고 — "새 게임"에서만 리셋이 안 되고 "나가기"에서만 됐었음).
+            // "이어하기"는 LoadGameController→GameBoard로 곧장 가고 이 씬을
+            // 거치지 않으므로 저장된 색이 그대로 남는다(GameSaveIO가 따로 복원).
+            GameConstants.ResetTeamColors();
+
             BuildBackButton();
             BuildTitle();
             BuildTabRow();

@@ -74,6 +74,15 @@ namespace TmgBoard
             // 안 되므로, UI를 짓기 전에 먼저 비운다.
             DraftState.Clear();
 
+            // 지난 판에서 바꾼 플레이어 색도 같은 이유로 리셋한다(2026-09-09
+            // 버그 수정, 사용자 보고 — "멀티에서 서로 플레이어 색이 다르게
+            // 표시되는 문제"). TeamColors는 각자 로컬 static 상태라 방송 없이
+            // 그냥 같은 기본값으로 되돌리는 것만으로 충분하다 — 호스트/참가자
+            // 둘 다 이 화면을 반드시 거치므로(게임 도중 합류는 CardPrep을
+            // 아예 거치지 않고 대신 BroadcastFullStateForMidGameJoin으로 이미
+            // 정해진 색을 그대로 넘겨받는다) 양쪽 다 같은 시점에 초기화된다.
+            GameConstants.ResetTeamColors();
+
             BuildBackButton();
             BuildTitle();
             BuildTabRow();
