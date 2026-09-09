@@ -515,7 +515,7 @@ namespace TmgBoard
             int baseValue = composite && _missionVpStreakBase.TryGetValue(team, out var b) ? b : oldValue;
             _missionVpStreakBase[team] = baseValue;
 
-            BoardManager.PerformNetworkedMutation(_board, $"[점수판] {team} 미션VP {baseValue} -> {value}", "미션VP 변경",
+            BoardManager.PerformNetworkedMutation(_board, $"[점수판] {PlayerIdentity.DisplayName(team)} 미션VP {baseValue} -> {value}", "미션VP 변경",
                     () => BoardNetworkSync.Instance.RequestSetMissionVpServerRpc(team, value),
                     () =>
                     {
@@ -533,7 +533,7 @@ namespace TmgBoard
             int baseValue = composite && _killVpStreakBase.TryGetValue(team, out var b) ? b : oldValue;
             _killVpStreakBase[team] = baseValue;
 
-            BoardManager.PerformNetworkedMutation(_board, $"[점수판] {team} 파괴VP {baseValue} -> {value}", "파괴VP 변경",
+            BoardManager.PerformNetworkedMutation(_board, $"[점수판] {PlayerIdentity.DisplayName(team)} 파괴VP {baseValue} -> {value}", "파괴VP 변경",
                     () => BoardNetworkSync.Instance.RequestSetKillVpServerRpc(team, value),
                     () =>
                     {

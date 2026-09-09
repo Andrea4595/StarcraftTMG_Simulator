@@ -85,8 +85,9 @@ namespace TmgBoard
         /// 되돌리기 라벨/토스트에 쓸 한글 표시로 바꾼다(사용자 요청,
         /// 2026-09-04 — 원시값 그대로 보여주던 걸 교체). red/blue는 팀
         /// 색상이 아니라 팀 점령 상태를 뜻하므로(MissionObjectivePiece.
-        /// ResolveRingColor 참고 — red="A"팀 색, blue="B"팀 색) "A 점령"/
-        /// "B 점령"으로 표시한다.</summary>
+        /// ResolveRingColor 참고 — red="A"팀 색, blue="B"팀 색) "{닉네임} 점령"
+        /// 으로 표시한다(2026-09-09부터 팀 코드 "A"/"B" 대신 PlayerIdentity.
+        /// DisplayName — 닉네임 없으면 "플레이어 A/B"로 자동 대체).</summary>
         private static string DescribeRingColorState(string state)
         {
             switch (state)
@@ -96,9 +97,9 @@ namespace TmgBoard
                 case "white":
                     return "활성";
                 case "red":
-                    return "A 점령";
+                    return $"{PlayerIdentity.DisplayName(NetworkTeam.Host)} 점령";
                 case "blue":
-                    return "B 점령";
+                    return $"{PlayerIdentity.DisplayName(NetworkTeam.Client)} 점령";
                 default:
                     return state;
             }

@@ -122,7 +122,8 @@ namespace TmgBoard
         /// DescribeRingColorState)와 달리 "inactive" 상태가 없어 white를
         /// "활성"이 아니라 "미점령"으로 표시한다 — 이 마커 자체가 항상
         /// 활성 상태이고(비활성 개념이 없음) white는 그냥 아직 어느 팀도
-        /// 점령하지 않은 상태를 뜻하기 때문.</summary>
+        /// 점령하지 않은 상태를 뜻하기 때문. 2026-09-09부터 "A"/"B" 대신
+        /// PlayerIdentity.DisplayName(닉네임 없으면 "플레이어 A/B") 사용.</summary>
         private static string DescribeCaptureColorState(string state)
         {
             switch (state)
@@ -130,9 +131,9 @@ namespace TmgBoard
                 case "white":
                     return "미점령";
                 case "red":
-                    return "A 점령";
+                    return $"{PlayerIdentity.DisplayName(NetworkTeam.Host)} 점령";
                 case "blue":
-                    return "B 점령";
+                    return $"{PlayerIdentity.DisplayName(NetworkTeam.Client)} 점령";
                 default:
                     return state;
             }

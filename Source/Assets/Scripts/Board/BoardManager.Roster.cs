@@ -98,7 +98,7 @@ namespace TmgBoard
                 return;
             }
 
-            BeginUndoTransaction($"[유닛] {team} 로스터 불러오기", team);
+            BeginUndoTransaction($"[유닛] {PlayerIdentity.DisplayName(team)} 로스터 불러오기", team);
             _pendingUnits.AddRange(units);
             _pendingRosterTokens.AddRange(tokens);
             _pendingTacticalCards.AddRange(tacticalCards);
