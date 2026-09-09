@@ -14,6 +14,11 @@ namespace TmgBoard
         public static readonly string[] PhaseNames = { "Movement Phase", "Assault Phase", "Combat Phase", "Cleanup Phase" };
         public static int PhaseIndex = 0;
 
+        // 활성 플레이어 표시기(2026-09-09 신설, ScoreboardPanel.cs가 팀 패널
+        // 배경/버튼으로 표시) — 체스 시계의 "턴 넘기기" 버튼과 같은 순수
+        // 표시 개념, 규칙 강제는 없다.
+        public static string ActivePlayer = "A";
+
         public static readonly Dictionary<string, int> MissionVp = new Dictionary<string, int> { { "A", 0 }, { "B", 0 } };
         public static readonly Dictionary<string, int> KillVp = new Dictionary<string, int> { { "A", 0 }, { "B", 0 } };
 
@@ -33,6 +38,7 @@ namespace TmgBoard
             RoundNumber = 1;
             Supply = 0;
             PhaseIndex = 0;
+            ActivePlayer = "A";
             MissionVp["A"] = 0;
             MissionVp["B"] = 0;
             KillVp["A"] = 0;

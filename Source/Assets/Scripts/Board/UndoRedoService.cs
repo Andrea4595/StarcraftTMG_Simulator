@@ -112,8 +112,20 @@ namespace TmgBoard
         /// 방송받은 모든 클라이언트(호스트 자신 포함)가 각자 그 안에서
         /// Begin/Commit을 부르므로, 이미 양쪽 다 자기 스택에 동등한 항목을
         /// 갖는다 — 거기에 더해 평소처럼 방송까지 하면 상대가 한 번 더
-        /// 받아 쌓아서 중복이 생긴다.</summary>
-        internal void CommitUndoTransaction(bool broadcast = true)
+        /// 받아 쌓아서 중복이 생긴다.
+        ///
+        /// discardIfNoChangeFromStreakStart=true는 호출부가 이번 편집으로
+        /// 실제 도달한 값이 "이 연속 편집(Composite)이 시작되기 전" 값과
+        /// 정확히 같다고 스스로 판단했을 때 쓴다(사용자 요청, 2026-09-09 —
+        /// "결과가 첫 조작 이전 상태와 동일하면 히스토리에서 제거"). 판단
+        /// 자체는 각 호출부(ScoreboardPanel/PhaseBar 등)가 이미 들고 있는
+        /// "시작값 vs 지금 설정하려는 값"을 비교해서 넘겨준다 — 이 메서드
+        /// 안에서는 못 한다. 멀티 연결 중인 요청 경로(PerformNetworkedMutation의
+        /// requestRpc 분기)는 실제 반영이 방송이 돌아올 때까지 비동기로
+        /// 미뤄지므로, 여기서 라이브 상태를 다시 읽어 비교하면 아직 안
+        /// 바뀐 옛 값과 비교하게 돼 항상 틀린 답이 나온다 — 그래서 호출부가
+        /// 이미 알고 있는 스칼라 값으로 판단하게 강제한다.</summary>
+        internal void CommitUndoTransaction(bool broadcast = true, bool discardIfNoChangeFromStreakStart = false)
         {
             if (!_undoPendingActive)
             {
@@ -121,6 +133,39 @@ namespace TmgBoard
             }
 
             bool isComposite = IsTopUndoEntryComposite(_undoPendingCompositeKey);
+
+            if (discardIfNoChangeFromStreakStart)
+            {
+                if (isComposite)
+                {
+                    // 연속 편집이 시작되기 전 상태로 정확히 돌아왔다 — 남길
+                    // 의미가 없으므로 합쳐져 있던 항목 자체를 스택에서
+                    // 지운다. 다음 클릭이 다시 값을 바꾸면 IsTopUndoEntryComposite가
+                    // 이제 false를 반환하므로(방금 지운 항목이 더 없으니)
+                    // 자연스럽게 새 스트릭으로 처음부터 다시 쌓인다.
+                    _undoStack.RemoveAt(_undoStack.Count - 1);
+                    _redoStack.Clear();
+                    _undoHistoryVersion++;
+                    // 그 항목을 안내하던 채팅/로그 줄도 같이 지운다 — 안
+                    // 그러면 되돌리기 목록엔 없는 조작이 로그에만 유령처럼
+                    // 남는다.
+                    ChatController.Instance?.RemoveActiveCompositeLogRow();
+                    if (broadcast)
+                    {
+                        BroadcastUndoRemoveTopIfNetworked();
+                    }
+                }
+                // 합치는 중이 아니었다면(스트릭의 첫 클릭인데 결과가 이미
+                // 원래 값과 같은 드문 경우) 애초에 쌓을 항목이 없다 —
+                // DiscardUndoTransaction과 같은 결과로 조용히 버린다.
+                _undoPendingActive = false;
+                _undoPendingSnapshot = null;
+                _undoPendingLabel = null;
+                _undoPendingTeam = "";
+                _undoPendingCompositeKey = "";
+                return;
+            }
+
             if (isComposite)
             {
                 // 새 항목을 쌓지 않는다 — 기존 맨 위 항목의 Snapshot(연속
@@ -143,7 +188,26 @@ namespace TmgBoard
             }
             _redoStack.Clear();
             _undoHistoryVersion++;
-            ShowUndoLogEntry(_undoPendingLabel, _undoPendingTeam);
+            // 합치는 중이면(사용자 요청, 2026-09-09) 새 줄을 쌓지 않고
+            // 이 스트릭이 이미 만든 줄 하나만 계속 갱신한다. 스트릭의 첫
+            // 클릭(아직 합치는 중은 아니지만 compositeKey가 있어 나중에
+            // 합쳐질 수 있는 경우)은 새 줄을 만들되 그 줄을 추적해둬야
+            // 다음 클릭이 이어서 갱신/제거할 수 있다 — 여기서 안 걸어두면
+            // 두 번째 클릭부터 계속 새 줄이 생기거나(2026-09-09 버그 수정,
+            // 사용자 보고) 스트릭이 원상복귀돼도 첫 줄이 안 지워진다. 진짜
+            // compositeKey가 없는 완전 별개 액션만 기존처럼 추적 없이 민다.
+            if (isComposite)
+            {
+                ChatController.Instance?.UpdateOrPushCompositeLogEntry(_undoPendingLabel, _undoPendingTeam);
+            }
+            else if (!string.IsNullOrEmpty(_undoPendingCompositeKey))
+            {
+                ChatController.Instance?.PushComposableLogEntry(_undoPendingLabel, _undoPendingTeam);
+            }
+            else
+            {
+                ShowUndoLogEntry(_undoPendingLabel, _undoPendingTeam);
+            }
             // 멀티 연결 중이면 상대의 되돌리기 스택에도 똑같이 반영해달라고
             // 방송한다 — 이게 없으면 상대가 한 조작은 내 스택에, 내가 한
             // 조작은 상대 스택에 전혀 안 남아서, 나중에 누구든 카스케이드로
@@ -309,7 +373,18 @@ namespace TmgBoard
             _undoStack.Add(new UndoEntry { Snapshot = ParseSnapshotTree(root), Label = label, Team = team ?? "", CompositeKey = compositeKey ?? "" });
             _redoStack.Clear();
             _undoHistoryVersion++;
-            ShowUndoLogEntry(label, team);
+            // 상대의 첫 클릭도(compositeKey가 있으면) 내 쪽 로그에서
+            // 추적해둬야 상대의 다음 클릭(ApplyRemoteUndoRelabel)이 이어서
+            // 갱신/제거할 수 있다 — CommitUndoTransaction의 같은 수정과
+            // 같은 이유(2026-09-09 버그 수정).
+            if (!string.IsNullOrEmpty(compositeKey))
+            {
+                ChatController.Instance?.PushComposableLogEntry(label, team);
+            }
+            else
+            {
+                ShowUndoLogEntry(label, team);
+            }
         }
 
         /// <summary>연속 편집을 합치는 중일 때(CommitUndoTransaction의
@@ -346,7 +421,42 @@ namespace TmgBoard
             _undoStack[_undoStack.Count - 1].Label = label;
             _undoStack[_undoStack.Count - 1].Team = team ?? "";
             _undoHistoryVersion++;
-            ShowUndoLogEntry(label, team);
+            // 이건 항상 컴포짓 갱신이다(라벨만 바꾸라는 메시지는 그 경우에만
+            // 온다) — 새 줄을 쌓지 않고 그 스트릭의 줄 하나만 갱신한다.
+            ChatController.Instance?.UpdateOrPushCompositeLogEntry(label, team);
+        }
+
+        /// <summary>연속 편집이 원래 값으로 되돌아와(discardIfNoChangeFromStreakStart)
+        /// 합쳐져 있던 항목을 지웠을 때, 그 사실도 상대에게 알린다 —
+        /// BroadcastUndoRelabelIfNetworked와 같은 이유/자리, "맨 위 항목을
+        /// 라벨만 바꿔라" 대신 "맨 위 항목을 통째로 지워라"만 다르다. 두
+        /// 스택은 이미 같은 순서로 맞춰져 있으므로 "맨 위"만으로 충분하다.</summary>
+        private void BroadcastUndoRemoveTopIfNetworked()
+        {
+            if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
+            {
+                return;
+            }
+            if (BoardNetworkSync.Instance == null)
+            {
+                Debug.LogError("[BoardManager] BoardNetworkSync.Instance가 없음 — 되돌리기 항목 제거를 못 보냄");
+                return;
+            }
+            BoardNetworkSync.Instance.RequestBroadcastUndoRemoveTop();
+        }
+
+        /// <summary>BoardNetworkSync.BroadcastUndoRemoveTopRpc가 방송을 받았을
+        /// 때(자기 자신의 메아리는 이미 거기서 걸러진다) 호출한다.</summary>
+        internal void ApplyRemoteUndoRemoveTop()
+        {
+            if (_undoStack.Count == 0)
+            {
+                Debug.LogError("[BoardManager] 되돌리기 항목을 제거할 대상이 없음 — 스택이 상대와 어긋났을 수 있음");
+                return;
+            }
+            _undoStack.RemoveAt(_undoStack.Count - 1);
+            _undoHistoryVersion++;
+            ChatController.Instance?.RemoveActiveCompositeLogRow();
         }
 
         /// <summary>되돌리기 카스케이드(CancelOperationsDownTo/
@@ -542,6 +652,7 @@ namespace TmgBoard
                 { "mission_vp_a", snapshot.MissionVpA }, { "mission_vp_b", snapshot.MissionVpB },
                 { "kill_vp_a", snapshot.KillVpA }, { "kill_vp_b", snapshot.KillVpB },
                 { "phase_index", snapshot.PhaseIndex },
+                { "active_player", snapshot.ActivePlayer },
                 { "roster_loaded_teams", rosterLoadedTeams },
                 { "mission_objective_states", missionObjectiveStates },
             };
@@ -659,6 +770,7 @@ namespace TmgBoard
             snapshot.KillVpA = GameSaveIO.GetInt(root, "kill_vp_a");
             snapshot.KillVpB = GameSaveIO.GetInt(root, "kill_vp_b");
             snapshot.PhaseIndex = GameSaveIO.GetInt(root, "phase_index");
+            snapshot.ActivePlayer = GameSaveIO.GetString(root, "active_player", "A");
 
             foreach (var raw in GameSaveIO.GetList(root, "roster_loaded_teams"))
             {

@@ -59,6 +59,22 @@ namespace TmgBoard
         private readonly Dictionary<string, int> _missionVpStreakBase = new Dictionary<string, int>();
         private readonly Dictionary<string, int> _killVpStreakBase = new Dictionary<string, int>();
 
+        // 활성 플레이어 표시(2026-09-09, ActivePlayerBar 전용 띠를 없애고
+        // 이 패널로 옮김 — 사용자 지정: "화면 상단 플레이어 점수 표시 칸
+        // 백그라운드에 해당 색상 플레이어 색으로 출력"). 팀 패널마다 배경
+        // 이미지 하나와 "활성 종료" 버튼 하나씩을 만들어두고, 매 프레임
+        // 활성 팀 쪽만 보이게 켠다(Update()의 RefreshActivePlayerVisuals).
+        private static readonly Color EndActiveButtonColor = new Color(0f, 0f, 0f, 0.35f);
+        private const float EndActiveButtonWidth = 84f;
+        private const float EndActiveButtonHeight = 26f;
+        private const float EndActiveButtonGap = 10f;
+        private readonly Dictionary<string, RawImage> _activeBgImages = new Dictionary<string, RawImage>();
+        private readonly Dictionary<string, GameObject> _endActiveButtons = new Dictionary<string, GameObject>();
+        private const string ActivePlayerCompositeKey = "activePlayer";
+        // A/B 2상태뿐이라 null을 "아직 로컬에서 한 번도 안 누름"의 안전한
+        // 시작값 sentinel로 쓴다(int 계열이 -1을 쓰는 것과 같은 이유).
+        private string _activePlayerStreakBase;
+
         // BoardManager는 부트스트랩이 두 객체를 다 만든 뒤 SetBoardManager()로
         // 나중에 넣어준다(Awake() 시점엔 아직 BoardManager가 없을 수 있음) —
         // 이 컴포넌트는 원래 BoardManager와 무관하게 독립적으로 짓게 설계했지만,
@@ -112,6 +128,64 @@ namespace TmgBoard
             sideRect.anchorMax = new Vector2(xAnchor, 0.5f);
             sideRect.pivot = new Vector2(xAnchor, 0.5f);
             sideRect.anchoredPosition = new Vector2(left ? 20f : -20f, 0f);
+
+            // 활성 플레이어 배경(ActivePlayer.png, 2026-09-09) — 이 팀
+            // 패널 전체를 덮는 배경. sideRect 자신은 ContentSizeFitter로
+            // 컨텐츠에 맞춰 자동으로 크기가 잡히므로, 레이아웃 계산에서
+            // 빼고(ignoreLayout) 그 결과 크기에 그냥 맞춰 늘어나게 한다 —
+            // 맨 처음 자식으로 넣어 다른 내용보다 뒤에 그려지게 한다.
+            var activeBgGo = new GameObject("ActiveBg", typeof(RectTransform));
+            activeBgGo.transform.SetParent(sideRect, false);
+            var activeBgRect = (RectTransform)activeBgGo.transform;
+            activeBgRect.anchorMin = Vector2.zero;
+            activeBgRect.anchorMax = Vector2.one;
+            activeBgRect.offsetMin = Vector2.zero;
+            activeBgRect.offsetMax = Vector2.zero;
+            activeBgGo.AddComponent<LayoutElement>().ignoreLayout = true;
+            var activeBgImg = activeBgGo.AddComponent<RawImage>();
+            activeBgImg.texture = Resources.Load<Texture2D>("UI/ActivePlayer");
+            activeBgImg.raycastTarget = false;
+            _activeBgImages[team] = activeBgImg;
+
+            // "활성 종료" 버튼 — 이 패널의 안쪽(화면 중앙 쪽) 가장자리에
+            // 붙는다(사용자 지정 — "해당 플레이어 영역에서, 화면 중앙에
+            // 가까운 부분"). 레이아웃 그룹 계산에서 빼고 절대 위치로
+            // 붙인다 — sideRect 자신의 로컬 좌표는 항상 0(왼쪽 변)~1(오른쪽
+            // 변)이므로, 왼쪽 패널(A)의 안쪽 변은 오른쪽(1), 오른쪽 패널(B)의
+            // 안쪽 변은 왼쪽(0)이다.
+            var endActiveGo = new GameObject("EndActiveButton", typeof(RectTransform));
+            endActiveGo.transform.SetParent(sideRect, false);
+            var endActiveRect = (RectTransform)endActiveGo.transform;
+            endActiveGo.AddComponent<LayoutElement>().ignoreLayout = true;
+            float innerAnchorX = left ? 1f : 0f;
+            endActiveRect.anchorMin = new Vector2(innerAnchorX, 0.5f);
+            endActiveRect.anchorMax = new Vector2(innerAnchorX, 0.5f);
+            endActiveRect.pivot = new Vector2(left ? 0f : 1f, 0.5f);
+            endActiveRect.anchoredPosition = new Vector2(left ? EndActiveButtonGap : -EndActiveButtonGap, 0f);
+            endActiveRect.sizeDelta = new Vector2(EndActiveButtonWidth, EndActiveButtonHeight);
+
+            var endActiveImg = endActiveGo.AddComponent<Image>();
+            endActiveImg.color = EndActiveButtonColor;
+            var endActiveBtn = endActiveGo.AddComponent<Button>();
+            endActiveBtn.targetGraphic = endActiveImg;
+            endActiveBtn.onClick.AddListener(ToggleActivePlayer);
+
+            var endActiveLabelGo = new GameObject("Label", typeof(RectTransform));
+            endActiveLabelGo.transform.SetParent(endActiveGo.transform, false);
+            var endActiveLabelRect = (RectTransform)endActiveLabelGo.transform;
+            endActiveLabelRect.anchorMin = Vector2.zero;
+            endActiveLabelRect.anchorMax = Vector2.one;
+            endActiveLabelRect.offsetMin = Vector2.zero;
+            endActiveLabelRect.offsetMax = Vector2.zero;
+            var endActiveLabel = endActiveLabelGo.AddComponent<TextMeshProUGUI>();
+            endActiveLabel.text = "활성 종료";
+            endActiveLabel.fontSize = 13f;
+            endActiveLabel.fontStyle = FontStyles.Bold;
+            endActiveLabel.color = Color.white;
+            endActiveLabel.alignment = TextAlignmentOptions.Center;
+            endActiveLabel.raycastTarget = false;
+
+            _endActiveButtons[team] = endActiveGo;
 
             var columnLayout = sideGo.AddComponent<VerticalLayoutGroup>();
             columnLayout.spacing = 4f;
@@ -182,6 +256,64 @@ namespace TmgBoard
             RefreshTeamNameColors();
             RefreshTeamNameLabels();
             RefreshFromMatchState();
+            RefreshActivePlayerVisuals();
+        }
+
+        /// <summary>활성 플레이어 배경/버튼을 MatchState.ActivePlayer에서
+        /// 매 프레임 그대로 반영한다(2026-09-09 추가) — 되돌리기/다시실행이
+        /// 이 값을 직접 바꿔놓는데 이 컴포넌트로 되돌아오는 참조가 없어서,
+        /// PhaseBar/ScoreboardPanel의 다른 값들과 같은 이유로 스스로 다시
+        /// 읽는다. 활성 팀 쪽만 배경 이미지를 보이고 그 팀 색으로 칠하며,
+        /// "활성 종료" 버튼도 활성 팀 쪽만 보인다.</summary>
+        private void RefreshActivePlayerVisuals()
+        {
+            foreach (var kv in _activeBgImages)
+            {
+                bool isActive = kv.Key == MatchState.ActivePlayer;
+                kv.Value.gameObject.SetActive(isActive);
+                if (isActive && GameConstants.TeamColors.TryGetValue(kv.Key, out var c))
+                {
+                    kv.Value.color = c;
+                }
+            }
+            foreach (var kv in _endActiveButtons)
+            {
+                kv.Value.SetActive(kv.Key == MatchState.ActivePlayer);
+            }
+        }
+
+        /// <summary>"활성 종료" 버튼 클릭(사용자 조작) — 원래 ActivePlayerBar
+        /// 전용 띠에 있던 것을 2026-09-09에 이 패널로 옮겼다. 연속 클릭
+        /// 합치기(Composite)와 "결과가 스트릭 시작 전 값과 같으면 히스토리
+        /// 제거" 둘 다 다른 스테퍼들과 같은 방식으로 적용된다.</summary>
+        private void ToggleActivePlayer()
+        {
+            string current = MatchState.ActivePlayer;
+            string next = current == NetworkTeam.Host ? NetworkTeam.Client : NetworkTeam.Host;
+
+            bool composite = _board != null && _board.IsTopUndoEntryComposite(ActivePlayerCompositeKey);
+            string baseTeam = (composite && _activePlayerStreakBase != null) ? _activePlayerStreakBase : current;
+            _activePlayerStreakBase = baseTeam;
+            bool noop = next == baseTeam;
+
+            string label = $"[활성] {PlayerIdentity.DisplayName(baseTeam)} -> {PlayerIdentity.DisplayName(next)}";
+            BoardManager.PerformNetworkedMutation(_board, label, "활성 플레이어 전환",
+                    () => BoardNetworkSync.Instance.RequestSetActivePlayerServerRpc(next),
+                    () => SetActivePlayer(next),
+                    compositeKey: ActivePlayerCompositeKey,
+                    discardIfNoChangeFromStreakStart: noop);
+        }
+
+        private void SetActivePlayer(string player)
+        {
+            MatchState.ActivePlayer = player;
+        }
+
+        /// <summary>BoardNetworkSync.SetActivePlayerRpc가 방송을 받았을 때
+        /// (누른 쪽 자신도 포함) 호출한다.</summary>
+        public void ApplyRemoteActivePlayer(string player)
+        {
+            SetActivePlayer(player);
         }
 
         /// <summary>팀 이름 라벨 텍스트를 PlayerIdentity에서 매 프레임 그대로
@@ -491,11 +623,15 @@ namespace TmgBoard
             // 신뢰" 패턴과 같은 이유로 방어.
             int baseValue = (composite && _roundStreakBase >= 0) ? _roundStreakBase : oldValue;
             _roundStreakBase = baseValue;
+            // 결과가 스트릭 시작 전 값으로 되돌아오면(사용자 요청, 2026-09-09)
+            // 되돌리기 목록에서 그 항목 자체를 지운다.
+            bool noop = roundNumber == baseValue;
 
             BoardManager.PerformNetworkedMutation(_board, $"[점수판] 라운드 {baseValue} -> {roundNumber}", "라운드 변경",
                     () => BoardNetworkSync.Instance.RequestSetRoundServerRpc(roundNumber),
                     () => SetRoundNumber(roundNumber),
-                    compositeKey: RoundCompositeKey);
+                    compositeKey: RoundCompositeKey,
+                    discardIfNoChangeFromStreakStart: noop);
         }
 
         /// <summary>BoardNetworkSync.SetRoundRpc가 방송을 받았을 때(누른 쪽
@@ -514,6 +650,7 @@ namespace TmgBoard
             bool composite = _board != null && _board.IsTopUndoEntryComposite(key);
             int baseValue = composite && _missionVpStreakBase.TryGetValue(team, out var b) ? b : oldValue;
             _missionVpStreakBase[team] = baseValue;
+            bool noop = value == baseValue;
 
             BoardManager.PerformNetworkedMutation(_board, $"[점수판] {PlayerIdentity.DisplayName(team)} 미션VP {baseValue} -> {value}", "미션VP 변경",
                     () => BoardNetworkSync.Instance.RequestSetMissionVpServerRpc(team, value),
@@ -522,7 +659,7 @@ namespace TmgBoard
                         MatchState.MissionVp[team] = value;
                         RefreshTotalLabel(team);
                     },
-                    team, key);
+                    team, key, discardIfNoChangeFromStreakStart: noop);
         }
 
         private void OnKillVpChanged(string team, int value)
@@ -532,6 +669,7 @@ namespace TmgBoard
             bool composite = _board != null && _board.IsTopUndoEntryComposite(key);
             int baseValue = composite && _killVpStreakBase.TryGetValue(team, out var b) ? b : oldValue;
             _killVpStreakBase[team] = baseValue;
+            bool noop = value == baseValue;
 
             BoardManager.PerformNetworkedMutation(_board, $"[점수판] {PlayerIdentity.DisplayName(team)} 파괴VP {baseValue} -> {value}", "파괴VP 변경",
                     () => BoardNetworkSync.Instance.RequestSetKillVpServerRpc(team, value),
@@ -540,7 +678,7 @@ namespace TmgBoard
                         MatchState.KillVp[team] = value;
                         RefreshTotalLabel(team);
                     },
-                    team, key);
+                    team, key, discardIfNoChangeFromStreakStart: noop);
         }
 
         /// <summary>BoardNetworkSync.SetMissionVpRpc/SetKillVpRpc가 방송을

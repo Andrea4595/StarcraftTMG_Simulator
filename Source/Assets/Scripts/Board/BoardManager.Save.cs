@@ -115,6 +115,7 @@ namespace TmgBoard
             {
                 { "round_number", MatchState.RoundNumber },
                 { "phase_index", MatchState.PhaseIndex },
+                { "active_player", MatchState.ActivePlayer },
                 { "supply", MatchState.Supply },
                 { "mission_vp_a", MatchState.MissionVp["A"] },
                 { "mission_vp_b", MatchState.MissionVp["B"] },

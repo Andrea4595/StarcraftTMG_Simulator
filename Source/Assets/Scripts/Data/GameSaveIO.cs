@@ -141,6 +141,7 @@ namespace TmgBoard
             var matchState = GetDict(root, "match_state");
             MatchState.RoundNumber = GetInt(matchState, "round_number", 1);
             MatchState.PhaseIndex = GetInt(matchState, "phase_index", 0);
+            MatchState.ActivePlayer = GetString(matchState, "active_player", "A");
             MatchState.Supply = GetInt(matchState, "supply");
             MatchState.MissionVp["A"] = GetInt(matchState, "mission_vp_a");
             MatchState.MissionVp["B"] = GetInt(matchState, "mission_vp_b");

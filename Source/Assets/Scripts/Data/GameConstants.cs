@@ -53,6 +53,9 @@ namespace TmgBoard
         // 스코어보드와 페이즈 바를 합친, 화면 위쪽에서 실제로 고정 UI가 차지하는
         // 총 높이 — 맵 뷰포트/팀 패널 등이 "화면 맨 위 고정 바 아래"를 계산할 때
         // ScoreboardHeight 대신 이걸 써야 페이즈 바 추가분만큼 자동으로 반영된다.
+        // (2026-09-09: 활성 플레이어 표시는 따로 띠를 두지 않고 ScoreboardPanel
+        // 자체(팀 패널 배경 + 안쪽 가장자리 버튼)로 옮겨졌으므로 이 높이엔
+        // 영향이 없다 — ScoreboardPanel.cs 참고.)
         public const float TopBarHeight = ScoreboardHeight + PhaseBarHeight;
 
         public static readonly Dictionary<string, Vector2> MapSizePresets = new Dictionary<string, Vector2>

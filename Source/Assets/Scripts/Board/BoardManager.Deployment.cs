@@ -429,11 +429,12 @@ namespace TmgBoard
                 bool composite = IsTopUndoEntryComposite(compositeKey);
                 int baseValue = composite && _tacticalCardStreakBase.TryGetValue(compositeKey, out var b) ? b : def.Remaining;
                 _tacticalCardStreakBase[compositeKey] = baseValue;
+                bool noop = newRemaining == baseValue;
 
                 BeginUndoTransaction($"[택티컬] {def.Name} {baseValue} -> {newRemaining}", def.Team, compositeKey);
                 def.Remaining = newRemaining;
                 RefreshTacticalCardVisual(btnImg, nameLabel, pips, def);
-                CommitUndoTransaction();
+                CommitUndoTransaction(discardIfNoChangeFromStreakStart: noop);
                 BroadcastTacticalCardsIfNetworked();
             };
             handler.OnRightClick = () =>
@@ -442,11 +443,12 @@ namespace TmgBoard
                 bool composite = IsTopUndoEntryComposite(compositeKey);
                 int baseValue = composite && _tacticalCardStreakBase.TryGetValue(compositeKey, out var b) ? b : def.Remaining;
                 _tacticalCardStreakBase[compositeKey] = baseValue;
+                bool noop = newRemaining == baseValue;
 
                 BeginUndoTransaction($"[택티컬] {def.Name} {baseValue} -> {newRemaining}", def.Team, compositeKey);
                 def.Remaining = newRemaining;
                 RefreshTacticalCardVisual(btnImg, nameLabel, pips, def);
-                CommitUndoTransaction();
+                CommitUndoTransaction(discardIfNoChangeFromStreakStart: noop);
                 BroadcastTacticalCardsIfNetworked();
             };
         }

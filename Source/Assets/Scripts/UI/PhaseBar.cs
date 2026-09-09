@@ -120,12 +120,17 @@ namespace TmgBoard
             // "로컬에 실제로 값이 있을 때만 신뢰" 패턴과 같은 이유로 방어.
             int baseIndex = (composite && _phaseStreakBase >= 0) ? _phaseStreakBase : MatchState.PhaseIndex;
             _phaseStreakBase = baseIndex;
+            // 결과가 스트릭 시작 전 값으로 되돌아오면(사용자 요청, 2026-09-09)
+            // 되돌리기 목록에서 그 항목 자체를 지운다 — ActivePlayerBar와
+            // 같은 이유/자리.
+            bool noop = nextIndex == baseIndex;
 
             string label = $"[점수판] 페이즈 {MatchState.PhaseNames[baseIndex]} -> {MatchState.PhaseNames[nextIndex]}";
             BoardManager.PerformNetworkedMutation(board, label, "페이즈 변경",
                     () => BoardNetworkSync.Instance.RequestSetPhaseServerRpc(nextIndex),
                     () => SetPhaseIndex(nextIndex),
-                    compositeKey: PhaseCompositeKey);
+                    compositeKey: PhaseCompositeKey,
+                    discardIfNoChangeFromStreakStart: noop);
         }
 
         private void SetPhaseIndex(int index)

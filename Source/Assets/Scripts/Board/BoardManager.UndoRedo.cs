@@ -42,9 +42,9 @@ namespace TmgBoard
             return _undoRedo.IsTopUndoEntryComposite(compositeKey);
         }
 
-        internal void CommitUndoTransaction(bool broadcast = true)
+        internal void CommitUndoTransaction(bool broadcast = true, bool discardIfNoChangeFromStreakStart = false)
         {
-            _undoRedo.CommitUndoTransaction(broadcast);
+            _undoRedo.CommitUndoTransaction(broadcast, discardIfNoChangeFromStreakStart);
         }
 
         internal void DiscardUndoTransaction()
@@ -61,7 +61,7 @@ namespace TmgBoard
         /// 안전 동작을 그대로 보존하기 위함. BoardNetworkSync.Instance가 없으면(있어선
         /// 안 되는 상태) 로그만 남기고 트랜잭션을 버린다(Discard) — 방송도 로컬 반영도
         /// 없었으므로.</summary>
-        internal static void PerformNetworkedMutation(BoardManager board, string label, string actionDescription, Action requestRpc, Action applyLocal, string team = "", string compositeKey = "")
+        internal static void PerformNetworkedMutation(BoardManager board, string label, string actionDescription, Action requestRpc, Action applyLocal, string team = "", string compositeKey = "", bool discardIfNoChangeFromStreakStart = false)
         {
             board?.BeginUndoTransaction(label, team, compositeKey);
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
@@ -73,11 +73,11 @@ namespace TmgBoard
                     return;
                 }
                 requestRpc();
-                board?.CommitUndoTransaction();
+                board?.CommitUndoTransaction(discardIfNoChangeFromStreakStart: discardIfNoChangeFromStreakStart);
                 return;
             }
             applyLocal();
-            board?.CommitUndoTransaction();
+            board?.CommitUndoTransaction(discardIfNoChangeFromStreakStart: discardIfNoChangeFromStreakStart);
         }
 
         internal void CancelOperationsDownTo(int stackIndex)
@@ -98,6 +98,11 @@ namespace TmgBoard
         internal void ApplyRemoteUndoRelabel(string label, string team)
         {
             _undoRedo.ApplyRemoteUndoRelabel(label, team);
+        }
+
+        internal void ApplyRemoteUndoRemoveTop()
+        {
+            _undoRedo.ApplyRemoteUndoRemoveTop();
         }
 
         internal void ApplyRemoteUndoCascade(bool isRedo, int targetIndex)
@@ -246,6 +251,7 @@ namespace TmgBoard
             snapshot.KillVpA = MatchState.KillVp["A"];
             snapshot.KillVpB = MatchState.KillVp["B"];
             snapshot.PhaseIndex = MatchState.PhaseIndex;
+            snapshot.ActivePlayer = MatchState.ActivePlayer;
             snapshot.RosterLoadedTeams.AddRange(_rosterLoadedTeams);
 
             foreach (var kv in _missionObjectivePiecesByNumber)
@@ -465,6 +471,11 @@ namespace TmgBoard
             // MatchState를 다시 읽어 스스로 화면을 맞춘다(PhaseBar.Update
             // 참고).
             MatchState.PhaseIndex = snapshot.PhaseIndex;
+            // 활성 플레이어 표시기(2026-09-09 추가) — ActivePlayerBar도
+            // PhaseBar/ScoreboardPanel처럼 매 프레임 MatchState를 다시 읽어
+            // 스스로 화면을 맞춘다. ParseSnapshotTree가 누락된 키를 "A"로
+            // 기본 처리하므로(옛 저장 파일 호환) 여기선 그대로 대입한다.
+            MatchState.ActivePlayer = snapshot.ActivePlayer;
 
             // 미션 목표 마커 점령 링 상태(2026-09-04 추가) — 마커 자신은
             // 파괴/재생성 대상이 아니므로(BoardSnapshot.MissionObjectiveStates
@@ -653,6 +664,8 @@ namespace TmgBoard
         public int KillVpB;
         // 페이즈도 되돌리기 대상이다(2026-09-04, 사용자 요청).
         public int PhaseIndex;
+        // 활성 플레이어 표시기도 되돌리기 대상이다(2026-09-09, 사용자 요청).
+        public string ActivePlayer;
         // 로스터 "로드됨" 판정도 되돌리기 대상이어야 한다(2026-09-04,
         // 사용자 요청 — "로스터 불러오기를 취소하면 버튼이 부활해야
         // 한다"). 이 필드는 원래(BoardManager.Deployment.cs의

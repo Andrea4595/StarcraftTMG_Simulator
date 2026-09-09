@@ -971,11 +971,13 @@ namespace TmgBoard
             bool composite = IsTopUndoEntryComposite(compositeKey);
             string baseState = composite && _markerStateStreakBase.TryGetValue(marker.GetInstanceID(), out var b) ? b : marker.State;
             _markerStateStreakBase[marker.GetInstanceID()] = baseState;
+            bool noop = nextState == baseState;
 
             PerformNetworkedMutation(this, $"{DescribeMarkerKind(marker)} {DescribeActivationState(baseState)} -> {DescribeActivationState(nextState)}", "마커 상태 변경",
                     () => BoardNetworkSync.Instance.RequestSetMarkerStateServerRpc(marker.NetworkMarkerId, nextState),
                     () => marker.SetState(nextState),
-                    compositeKey: compositeKey);
+                    compositeKey: compositeKey,
+                    discardIfNoChangeFromStreakStart: noop);
         }
 
         private void OnCaptureMarkerRightClicked(MarkerBase piece, bool shiftHeld)
@@ -998,11 +1000,13 @@ namespace TmgBoard
             bool composite = IsTopUndoEntryComposite(compositeKey);
             string baseState = composite && _markerStateStreakBase.TryGetValue(marker.GetInstanceID(), out var b) ? b : marker.ColorState;
             _markerStateStreakBase[marker.GetInstanceID()] = baseState;
+            bool noop = nextState == baseState;
 
             PerformNetworkedMutation(this, $"{DescribeMarkerKind(marker)} {DescribeCaptureColorState(baseState)} -> {DescribeCaptureColorState(nextState)}", "마커 상태 변경",
                     () => BoardNetworkSync.Instance.RequestSetMarkerStateServerRpc(marker.NetworkMarkerId, nextState),
                     () => marker.SetColorState(nextState),
-                    compositeKey: compositeKey);
+                    compositeKey: compositeKey,
+                    discardIfNoChangeFromStreakStart: noop);
         }
 
         private void OnIconMarkerRightClicked(MarkerBase piece, bool shiftHeld)

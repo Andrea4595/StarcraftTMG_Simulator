@@ -74,11 +74,13 @@ namespace TmgBoard
             bool composite = IsTopUndoEntryComposite(compositeKey);
             string baseState = composite && _missionObjectiveStreakBase.TryGetValue(piece.Number, out var b) ? b : piece.RingColorState;
             _missionObjectiveStreakBase[piece.Number] = baseState;
+            bool noop = nextState == baseState;
 
             PerformNetworkedMutation(this, $"미션 마커 {piece.Number} {DescribeRingColorState(baseState)} -> {DescribeRingColorState(nextState)}", "미션 마커 색 변경",
                     () => BoardNetworkSync.Instance.RequestSetMissionObjectiveColorServerRpc(piece.Number, nextState),
                     () => piece.CycleRingColor(),
-                    compositeKey: compositeKey);
+                    compositeKey: compositeKey,
+                    discardIfNoChangeFromStreakStart: noop);
         }
 
         /// <summary>RingColorState 원시값("inactive"/"white"/"red"/"blue")을

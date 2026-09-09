@@ -73,6 +73,14 @@ namespace TmgBoard
         // "충분히 오래전"으로 세팅한다.
         private float _lastLogActivityTime;
         private readonly List<GameObject> _chatLogEntries = new List<GameObject>();
+        // 연속 편집 합치기(Composite, 2026-09-09 추가, 사용자 요청 — "새
+        // 채팅 메시지를 띄우는 게 아니라 기존 메시지 내용을 갱신") 중인
+        // 항목이 방금 로그에 남긴 줄 — UpdateOrPushCompositeLogEntry가 계속
+        // 같은 줄을 갱신하는 데 쓴다. 다른 종류의 줄이 하나라도 새로
+        // 추가되면(PushLogEntry, 채팅 메시지 포함) 더 이상 유효하지 않으므로
+        // null로 되돌린다 — 그 사이 상대의 다른 조작이나 채팅이 끼어들어도
+        // 엉뚱한 줄을 잘못 덮어쓰지 않기 위함.
+        private GameObject _activeCompositeLogRow;
 
         private GameObject _chatInputGo;
         private CanvasGroup _chatInputGroup;
@@ -433,6 +441,79 @@ namespace TmgBoard
         /// 다시 0으로 스냅해준다.</summary>
         internal void PushLogEntry(string message, string team = "")
         {
+            // 이번 줄은 애초에 연속 편집으로 이어질 수 없는(compositeKey가
+            // 없는) 완전히 무관한 새 줄이다(일반 채팅, 카스케이드 등) —
+            // 지금까지 갱신 대상으로 추적하던 줄이 있었다면 추적을 끊는다
+            // (다음 컴포짓 갱신이 엉뚱한 옛 줄을 잘못 덮어쓰지 않도록).
+            _activeCompositeLogRow = null;
+            CreateLogRow(message, team);
+        }
+
+        /// <summary>연속 편집으로 이어질 "수 있는"(compositeKey가 있는) 조작의
+        /// 첫 클릭에 부른다(2026-09-09 버그 수정) — PushLogEntry와 달리 이
+        /// 줄을 _activeCompositeLogRow로 추적해둔다. 이게 없으면 스트릭의
+        /// "첫" 줄은 절대 갱신/제거 대상이 못 되고(추적이 안 걸려 있으므로),
+        /// 두 번째 클릭부터 매번 새 줄이 또 생기거나(갱신 대상이 없어서
+        /// UpdateOrPushCompositeLogEntry가 새로 만듦) 스트릭이 원상복귀돼도
+        /// 첫 줄만 유령처럼 남는 버그가 있었다(사용자 보고, 2026-09-09 —
+        /// 미션VP를 0→1→2→3→0으로 조작했을 때 0→1 줄이 안 지워지던 것,
+        /// 전술카드를 소모→복구했을 때 소모 줄이 안 지워지고 다시 소모하면
+        /// 또 새 줄이 뜨던 것).</summary>
+        internal void PushComposableLogEntry(string message, string team = "")
+        {
+            _activeCompositeLogRow = CreateLogRow(message, team);
+        }
+
+        /// <summary>연속 편집 합치기(Composite) 중일 때 부른다(사용자 요청,
+        /// 2026-09-09) — 매번 새 줄을 쌓는 대신, 그 스트릭이 이미 만들어 둔
+        /// 줄 하나만 계속 최신 내용으로 갱신한다. 그 사이 다른 줄(다른 조작,
+        /// 상대의 채팅 등)이 끼어들면 _activeCompositeLogRow가 이미 null로
+        /// 끊겨 있으므로, 그 경우엔 이 스트릭의 "첫" 줄로서 새로 만든다
+        /// (정상 흐름에서는 항상 PushComposableLogEntry가 먼저 추적을
+        /// 걸어두므로 이 방어 분기는 스택이 어긋난 예외 상황 대비용).</summary>
+        internal void UpdateOrPushCompositeLogEntry(string message, string team = "")
+        {
+            if (_activeCompositeLogRow == null)
+            {
+                _activeCompositeLogRow = CreateLogRow(message, team);
+                return;
+            }
+
+            _lastLogActivityTime = Time.time;
+            bool wasAtBottom = IsScrolledToBottom();
+
+            var label = _activeCompositeLogRow.GetComponent<TextMeshProUGUI>();
+            label.text = message;
+            label.color = GameConstants.ResolveTeamTextColor(team);
+
+            Canvas.ForceUpdateCanvases();
+            UpdateChatLogSize();
+            if (wasAtBottom)
+            {
+                _chatLogScrollRect.verticalNormalizedPosition = 0f;
+            }
+        }
+
+        /// <summary>컴포짓 스트릭이 시작 전 상태로 되돌아와 되돌리기 항목
+        /// 자체가 사라졌을 때(UndoRedoService의 discardIfNoChangeFromStreakStart)
+        /// 그 항목을 안내하던 줄도 같이 지운다 — 안 그러면 되돌리기 목록엔
+        /// 없는 조작이 채팅 로그에만 유령처럼 남는다(사용자 지정 의도의
+        /// 연장, 2026-09-09).</summary>
+        internal void RemoveActiveCompositeLogRow()
+        {
+            if (_activeCompositeLogRow == null)
+            {
+                return;
+            }
+            _chatLogEntries.Remove(_activeCompositeLogRow);
+            Destroy(_activeCompositeLogRow);
+            _activeCompositeLogRow = null;
+            Canvas.ForceUpdateCanvases();
+            UpdateChatLogSize();
+        }
+
+        private GameObject CreateLogRow(string message, string team)
+        {
             _lastLogActivityTime = Time.time;
             bool wasAtBottom = IsScrolledToBottom();
 
@@ -454,6 +535,10 @@ namespace TmgBoard
                 {
                     Destroy(oldest);
                 }
+                if (oldest == _activeCompositeLogRow)
+                {
+                    _activeCompositeLogRow = null;
+                }
             }
 
             // Content 높이가 즉시 재계산돼야(다음 프레임까지 기다리지 않고)
@@ -465,6 +550,7 @@ namespace TmgBoard
             {
                 _chatLogScrollRect.verticalNormalizedPosition = 0f;
             }
+            return rowGo;
         }
 
         /// <summary>로그 창 자체의 높이를 콘텐츠에 맞춰 위쪽 끝만 움직인다 —

@@ -665,6 +665,26 @@ namespace TmgBoard
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestSetActivePlayerServerRpc(string player)
+        {
+            SetActivePlayerRpc(player);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetActivePlayerRpc(string player)
+        {
+            // 2026-09-09부터 전용 띠(ActivePlayerBar) 대신 ScoreboardPanel
+            // 자체(팀 패널 배경 + 안쪽 가장자리 버튼)가 이 표시를 담당한다.
+            var scoreboard = Object.FindFirstObjectByType<ScoreboardPanel>();
+            if (scoreboard == null)
+            {
+                Debug.LogError("[BoardNetworkSync] ScoreboardPanel을 못 찾음 — 활성 플레이어를 못 반영함");
+                return;
+            }
+            scoreboard.ApplyRemoteActivePlayer(player);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
         public void RequestSetMissionVpServerRpc(string team, int value)
         {
             SetMissionVpRpc(team, value);
@@ -987,6 +1007,39 @@ namespace TmgBoard
                 return;
             }
             board.ApplyRemoteUndoRelabel(label, team);
+        }
+
+        /// <summary>연속 편집이 시작 전 상태로 되돌아와(2026-09-09 추가, 사용자
+        /// 요청 — "결과가 첫 조작 이전 상태와 같으면 히스토리에서 제거")
+        /// 합쳐져 있던 항목을 통째로 지울 때 쓴다 — RequestBroadcastUndoRelabel과
+        /// 같은 자리/모양, "라벨만 바꿔라" 대신 "맨 위 항목을 지워라"만
+        /// 다르다.</summary>
+        public void RequestBroadcastUndoRemoveTop()
+        {
+            ulong senderId = NetworkManager.Singleton.LocalClientId;
+            RequestBroadcastUndoRemoveTopServerRpc(senderId);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        private void RequestBroadcastUndoRemoveTopServerRpc(ulong senderId)
+        {
+            BroadcastUndoRemoveTopRpc(senderId);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void BroadcastUndoRemoveTopRpc(ulong senderId)
+        {
+            if (senderId == NetworkManager.Singleton.LocalClientId)
+            {
+                return; // 내가 커밋한 제거의 메아리 — 이미 로컬에서 직접 지웠다.
+            }
+            var board = Object.FindFirstObjectByType<BoardManager>();
+            if (board == null)
+            {
+                Debug.LogError("[BoardNetworkSync] BoardManager를 못 찾음 — 되돌리기 항목 제거를 못 반영함");
+                return;
+            }
+            board.ApplyRemoteUndoRemoveTop();
         }
 
         /// <summary>카스케이드(값이 작아 청크가 필요 없다) — isRedo=false면
