@@ -380,7 +380,15 @@ public static class GameFlowBootstrap
         canvasGo.AddComponent<GraphicRaycaster>();
 
         var cardPrep = canvasGo.AddComponent<CardPrepController>();
-        cardPrep.BackRequested += () => SceneManager.LoadScene(EntrySceneName);
+        // 멀티 전용 화면이라 뒤로가기 시점엔 항상 연결돼 있다 — 나가기 전에
+        // 먼저 연결을 끊어야 상대방에게도 "연결 종료" 알림이 뜬다(2026-09-09
+        // 버그 수정, DisconnectNoticeController.LeaveMultiplayerSessionIfConnected
+        // 참고).
+        cardPrep.BackRequested += () =>
+        {
+            DisconnectNoticeController.LeaveMultiplayerSessionIfConnected();
+            SceneManager.LoadScene(EntrySceneName);
+        };
     }
 
     /// <summary>멀티 전용 "카드 드래프트" 화면 — 양쪽 8장을 모아 보여주고
@@ -410,7 +418,15 @@ public static class GameFlowBootstrap
 
         var terrainSetup = canvasGo.AddComponent<TerrainSetupController>();
         terrainSetup.Completed += () => SceneManager.LoadScene(GameBoardSceneName);
-        terrainSetup.BackRequested += () => SceneManager.LoadScene(SelectionSceneName);
+        // 솔로 플로우(Selection→TerrainSetup)에서 온 뒤로가기는 원래 연결이
+        // 없으므로 그냥 no-op — 멀티 플로우(CardDraft→TerrainSetup)로 왔다가
+        // 뒤로 나가는 경우에만 실제로 연결을 끊는다(2026-09-09 버그 수정,
+        // CardPrep 뒤로가기와 같은 이유).
+        terrainSetup.BackRequested += () =>
+        {
+            DisconnectNoticeController.LeaveMultiplayerSessionIfConnected();
+            SceneManager.LoadScene(SelectionSceneName);
+        };
     }
 
     private static void BuildGameBoard()

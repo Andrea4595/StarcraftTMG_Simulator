@@ -53,6 +53,7 @@ namespace TmgBoard
         private TextMeshProUGUI _titleLabel;
 
         private GameObject _choiceViewGo;
+        private TMP_InputField _nicknameInputField;
         private GameObject _hostChoiceViewGo;
 
         private GameObject _hostViewGo;
@@ -88,6 +89,10 @@ namespace TmgBoard
         {
             Instance = this;
             BuildUi();
+            // OpenAndStartHosting()으로 곧장 호스팅을 시작하는 경로(ChoiceView를
+            // 아예 안 거침)에서도 저장된 닉네임이 쓰이도록, 화면에 뭘 띄우기
+            // 전부터 미리 채워둔다.
+            _nicknameInputField.text = PlayerConfig.LoadNickname();
 
             var nm = NetworkManager.Singleton;
             nm.OnClientConnectedCallback += OnClientConnected;
@@ -178,6 +183,12 @@ namespace TmgBoard
                 // 전체 상태 전송은 청크가 여러 프레임에 걸쳐 도착할 수 있어)
                 // 조금 뒤에 일어날 수 있지만, 이 모달이 더 볼 일은 없다.
                 Close();
+
+                // 내 닉네임을 상대에게 방송 — 호스트/참가자 둘 다 이
+                // 콜백에서 count>=2를 보는 시점에 부른다(정상 플로우와
+                // 게임 도중 합류 양쪽 다 반드시 거침). BoardNetworkSync.cs의
+                // BroadcastLocalNickname 주석 참고.
+                BoardNetworkSync.Instance?.BroadcastLocalNickname();
             }
 
             if (count >= 2 && NetworkManager.Singleton.IsServer)
@@ -247,6 +258,20 @@ namespace TmgBoard
             BeginHosting();
         }
 
+        /// <summary>닉네임 입력칸의 현재 값을 저장하고 PlayerIdentity에
+        /// 반영한다 — 호스트는 BeginHosting() 진입 시(OpenAndStartHosting
+        /// 경로 포함), 참가자는 OnJoinConfirmClicked() 진입 시 부른다.
+        /// 상대 쪽 닉네임 칸은 지난 세션의 값이 남아있을 수 있으니 함께
+        /// 비워둔다 — 실제 값은 GameBoard 진입 시 BoardManager.
+        /// BroadcastLocalNicknameIfNetworked로 다시 채워진다.</summary>
+        private void CaptureAndSaveLocalNickname(string team)
+        {
+            string nickname = _nicknameInputField.text.Trim();
+            PlayerConfig.SaveNickname(nickname);
+            PlayerIdentity.Nicknames[team] = nickname;
+            PlayerIdentity.Nicknames[NetworkTeam.OpponentOf(team)] = "";
+        }
+
         /// <summary>Entry의 "이어하기" 화면(LoadGame 씬)을 그대로 재사용한다
         /// — 이 다이얼로그는 씬과 무관하게 어디서든 뜰 수 있는 영구
         /// 컴포넌트라 씬을 직접 옮기기 전에 반드시 먼저 닫아야, 전환된
@@ -269,6 +294,8 @@ namespace TmgBoard
         /// 부른다.</summary>
         private void BeginHosting()
         {
+            CaptureAndSaveLocalNickname(NetworkTeam.Host);
+
             _titleLabel.text = "호스트로 시작";
             _choiceViewGo.SetActive(false);
             _hostChoiceViewGo.SetActive(false);
@@ -437,6 +464,8 @@ namespace TmgBoard
                 SetJoinStatus("참가 코드를 입력하세요", isError: true);
                 return;
             }
+            CaptureAndSaveLocalNickname(NetworkTeam.Client);
+
             SetJoinStatus("접속 중...", isError: false);
             int token = ++_operationToken;
             _ = JoinAsync(code, token);
@@ -564,9 +593,64 @@ namespace TmgBoard
             layout.childControlHeight = true;
             layout.childForceExpandHeight = false;
 
+            _nicknameInputField = CreateNicknameInputField(_choiceViewGo.transform);
+
             CreateButton(_choiceViewGo.transform, "호스트로 시작", 40f, OnHostButtonClicked);
             CreateButton(_choiceViewGo.transform, "참가 코드로 접속", 40f, OnJoinButtonClicked);
             CreateButton(_choiceViewGo.transform, "닫기", 32f, OnCloseButtonClicked);
+        }
+
+        /// <summary>닉네임 입력칸 — CreateInputField(참가 코드용)와 같은 모양이되,
+        /// 비어 있을 때 안내 문구를 보여주는 placeholder가 추가로 있다. 값은
+        /// Awake에서 PlayerConfig.LoadNickname()으로 미리 채워지고, "호스트로
+        /// 시작"/"접속" 시점에 CaptureAndSaveLocalNickname이 다시 저장한다.</summary>
+        private static TMP_InputField CreateNicknameInputField(Transform parent)
+        {
+            var go = new GameObject("NicknameField", typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            go.AddComponent<LayoutElement>().preferredHeight = 36f;
+            var bg = go.AddComponent<Image>();
+            bg.color = new Color(0.25f, 0.25f, 0.25f, 1f);
+            var inputField = go.AddComponent<TMP_InputField>();
+            inputField.characterLimit = 12;
+
+            var textAreaGo = new GameObject("TextArea", typeof(RectTransform));
+            textAreaGo.transform.SetParent(go.transform, false);
+            var textAreaRect = (RectTransform)textAreaGo.transform;
+            textAreaRect.anchorMin = Vector2.zero;
+            textAreaRect.anchorMax = Vector2.one;
+            textAreaRect.offsetMin = new Vector2(8f, 4f);
+            textAreaRect.offsetMax = new Vector2(-8f, -4f);
+            textAreaGo.AddComponent<RectMask2D>();
+
+            var placeholderGo = new GameObject("Placeholder", typeof(RectTransform));
+            placeholderGo.transform.SetParent(textAreaGo.transform, false);
+            var placeholderRect = (RectTransform)placeholderGo.transform;
+            placeholderRect.anchorMin = Vector2.zero;
+            placeholderRect.anchorMax = Vector2.one;
+            placeholderRect.offsetMin = Vector2.zero;
+            placeholderRect.offsetMax = Vector2.zero;
+            var placeholder = placeholderGo.AddComponent<TextMeshProUGUI>();
+            placeholder.text = "닉네임 (선택 사항)";
+            placeholder.fontSize = 16f;
+            placeholder.fontStyle = FontStyles.Italic;
+            placeholder.color = new Color(1f, 1f, 1f, 0.4f);
+
+            var textGo = new GameObject("Text", typeof(RectTransform));
+            textGo.transform.SetParent(textAreaGo.transform, false);
+            var textRect = (RectTransform)textGo.transform;
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.offsetMin = Vector2.zero;
+            textRect.offsetMax = Vector2.zero;
+            var text = textGo.AddComponent<TextMeshProUGUI>();
+            text.fontSize = 16f;
+            text.color = Color.white;
+
+            inputField.textViewport = textAreaRect;
+            inputField.textComponent = text;
+            inputField.placeholder = placeholder;
+            return inputField;
         }
 
         /// <summary>"호스트로 시작" 다음, 실제 호스팅 전에 묻는 "새 게임"/

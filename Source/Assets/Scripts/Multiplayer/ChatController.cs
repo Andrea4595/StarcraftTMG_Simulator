@@ -11,9 +11,11 @@ namespace TmgBoard
     /// <summary>
     /// 화면 좌측 하단 채팅(2026-09-04 신설, 사용자 요청) — 엔터를 누르면
     /// 입력창이 뜨고 자동 포커싱되며, 입력 후 엔터로 전송하면 입력창은
-    /// 닫힌다. 채팅 메시지는 팀 이름표를 붙여("[A] 안녕" 형태 —
-    /// [유닛]/[택티컬] 대괄호 표기와 같은 문법) 그 팀 색으로 칠해 누가
-    /// 말했는지 구분한다(사용자 지정).
+    /// 닫힌다. 채팅 메시지는 이름표를 붙여("[닉네임] 안녕" 형태 — 닉네임이
+    /// 없으면 "[플레이어 A/B]", [유닛]/[택티컬] 대괄호 표기와 같은 문법)
+    /// 그 팀 색으로 칠해 누가 말했는지 구분한다(사용자 지정, 2026-09-09
+    /// PlayerIdentity 닉네임 도입 이후 팀 코드 대신 닉네임을 보여주도록
+    /// 변경 — ReceiveChatMessage 참고).
     ///
     /// **2026-09-09, 토스트→영구 스크롤 로그로 교체(사용자 요청)**: 원래는
     /// 채팅도 되돌리기/전술카드 알림과 같은 잠깐 떴다 사라지는 토스트
@@ -262,7 +264,7 @@ namespace TmgBoard
         /// 패턴) 호출한다.</summary>
         internal void ReceiveChatMessage(string team, string message)
         {
-            PushLogEntry($"[{team}] {message}", team);
+            PushLogEntry($"[{PlayerIdentity.DisplayName(team)}] {message}", team);
         }
 
         private void BuildChatInput()

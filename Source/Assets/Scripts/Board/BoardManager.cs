@@ -560,11 +560,7 @@ namespace TmgBoard
             // 스스로 나가는 것이므로 DisconnectNoticeController의 알림이 나
             // 자신에게는 뜨면 안 된다(사용자 요청, 같은 날) — Shutdown() 전에
             // 미리 표시해둔다.
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-            {
-                DisconnectNoticeController.SuppressNextNotice = true;
-                NetworkManager.Singleton.Shutdown();
-            }
+            DisconnectNoticeController.LeaveMultiplayerSessionIfConnected();
             MatchState.Reset();
             GameConstants.ResetTeamColors();
             UnityEngine.SceneManagement.SceneManager.LoadScene(GameConstants.EntrySceneName);

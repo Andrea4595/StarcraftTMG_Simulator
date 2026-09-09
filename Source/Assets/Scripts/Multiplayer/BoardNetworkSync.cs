@@ -723,6 +723,38 @@ namespace TmgBoard
             board.ApplyTeamColorLocal(team, color);
         }
 
+        // ── 플레이어 닉네임 ──────────────────────────────────────────────
+        // 연결이 성사되는 시점(MultiplayerConnectDialog.OnClientConnected,
+        // count>=2)에 각자 자신의 닉네임을 한 번 방송한다. PlayerIdentity는
+        // 씬과 무관한 정적 상태라 여기서 바로 반영하면 되고, 스코어보드
+        // 라벨은 ScoreboardPanel.Update()가 매 프레임 다시 읽어 따라간다
+        // (팀 색/라운드와 같은 관례). **처음엔 BoardManager.Start()에 걸어
+        // 뒀었는데(2026-09-09) 실제 버그가 있었다** — 게임 도중 합류(호스트가
+        // 이미 GameBoard에서 혼자 플레이 중이던 세션에 참가자가 들어오는
+        // 경우)에는 호스트의 BoardManager.Start()가 상대 접속보다 훨씬 전에
+        // (네트워크가 아직 안 열려있을 때) 이미 끝나버려서 방송 자체가 한
+        // 번도 안 나갔다 — "클라이언트가 호스트 이름을 못 받아온다"는 사용자
+        // 보고로 발견. OnClientConnected는 정상 플로우(아직 GameBoard 진입
+        // 전)와 게임 도중 합류 양쪽 다 반드시 거치므로 여기로 옮겼다.
+
+        internal void BroadcastLocalNickname()
+        {
+            string team = NetworkTeam.LocalTeam();
+            RequestSetNicknameServerRpc(team, PlayerIdentity.Nicknames[team]);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestSetNicknameServerRpc(string team, string nickname)
+        {
+            SetNicknameRpc(team, nickname);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetNicknameRpc(string team, string nickname)
+        {
+            PlayerIdentity.Nicknames[team] = nickname;
+        }
+
         // ── 지형 배치 동기화(TerrainSetup, 2026-08-31 신설) ────────────────
         // 마커와 완전히 같은 패턴 — 지형 조각도 UI 계층 밑이라 NetworkObject로
         // 스폰할 수 없다. 배치는 호스트가 id를 발급해 방송하고, 이동/회전/

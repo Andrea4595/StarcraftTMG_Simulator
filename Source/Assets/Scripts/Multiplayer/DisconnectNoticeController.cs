@@ -40,6 +40,23 @@ namespace TmgBoard
         /// 다를 수 있어 방어적으로 처리) 그 한 번만 걸러내고 바로 끈다.</summary>
         public static bool SuppressNextNotice;
 
+        /// <summary>연결된 상태에서 스스로 다른 화면으로 나갈 때 공통으로
+        /// 부른다(GameBoard "나가기"뿐 아니라 CardPrep/TerrainSetup의
+        /// "뒤로가기"도 포함 — 2026-09-09 버그 수정: 이 화면들의 뒤로가기가
+        /// SceneManager.LoadScene만 부르고 NetworkManager는 그대로 둬서,
+        /// 미션 세팅 중 한쪽이 나가도 연결이 안 끊기던 문제. 나 자신에게는
+        /// "연결 종료" 알림이 뜨면 안 되므로 Shutdown() 전에
+        /// SuppressNextNotice를 세워둔다. 연결 중이 아니면 아무 일도
+        /// 안 한다.</summary>
+        public static void LeaveMultiplayerSessionIfConnected()
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                SuppressNextNotice = true;
+                NetworkManager.Singleton.Shutdown();
+            }
+        }
+
         private bool _wasFullyConnected;
 
         private GameObject _panelGo;

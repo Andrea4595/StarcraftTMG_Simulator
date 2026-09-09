@@ -180,7 +180,20 @@ namespace TmgBoard
             RefreshSupplyRow("A");
             RefreshSupplyRow("B");
             RefreshTeamNameColors();
+            RefreshTeamNameLabels();
             RefreshFromMatchState();
+        }
+
+        /// <summary>팀 이름 라벨 텍스트를 PlayerIdentity에서 매 프레임 그대로
+        /// 반영한다(2026-09-09 추가) — 닉네임은 상대 쪽에서 네트워크로
+        /// 도착하는 값이라 이 화면이 직접 갱신할 방법이 없다. 색 반영
+        /// (RefreshTeamNameColors)과 같은 "매 프레임 재조회" 방식.</summary>
+        private void RefreshTeamNameLabels()
+        {
+            foreach (var kv in _teamNameLabels)
+            {
+                kv.Value.text = PlayerIdentity.DisplayName(kv.Key);
+            }
         }
 
         /// <summary>MatchState(라운드/VP)를 매 프레임 그대로 반영한다
@@ -593,7 +606,7 @@ namespace TmgBoard
             le.preferredWidth = 96f;
             le.preferredHeight = 26f;
             var label = go.AddComponent<TextMeshProUGUI>();
-            label.text = $"플레이어 {team}";
+            label.text = PlayerIdentity.DisplayName(team);
             label.fontSize = 18f;
             label.color = teamColor;
             label.fontStyle = FontStyles.Bold;
