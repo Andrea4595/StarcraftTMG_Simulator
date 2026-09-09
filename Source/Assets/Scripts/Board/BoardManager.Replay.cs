@@ -43,7 +43,10 @@ namespace TmgBoard
 
         private RectTransform _replayListContent;
         // _replayFrames와 같은 길이/순서로 "출력(GIF에 포함)" 체크 상태를
-        // 담는다 — 기본 전부 체크(사용자 요청, 2026-09-05 백로그 항목 3).
+        // 담는다 — 처음엔 기본 전부 체크였는데(2026-09-05 백로그 항목 3),
+        // 2026-09-09 사용자 요청으로 기본값 계산 방식이 바뀌었다 —
+        // InitReplayIncludeInGifDefaults 참고. 사용자가 개별 체크박스를
+        // 직접 조작해 이 기본값을 얼마든지 덮어쓸 수 있다(그건 그대로).
         private List<bool> _replayIncludeInGif;
 
         /// <summary>GameFlowBootstrap.BuildGameBoard()가 항상 넘겨준다 — 실제로
@@ -69,11 +72,7 @@ namespace TmgBoard
             _replayFrames = UndoRedoService.ParseOrderedUndoStack(undoHistoryRoot);
             _replayFrames.Add((finalSnapshot, "현재 상태", ""));
 
-            _replayIncludeInGif = new List<bool>(_replayFrames.Count);
-            for (int i = 0; i < _replayFrames.Count; i++)
-            {
-                _replayIncludeInGif.Add(true);
-            }
+            _replayIncludeInGif = InitReplayIncludeInGifDefaults(_replayFrames);
 
             // 실제 입력 차단 지점 — 이 한 줄이 위 클래스 주석에서 설명한
             // "모든 클릭 기반 상태 변경 경로"를 전부 막는다.
@@ -102,6 +101,59 @@ namespace TmgBoard
             // 참고).
             _replayFrameIndex = -1;
             ShowReplayFrame(0);
+        }
+
+        /// <summary>"출력(GIF에 포함)" 체크박스의 기본값(2026-09-09, 사용자
+        /// 지정 — 이전엔 전부 체크였다). 기본으로 켜질 수 있는 건 "턴 넘김
+        /// 성격"인 세 종류(활성 플레이어 넘기기/페이즈 변경/라운드 변경)
+        /// 뿐이고, 그 외(유닛 이동/마커 배치/VP 변경/전술카드 등 실제로
+        /// 보드가 바뀌는 액션)는 항상 기본 꺼짐이다. 게다가 이 세 종류가
+        /// 히스토리 리스트 상에서 연달아 나오면(사이에 다른 종류가 안
+        /// 끼어있으면) 그 구간에서 가장 뒤(최신)의 것 하나만 켠다 — 중간
+        /// 것들은 "그 다음 턴/페이즈/라운드로 넘어가기 직전의 낡은 상태"라
+        /// GIF에서 의미 있는 프레임이 아니기 때문. 사용자는 이 기본값을
+        /// 체크박스로 얼마든지 덮어쓸 수 있다(CreateReplayIncludeToggle의
+        /// onValueChanged 참고) — 여기서 계산하는 건 처음 열었을 때의
+        /// 초기값일 뿐이다.</summary>
+        private static List<bool> InitReplayIncludeInGifDefaults(List<(BoardSnapshot Snapshot, string Label, string Team)> frames)
+        {
+            var include = new List<bool>(frames.Count);
+            for (int i = 0; i < frames.Count; i++)
+            {
+                include.Add(false);
+            }
+
+            int runStart = -1;
+            for (int i = 0; i < frames.Count; i++)
+            {
+                if (IsTurnMarkerLabel(frames[i].Label))
+                {
+                    if (runStart < 0)
+                    {
+                        runStart = i;
+                    }
+                    continue;
+                }
+                if (runStart >= 0)
+                {
+                    include[i - 1] = true; // 방금 끝난 연속 구간의 마지막(최신) 항목만.
+                    runStart = -1;
+                }
+            }
+            if (runStart >= 0)
+            {
+                include[frames.Count - 1] = true; // 히스토리 끝까지 이어진 구간.
+            }
+            return include;
+        }
+
+        /// <summary>ScoreboardPanel.OnRoundPipClicked/PhaseBar.AdvancePhase/
+        /// ScoreboardPanel(ActivePlayer 토글)가 실제로 찍는 라벨 문자열과
+        /// 정확히 같은 접두어로 판별한다 — 이 프로젝트가 이미 쓰는 "라벨
+        /// 접두어로 액션 종류를 구분"하는 관례를 그대로 따른다.</summary>
+        private static bool IsTurnMarkerLabel(string label)
+        {
+            return label.StartsWith("[활성] ") || label.StartsWith("[점수판] 페이즈 ") || label.StartsWith("[점수판] 라운드 ");
         }
 
         /// <summary>index번째 프레임을 화면에 그린다 — RestoreBoardSnapshotForReplay를
