@@ -94,23 +94,180 @@ namespace TmgBoard
             BuildReplayHistoryPanel();
 
             _replayMode = true;
+            // -1로 시작해야 첫 ShowReplayFrame(0) 호출이 "이전 프레임 없음"으로
+            // 판단해 반드시 완전히 다시 그린다 — 필드 기본값 0을 그대로
+            // 두면 "0번 프레임을 0번 프레임과 비교"가 돼 그 시점의 진짜
+            // 라이브 상태(막 불러온 저장의 최종 상태)를 0번 프레임과 같다고
+            // 잘못 판단해 건너뛸 위험이 있다(RestoreBoardSnapshotForReplay
+            // 참고).
+            _replayFrameIndex = -1;
             ShowReplayFrame(0);
         }
 
-        /// <summary>index번째 프레임을 화면에 그린다 — RestoreBoardSnapshot을
+        /// <summary>index번째 프레임을 화면에 그린다 — RestoreBoardSnapshotForReplay를
         /// 직접 부른다(BeginUndoTransaction/CommitUndoTransaction으로 감싸지
         /// 않음). 감쌌다면 숨겨진 라이브 undo/redo 스택(UndoRedoService)이
         /// 재생 스텝마다 오염됐을 것이다 — 리플레이는 그 스택과 완전히
-        /// 무관해야 한다.</summary>
+        /// 무관해야 한다. 직전에 보여주던 프레임의 스냅샷도 같이 넘겨서
+        /// (2026-09-09, 속도 개선 — 사용자 보고 "스냅샷 넘어가는게 꽤
+        /// 느리다") 유닛/마커가 실제로 안 바뀌었으면 destroy-and-rebuild를
+        /// 건너뛸 수 있게 한다.</summary>
         private void ShowReplayFrame(int index)
         {
             if (_replayFrames == null || _replayFrames.Count == 0)
             {
                 return;
             }
+            BoardSnapshot previousShown = (_replayFrameIndex >= 0 && _replayFrameIndex < _replayFrames.Count)
+                    ? _replayFrames[_replayFrameIndex].Snapshot
+                    : null;
             _replayFrameIndex = Mathf.Clamp(index, 0, _replayFrames.Count - 1);
-            RestoreBoardSnapshot(_replayFrames[_replayFrameIndex].Snapshot);
+            RestoreBoardSnapshotForReplay(_replayFrames[_replayFrameIndex].Snapshot, previousShown);
             RefreshReplayList();
+        }
+
+        // ── 리플레이 스텝 속도 개선(2026-09-09, 사용자 보고 "스냅샷
+        // 넘어가는게 꽤 느린데") ────────────────────────────────────────────
+        // RestoreBoardSnapshot(정확히는 그중 RestoreUnitsAndMarkers, 실제
+        // GameObject를 destroy-and-rebuild하는 부분)이 라이브 되돌리기와
+        // 리플레이 둘 다에서 매 스텝 무조건 다시 실행되던 게 느림의 원인
+        // 이었다 — 유닛이 많을수록, 리플레이를 빠르게 넘길수록 그대로
+        // 누적된다. 라이브 되돌리기 쪽(카스케이드가 같은 프레임에 여러 번
+        // 연달아 부를 수 있고, 과거 "유닛 복제" 버그를 막으려고 일부러
+        // DestroyImmediate를 쓰는 등 타이밍이 예민함)은 전혀 안 건드리고,
+        // 리플레이가 프레임을 넘길 때만 쓰는 이 경로에서만 "직전에 보여준
+        // 프레임과 유닛/사거리/마커가 완전히 똑같으면 그 destroy-and-rebuild
+        // 자체를 건너뛴다"는 최적화를 적용한다 — 예비대/전술카드 목록이나
+        // 라운드/VP/페이즈 같은 값 대입뿐인 RestoreNonBoardState는 원래도
+        // 싸므로 항상 그대로 실행한다.
+        //
+        // 실질적인 한계: 이 스텝에서 유닛이 하나라도 옮겨지거나 모델이
+        // 추가/제거되는 등 "진짜 바뀌는" 액션이면 비교가 실패해 여전히
+        // 전체 재생성이 일어난다 — 라운드/VP/페이즈/활성 플레이어 전환처럼
+        // 보드 자체는 안 건드리는 액션들 사이를 넘어갈 때만 이 최적화의
+        // 효과를 본다. 유닛별로 안정적인 식별자가 멀티플레이 브로드캐스트를
+        // 한 번도 안 탄 솔로 플레이 유닛에는 없어서(NetworkUnitId가 항상
+        // -1), 그런 유닛까지 진짜 diff(이동만 값 갱신, 재생성 안 함)하려면
+        // 훨씬 큰 변경이 필요하다 — 지금은 안전하게 범위를 좁혔다.
+        internal void RestoreBoardSnapshotForReplay(BoardSnapshot snapshot, BoardSnapshot previousShown)
+        {
+            if (previousShown == null || !UnitsAndMarkersUnchangedForReplay(previousShown, snapshot))
+            {
+                RestoreUnitsAndMarkers(snapshot);
+            }
+            RestoreNonBoardState(snapshot);
+        }
+
+        private static bool UnitsAndMarkersUnchangedForReplay(BoardSnapshot a, BoardSnapshot b)
+        {
+            return UnitSnapshotListsEqual(a.Units, b.Units)
+                    && RangeSnapshotListsEqual(a.Ranges, b.Ranges)
+                    && MarkerSnapshotListsEqual(a.Markers, b.Markers);
+        }
+
+        private static bool UnitSnapshotListsEqual(List<UnitSnapshot> a, List<UnitSnapshot> b)
+        {
+            if (a.Count != b.Count)
+            {
+                return false;
+            }
+            for (int i = 0; i < a.Count; i++)
+            {
+                if (!UnitSnapshotEqual(a[i], b[i]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool UnitSnapshotEqual(UnitSnapshot a, UnitSnapshot b)
+        {
+            if (a.NetworkUnitId != b.NetworkUnitId || a.UnitName != b.UnitName || a.Team != b.Team
+                    || a.CoherencyInch != b.CoherencyInch || a.MoveInch != b.MoveInch || a.IsToken != b.IsToken
+                    || a.CanMove != b.CanMove || a.SupplyOverride != b.SupplyOverride
+                    || !ReferenceEquals(a.Detail, b.Detail))
+            {
+                return false;
+            }
+            if (a.SupplyTiers.Count != b.SupplyTiers.Count)
+            {
+                return false;
+            }
+            for (int i = 0; i < a.SupplyTiers.Count; i++)
+            {
+                var ta = a.SupplyTiers[i];
+                var tb = b.SupplyTiers[i];
+                if (ta.ModelMin != tb.ModelMin || ta.ModelMax != tb.ModelMax || ta.Supply != tb.Supply || ta.Pts != tb.Pts)
+                {
+                    return false;
+                }
+            }
+            if (a.Models.Count != b.Models.Count)
+            {
+                return false;
+            }
+            for (int i = 0; i < a.Models.Count; i++)
+            {
+                if (!ModelSnapshotEqual(a.Models[i], b.Models[i]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool ModelSnapshotEqual(ModelSnapshot a, ModelSnapshot b)
+        {
+            return a.Center == b.Center && a.RotationDegrees == b.RotationDegrees && a.SizeMm == b.SizeMm
+                    && a.FillColor.Equals(b.FillColor) && a.Damage == b.Damage && a.IsDisplacement == b.IsDisplacement
+                    && a.Memo == b.Memo;
+        }
+
+        private static bool RangeSnapshotListsEqual(List<RangeSnapshot> a, List<RangeSnapshot> b)
+        {
+            if (a.Count != b.Count)
+            {
+                return false;
+            }
+            for (int i = 0; i < a.Count; i++)
+            {
+                var ra = a[i];
+                var rb = b[i];
+                if (ra.UnitRef != rb.UnitRef || ra.Ranges.Count != rb.Ranges.Count)
+                {
+                    return false;
+                }
+                for (int j = 0; j < ra.Ranges.Count; j++)
+                {
+                    var sa = ra.Ranges[j];
+                    var sb = rb.Ranges[j];
+                    if (sa.Inch != sb.Inch || sa.AlwaysShow != sb.AlwaysShow)
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        private static bool MarkerSnapshotListsEqual(List<MarkerSnapshot> a, List<MarkerSnapshot> b)
+        {
+            if (a.Count != b.Count)
+            {
+                return false;
+            }
+            for (int i = 0; i < a.Count; i++)
+            {
+                var ma = a[i];
+                var mb = b[i];
+                if (ma.Kind != mb.Kind || ma.Center != mb.Center || ma.State != mb.State
+                        || ma.NetworkMarkerId != mb.NetworkMarkerId)
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private void ReplayExit()

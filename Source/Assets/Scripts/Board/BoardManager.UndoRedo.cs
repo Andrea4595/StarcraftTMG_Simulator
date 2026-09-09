@@ -353,6 +353,20 @@ namespace TmgBoard
 
         internal void RestoreBoardSnapshot(BoardSnapshot snapshot)
         {
+            RestoreUnitsAndMarkers(snapshot);
+            RestoreNonBoardState(snapshot);
+        }
+
+        /// <summary>실제 GameObject를 destroy-and-rebuild하는, 이 되돌리기
+        /// 시스템에서 가장 비싼 부분만 뽑아낸 것(2026-09-09, 속도 개선을
+        /// 위해 RestoreBoardSnapshot에서 분리 — BoardManager.Replay.cs의
+        /// RestoreBoardSnapshotForReplay가 "유닛/마커가 실제로 안 바뀌었으면
+        /// 이 부분을 통째로 건너뛴다"는 최적화에 쓴다). 유닛/모델/사거리/
+        /// 마커를 전부 지우고 스냅샷 그대로 다시 만든다 — 라이브 되돌리기
+        /// (RestoreBoardSnapshot을 그대로 부르는 기존 경로)에서는 항상
+        /// 매번 실행되므로 동작은 예전과 완전히 같다.</summary>
+        private void RestoreUnitsAndMarkers(BoardSnapshot snapshot)
+        {
             ClearLiveBoardState();
 
             var restoredUnits = new List<Unit>();
@@ -403,6 +417,49 @@ namespace TmgBoard
                 _unitRanges[unit] = new List<RangeSpec>(rangeSnap.Ranges);
             }
 
+            if (markerLayer != null)
+            {
+                foreach (var markerSnap in snapshot.Markers)
+                {
+                    MarkerBase marker = CreateMarkerObject(markerSnap.Kind, markerLayer);
+                    switch (markerSnap.Kind)
+                    {
+                        case "activation":
+                            ((ActivationMarker)marker).SetState(markerSnap.State);
+                            marker.RightClicked += OnActivationMarkerRightClicked;
+                            break;
+                        case "capture":
+                            ((CaptureMarker)marker).SetColorState(markerSnap.State);
+                            marker.RightClicked += OnCaptureMarkerRightClicked;
+                            break;
+                        default:
+                            marker.RightClicked += OnIconMarkerRightClicked;
+                            break;
+                    }
+                    marker.Center = markerSnap.Center;
+                    marker.DragRequested += OnMarkerDragRequested;
+
+                    // 2026-09-02 추가 — 이게 없으면 되돌리기/다시실행을 한 번만
+                    // 해도 이 마커가 네트워크 id를 잃어서(항상 -1로 새로 만들어짐)
+                    // 이후 삭제/상태변경 방송이 아무 대상도 못 찾고 씹혔다.
+                    if (markerSnap.NetworkMarkerId >= 0)
+                    {
+                        marker.NetworkMarkerId = markerSnap.NetworkMarkerId;
+                        _networkedMarkers.Set(markerSnap.NetworkMarkerId, marker);
+                    }
+                }
+            }
+
+            RefreshRangeOverlays();
+        }
+
+        /// <summary>유닛/마커처럼 GameObject를 새로 안 만드는, 값만 대입하는
+        /// 싼 나머지 부분 — 예비대/토큰/전술카드 목록, 라운드/VP/페이즈/
+        /// 활성 플레이어, 미션 마커 점령 링 상태. 라이브 되돌리기/리플레이
+        /// 둘 다 매번 실행한다(2026-09-09, RestoreUnitsAndMarkers 분리와
+        /// 같은 리팩토링 — 값 대입만이라 건너뛸 필요가 없다).</summary>
+        private void RestoreNonBoardState(BoardSnapshot snapshot)
+        {
             // "로스터 로드됨" 판정을 예비대/토큰/택티컬 카드 목록보다 먼저
             // 되돌린다(2026-09-04 추가) — 아래 Refresh*List()들이 부르는
             // RefreshPanelLayout()이 이 값을 바로 참조하므로, 그보다 먼저
@@ -487,41 +544,6 @@ namespace TmgBoard
                     piece.SetRingColorState(stateSnap.RingState);
                 }
             }
-
-            if (markerLayer != null)
-            {
-                foreach (var markerSnap in snapshot.Markers)
-                {
-                    MarkerBase marker = CreateMarkerObject(markerSnap.Kind, markerLayer);
-                    switch (markerSnap.Kind)
-                    {
-                        case "activation":
-                            ((ActivationMarker)marker).SetState(markerSnap.State);
-                            marker.RightClicked += OnActivationMarkerRightClicked;
-                            break;
-                        case "capture":
-                            ((CaptureMarker)marker).SetColorState(markerSnap.State);
-                            marker.RightClicked += OnCaptureMarkerRightClicked;
-                            break;
-                        default:
-                            marker.RightClicked += OnIconMarkerRightClicked;
-                            break;
-                    }
-                    marker.Center = markerSnap.Center;
-                    marker.DragRequested += OnMarkerDragRequested;
-
-                    // 2026-09-02 추가 — 이게 없으면 되돌리기/다시실행을 한 번만
-                    // 해도 이 마커가 네트워크 id를 잃어서(항상 -1로 새로 만들어짐)
-                    // 이후 삭제/상태변경 방송이 아무 대상도 못 찾고 씹혔다.
-                    if (markerSnap.NetworkMarkerId >= 0)
-                    {
-                        marker.NetworkMarkerId = markerSnap.NetworkMarkerId;
-                        _networkedMarkers.Set(markerSnap.NetworkMarkerId, marker);
-                    }
-                }
-            }
-
-            RefreshRangeOverlays();
         }
 
         private static PendingUnitDef ClonePendingUnitDef(PendingUnitDef def)
