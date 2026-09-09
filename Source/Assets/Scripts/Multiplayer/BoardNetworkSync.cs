@@ -755,6 +755,47 @@ namespace TmgBoard
             PlayerIdentity.Nicknames[team] = nickname;
         }
 
+        // ── 씬 전환 상호 확인(MutualConfirmDialog) ──────────────────────
+        // CardDraft→TerrainSetup, TerrainSetup→GameBoard 전환 전에 양쪽 다
+        // "준비 완료"를 눌러야 하는 확인창(2026-09-09 신설, 사용자 지정).
+        // 마커/유닛과 같은 "요청→방송→로컬 반영(자신 포함)" 패턴 3종.
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestOpenMutualConfirmServerRpc(string context)
+        {
+            OpenMutualConfirmRpc(context);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void OpenMutualConfirmRpc(string context)
+        {
+            MutualConfirmDialog.Instance?.OpenLocal(context);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestSetMutualReadyServerRpc(string context, string team, bool ready)
+        {
+            SetMutualReadyRpc(context, team, ready);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void SetMutualReadyRpc(string context, string team, bool ready)
+        {
+            MutualConfirmDialog.Instance?.ApplyRemoteReady(context, team, ready);
+        }
+
+        [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+        public void RequestCloseMutualConfirmServerRpc(string context)
+        {
+            CloseMutualConfirmRpc(context);
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void CloseMutualConfirmRpc(string context)
+        {
+            MutualConfirmDialog.Instance?.CloseRemote(context);
+        }
+
         // ── 지형 배치 동기화(TerrainSetup, 2026-08-31 신설) ────────────────
         // 마커와 완전히 같은 패턴 — 지형 조각도 UI 계층 밑이라 NetworkObject로
         // 스폰할 수 없다. 배치는 호스트가 id를 발급해 방송하고, 이동/회전/

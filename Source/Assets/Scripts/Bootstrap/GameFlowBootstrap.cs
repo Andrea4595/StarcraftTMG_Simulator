@@ -46,6 +46,7 @@ public static class GameFlowBootstrap
         EnsureNetworkManager();
         EnsureMultiplayerConnectDialog();
         EnsureDisconnectNotice();
+        EnsureMutualConfirmDialog();
         EnsureChatController();
         SceneManager.sceneLoaded += (scene, mode) => HandleSceneLoaded(scene);
         // sceneLoaded 이벤트는 앱 시작 시 최초로 로드된 씬에는 발생하지
@@ -165,6 +166,28 @@ public static class GameFlowBootstrap
         canvasGo.AddComponent<CanvasScaler>();
         canvasGo.AddComponent<GraphicRaycaster>();
         canvasGo.AddComponent<DisconnectNoticeController>();
+        Object.DontDestroyOnLoad(canvasGo);
+    }
+
+    /// <summary>씬 전환 상호 확인창(2026-09-09 신설) — CardDraft/TerrainSetup
+    /// 둘 다에서 떠야 하므로 MultiplayerConnectDialog/DisconnectNoticeController와
+    /// 같은 방식으로 앱 시작 시 한 번만 만든다. sortingOrder는 채팅(80)보다
+    /// 위, "연결 종료" 알림(100)보다 아래 — 진짜 연결 끊김이 이 확인창보다
+    /// 항상 우선해서 보여야 하므로.</summary>
+    private static void EnsureMutualConfirmDialog()
+    {
+        if (Object.FindFirstObjectByType<MutualConfirmDialog>() != null)
+        {
+            return;
+        }
+
+        var canvasGo = new GameObject("MutualConfirmDialog_Canvas");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 95;
+        canvasGo.AddComponent<CanvasScaler>();
+        canvasGo.AddComponent<GraphicRaycaster>();
+        canvasGo.AddComponent<MutualConfirmDialog>();
         Object.DontDestroyOnLoad(canvasGo);
     }
 

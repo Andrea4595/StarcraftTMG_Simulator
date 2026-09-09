@@ -711,18 +711,15 @@ namespace TmgBoard
                 FlushPendingRotationBroadcast();
             }
 
-            // 멀티 연결 중이면 양쪽 다 같은 순간에 GameBoard로 넘어가야
-            // 하므로 신호를 방송한다 — 지형은 이미 실시간 동기화돼 있으므로
-            // 스냅샷을 따로 보내지 않고, 방송을 받은 각자가 자기 화면의
-            // 지형으로 채운다(CompleteFromNetwork).
+            // 멀티 연결 중이면 곧장 넘어가지 않고 상호 확인창부터 띄운다
+            // (2026-09-09, 사용자 지정 — MutualConfirmDialog). 양쪽 다 "준비
+            // 완료"를 누르면 그 창이 기존과 똑같이 RequestStartGameServerRpc를
+            // 쏘고, 그 방송(StartGameRpc → CompleteFromNetwork)을 거쳐 지형은
+            // 이미 실시간 동기화돼 있으므로 스냅샷을 따로 보내지 않고 각자
+            // 자기 화면의 지형으로 채운다.
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
-                if (BoardNetworkSync.Instance == null)
-                {
-                    Debug.LogError("[TerrainSetupController] BoardNetworkSync.Instance가 없음 — 게임 시작 요청을 못 보냄");
-                    return;
-                }
-                BoardNetworkSync.Instance.RequestStartGameServerRpc();
+                MutualConfirmDialog.Instance?.RequestOpen(MutualConfirmDialog.ContextTerrainToGameBoard);
                 return;
             }
             FillMapDataAndComplete();

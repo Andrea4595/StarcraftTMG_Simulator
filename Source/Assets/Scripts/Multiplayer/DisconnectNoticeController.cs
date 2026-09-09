@@ -112,6 +112,7 @@ namespace TmgBoard
             }
             _wasFullyConnected = false;
             UnlockUndoHistoryIfOnGameBoard();
+            MutualConfirmDialog.Instance?.ForceCloseOnDisconnect();
             ShowNotice();
         }
 

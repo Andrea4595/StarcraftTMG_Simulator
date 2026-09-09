@@ -576,20 +576,17 @@ namespace TmgBoard
             _nextButtonGo.SetActive(ready);
         }
 
-        /// <summary>누구든 "다음"을 누르면 둘 다 같이 넘어가야 한다(사용자
-        /// 지정) — 요청만 보내고, 실제 전환은 그 요청이 되돌아오는 방송
-        /// (BoardNetworkSync.ProceedToTerrainRpc → ProceedToTerrain)을 거쳐서
-        /// 누른 쪽 자신을 포함한 양쪽 모두에서 동시에 일어난다.</summary>
+        /// <summary>누구든 "다음"을 누르면 상호 확인창이 뜨고, 양쪽 다
+        /// "준비 완료"를 눌러야 실제로 넘어간다(2026-09-09, 사용자 지정 —
+        /// MutualConfirmDialog). 확인이 끝나면 그 창이 기존과 똑같이
+        /// RequestProceedToTerrainServerRpc를 쏘고, 그 방송(ProceedToTerrainRpc
+        /// → ProceedToTerrain)을 거쳐 누른 쪽 자신을 포함한 양쪽 모두에서
+        /// 동시에 전환이 일어난다.</summary>
         private void OnNextButtonClicked()
         {
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
             {
-                if (BoardNetworkSync.Instance == null)
-                {
-                    Debug.LogError("[CardDraftController] BoardNetworkSync.Instance가 없음 — 다음 단계 요청을 못 보냄");
-                    return;
-                }
-                BoardNetworkSync.Instance.RequestProceedToTerrainServerRpc();
+                MutualConfirmDialog.Instance?.RequestOpen(MutualConfirmDialog.ContextCardDraftToTerrain);
                 return;
             }
             ProceedToTerrainLocal();
